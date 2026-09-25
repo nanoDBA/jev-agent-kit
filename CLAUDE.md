@@ -77,5 +77,6 @@ their dependencies. Check `bd --help` and `bd create --help` for flags; do not g
 - A Jev skill router as a headline feature. There is a published negative result for
   Claude Code (see `docs/research/02-prior-art.md`).
 - Jev as an aggregator or manager of other LLMs. Jev ranks, verifies and gates.
-- A silent fork of `dfinke/Jev`. Upstream fixes first, thin wrapper second.
+- A dependency on `dfinke/Jev`. It is a reference only; our client is our own
+  (`docs/adr/0001-own-jev-client-no-dfinke-dependency.md`). Adapted code keeps its MIT notice.
 - Claims based on vendor or community numbers presented as our own measurements.

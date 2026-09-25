@@ -31,4 +31,5 @@ client found and the intended foundation for this repo's PowerShell side.
 Operational note: `#requires -Version 7.0` means SQL Agent PowerShell job steps cannot
 host it. Use a CmdExec step that invokes `pwsh.exe`.
 
-Draft PRs under `docs/upstream/dfinke-jev/` before contacting the author.
+Decision (2026-09-25, ADR 0001): no dependency and no planned upstream PRs. These findings are
+requirements for our own client instead.

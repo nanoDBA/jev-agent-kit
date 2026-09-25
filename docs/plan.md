@@ -2,9 +2,8 @@
 
 ## Open questions for the owner (decide before Phase 1 code)
 
-1. **dfinke/Jev strategy:** upstream PRs plus a thin wrapper module, or a wrapper only?
-   Default: PRs for findings 1 to 5 in `research/03-dfinke-jev-review.md`, wrapper for
-   receipts, egress, budgets and fingerprinted thresholds.
+1. **dfinke/Jev strategy:** decided 2026-09-25. No dependency; learn from it and build our own
+   client and skill. See `adr/0001-own-jev-client-no-dfinke-dependency.md`.
 2. **Host priority:** Claude Code first, then Codex, then Hermes? (Default order.)
 3. **Egress policy:** may production T-SQL text, object names or log lines leave the
    machine at all? Which data classes are always blocked?
@@ -22,11 +21,9 @@
   documented Choice/Score limits, error schema, Retry-After behavior, Codex and Hermes skill
   directory paths.
 
-### Phase 1: PowerShell client layer (depends on P0-5 and open question 1)
-- P1-1 Draft upstream PRs for dfinke/Jev under `docs/upstream/dfinke-jev/` (mock labeling,
-  typed errors plus ErrorDetails body, confidence promotion, model pin, Retry-After plus
-  jitter). Owner approves before submission.
-- P1-2 Wrapper module: receipts (JSONL), state budget and redaction, deterministic egress
+### Phase 1: PowerShell client layer (depends on P0-5 and open question 3)
+- P1-1 Deferred (ADR 0001): upstream PRs for dfinke/Jev are optional goodwill, not planned.
+- P1-2 Client module: receipts (JSONL), state budget and redaction, deterministic egress
   check, question fingerprints, per-fingerprint threshold registry marked calibrated or not.
 - P1-3 Labeled mock transport and Pester suite; no live calls in tests.
 - P1-4 Smoke script with a hard call cap for live verification.

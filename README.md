@@ -4,6 +4,8 @@ Reusable skill and tooling that lets coding agents (Claude Code, Hermes Agent, C
 TypeSafe's Jev typed-decision model at runtime, as a cheap evidence layer inside a
 mixture-of-agents workflow. Private, owned by nanoDBA.
 
+Implementation language: Python, standard library only at runtime (`docs/adr/0003-python-implementation.md`).
+
 Status: research complete, product code not started. Start with `CLAUDE.md`, then `docs/plan.md`.
 
 ## Layout

@@ -25,6 +25,11 @@ and no state budget or redaction. The plan's default was upstream PRs plus a thi
   attribution (copyright notice and license text kept with the adapted code) and a note in
   `sources.lock.json` naming the commit it came from.
 
+## Note (2026-09-25)
+
+ADR 0003 moved the implementation to Python. This decision still holds; dfinke/Jev remains a
+reference for client defects to avoid.
+
 ## Consequences
 
 - The live transport behind the Phase 1 decision command posts directly to `/v1/systemone`.

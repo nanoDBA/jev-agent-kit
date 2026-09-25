@@ -108,8 +108,8 @@ Two approaches appear in the official cookbooks.
   a request, one transport failure hits both. Apply the asymmetry per question: the advisory
   answer becomes "no advice" and the gate becomes "ask". Never retry only the advisory part and
   let the gate pass.
-- **Concurrency (B1):** in PowerShell use `ForEach-Object -Parallel` with a small
-  `-ThrottleLimit` (start at 4; the vendor cookbooks use 8 to 12), plus a shared budget for
+- **Concurrency (B1):** (ADR 0003: Python, so a bounded `ThreadPoolExecutor`; originally
+  written for PowerShell `ForEach-Object -Parallel`) use a small worker limit (start at 4; the vendor cookbooks use 8 to 12), plus a shared budget for
   requests per minute and tokens, and the per-run call cap from `CLAUDE.md`. Each hook runs as
   its own process, so a per-process cap is not a global cap. Record this as a known limit.
 - **Packing (B2):** allowed only with keyed ids, inside the state budget. Prefer B1 when the

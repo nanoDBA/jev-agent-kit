@@ -22,7 +22,7 @@ else) live in optional domain packs, never in the core.
 2. **Fail asymmetry.** Advisory calls (routing, ranking, hints) fail open to "no advice".
    Gates fail closed to "ask". An unexpected exception inside a gate means ask, never allow.
 3. **Absence is never approval.** No mock, default or fallback may look like a model
-   answer. Every mock result carries `IsMock = $true` and `model = 'mock'`.
+   answer. Every mock result carries `is_mock=True` and `model="mock"`.
 4. **Pin the model.** Use a versioned id (currently `jev-1.13.0`), never `jev-latest`, in
    anything that has a threshold. Log the served model on every call and refuse a mismatch.
 5. **Thresholds belong to a fingerprint** of (question wording, question type, model
@@ -45,22 +45,23 @@ else) live in optional domain packs, never in the core.
 
 ## Platform
 
-- PowerShell 7.4+ (`pwsh`), Windows first, must also run on Linux. No Windows PowerShell 5.1.
-  Schedulers whose PowerShell host is 5.1 (for example SQL Agent) must call `pwsh.exe`
-  from a command step instead.
-- Python only where a host requires it (Hermes plugins); stdlib only unless justified.
-- API key: SecretManagement vault secret `TypeSafeApiKey`, fallback `$env:TYPESAFE_API_KEY`.
-  Never commit, log or echo it.
+See `docs/adr/0003-python-implementation.md`.
+
+- Python 3.11 or later. Windows, Linux and macOS are equal targets.
+- Runtime: standard library only. A runtime dependency needs a written justification in an
+  ADR. Development tools (`uv`, `pytest`, `ruff`, `mypy --strict`) never ship at runtime.
+- API key: `TYPESAFE_API_KEY`, or `TYPESAFE_API_KEY_COMMAND` (a command that prints the key,
+  for any secret store). Never commit, log or echo it, including in exception messages.
 
 ## Coding conventions
 
-- `Set-StrictMode -Version Latest`; `$ErrorActionPreference = 'Stop'`.
+- Type hints everywhere; `mypy --strict` and `ruff` clean.
 - Typed errors: distinguish auth (401/403), rate limit (429), overloaded (529), timeout,
-  server (5xx) and validation (422; SDKs also map 400). On PowerShell 7 the error body is in
-  `$_.ErrorDetails.Message`. See `docs/research/06-reverified-facts.md`.
-- Retries honor `Retry-After`, add jitter, and cap total wait.
-- Pester 5 tests. Tests never call the live API; use a labeled mock transport.
-- PSScriptAnalyzer clean.
+  server (5xx) and validation (422; SDKs also map 400). Keep the raw error body (from
+  `urllib.error.HTTPError`) in the typed error. See `docs/research/06-reverified-facts.md`.
+- Retries honor `Retry-After` and `retry-after-ms`, add jitter, and stay within the call's
+  total deadline.
+- `pytest` tests. Tests never call the live API; use the labeled mock transport.
 - Third-party code is pinned by org and commit SHA (`sources.lock.json`). Watch for name
   squatting: `TypeSafeAI` is a community org, the official one is `typesafe-ai`.
 - Prose in docs, comments and commit messages: no em dashes (owner preference).

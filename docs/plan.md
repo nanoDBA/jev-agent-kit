@@ -21,11 +21,11 @@
   documented Choice/Score limits, error schema, Retry-After behavior, Codex and Hermes skill
   directory paths.
 
-### Phase 1: PowerShell client layer (depends on P0-5; ADRs 0001 and 0002)
+### Phase 1: Python client layer (depends on P0-5; ADRs 0001, 0002 and 0003)
 - P1-1 Deferred (ADR 0001): upstream PRs for dfinke/Jev are optional goodwill, not planned.
 - P1-2 Client module: receipts (JSONL), state budget and redaction, deterministic egress
   check, question fingerprints, per-fingerprint threshold registry marked calibrated or not.
-- P1-3 Labeled mock transport and Pester suite; no live calls in tests.
+- P1-3 Labeled mock transport and pytest suite; no live calls in tests.
 - P1-4 Smoke script with a hard call cap for live verification.
 
 ### Phase 2: runtime skill (depends on P1-2)
@@ -35,7 +35,7 @@
   preflight route, postflight verify, tool-call gate, stop or continue. Domain packs are
   optional add-ons with their own egress profile, built when a real use case needs one (a SQL
   pack for destructiveness and log triage is one candidate).
-- P2-3 `install.ps1` and `install.sh` linking the canonical skill into each host's skill
+- P2-3 Python installer command linking the canonical skill into each host's skill
   directory (paths verified in P0-5).
 - P2-4 Skill-library audit borrowed from aleksvega (prompt injection, dangerous commands).
 

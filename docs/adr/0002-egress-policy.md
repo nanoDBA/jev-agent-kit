@@ -126,7 +126,8 @@ Profiles are versioned data like the core rules.
 - Some useful context (real names, literal values) is never visible to Jev. Questions must
   be designed to work on normalized text and tokens.
 - A detector false positive costs an "ask" or "no advice", never a leak.
-- The HMAC key is a new local secret (stored like the API key, in SecretManagement).
+- The HMAC key is a new local secret, supplied like the API key (environment variable or key
+  command, ADR 0003).
 
 ## Open items for the owner
 

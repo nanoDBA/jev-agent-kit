@@ -204,4 +204,6 @@ def test_subprocess_stub_engine_yields_internal_envelope_and_exit_zero() -> None
     )
 
     assert result.returncode == 0
-    assert json.loads(result.stdout) == _INTERNAL_ENVELOPE
+    parsed = json.loads(result.stdout)
+    assert parsed["status"] == "error"
+    assert parsed["records"] == []

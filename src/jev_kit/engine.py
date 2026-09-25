@@ -1,63 +1,456 @@
-"""The engine's JSON-facing entry point and the request/response contract.
+"""The decide core and its JSON-facing entry point.
 
-This module holds the one function the CLI and the smoke script call. Its implementation
-(the ``decide`` core: build request, budget, egress, transport, validate, route, receipt) is
-being filled in on a later slice; the signature and JSON contract below are frozen so the CLI
-and smoke work can be built against them (spec stories 7 to 10, 82).
+Wires the pieces together for one request: parse, load the question set and registry, resolve
+keys, transform and scan state (egress), reserve the rate budget, call the transport within the
+deadline (with bounded retries), validate the response, route each question through the matrix,
+and write receipts before returning any accept. It never raises for runtime conditions; a
+request whose questions cannot be identified returns the error envelope.
+
+JSON request and response contract: see below.
 
 JSON request (schema_version 1):
-    {
-      "schema_version": 1,
-      "question_set_path": "<path>",         # or "question_set": {inline object}
-      "state": { ... },                       # keyed object
-      "mode": "shadow" | "enforce",           # default "shadow"
-      "action_id": "<opaque id>"              # optional
-    }
+    {"schema_version": 1, "question_set_path" | "question_set", "state": {...},
+     "mode": "shadow" | "enforce", "action_id": "..."}
 
 JSON response (schema_version 1):
-    {
-      "schema_version": 1,
-      "status": "ok" | "error",
-      "reason": "<fail reason>",              # only when status == "error"
-      "records": [                            # present when status == "ok"
-        {
-          "decision_id": "...",
-          "question_id": "...",
-          "route": "accept" | "ask" | "no_advice",
-          "would_route": "accept" | "ask" | "no_advice" | null,
-          "label": "..." | null,
-          "value": <number> | null,
-          "distribution": { ... } | null,
-          "confidence": <number> | null,
-          "noul": <number> | null,
-          "margin": <number> | null,
-          "threshold_status": "calibrated" | "uncalibrated" | "never_auto_accept" | null,
-          "mode": "shadow" | "enforce",
-          "fail_reason": "<fail reason>" | null,
-          "is_mock": true | false,
-          "receipt_written": true | false
-        }
-      ]
-    }
-
-An "error" response is the safe envelope for when the questions cannot be identified
-(unreadable question set, bad request shape). Hosts must treat it as "ask" (spec story 26).
+    {"schema_version": 1, "status": "ok", "records": [record, ...]}
+  or the error envelope:
+    {"schema_version": 1, "status": "error", "reason": "<fail reason>", "records": []}
 """
 
 from __future__ import annotations
 
+import hashlib
+import random
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
-from jev_kit.transport import Transport
+from jev_kit import registry as registry_mod
+from jev_kit import secrets
+from jev_kit.deadline import Deadline
+from jev_kit.egress import EgressContext, personal_kinds_present, scan_request, transform_state
+from jev_kit.errors import FailReason, ValidationError
+from jev_kit.fingerprint import canonical_bytes, question_fingerprint, question_set_digest
+from jev_kit.questionset import (
+    QuestionSet,
+    egress_contract,
+    load_question_set,
+    load_question_set_file,
+)
+from jev_kit.ratebudget import RateBudget
+from jev_kit.receipts import ReceiptWriter, get_writer, new_action_id, validate_action_id
+from jev_kit.routing import (
+    Candidate,
+    RegistryEntry,
+    ThresholdStatus,
+    evaluate_candidate,
+    resolve_route,
+)
+from jev_kit.transport import LiveTransport, Transport, TransportFailure, TransportResponse
+from jev_kit.types import (
+    ChoiceAnswer,
+    ChoiceQuestion,
+    ConsequenceClass,
+    Mode,
+    NoulAnswer,
+    Question,
+    Route,
+    ScoreAnswer,
+    ScoreQuestion,
+)
+from jev_kit.validation import validate_answer_set
 
 SCHEMA_VERSION = 1
+_RETRYABLE = {FailReason.RATE_LIMIT, FailReason.OVERLOADED, FailReason.SERVER}
+
+
+@dataclass
+class EngineConfig:
+    registry_path: str | None = None
+    hmac_key: bytes | None = None
+    api_key: str | None = None
+    deadline_seconds: float = 10.0
+    receipt_reserve: float = 0.5
+    max_retries: int = 2
+    source_allowlist: frozenset[str] = frozenset()
+    public_names: frozenset[str] = frozenset()
+    language_profiles: Mapping[str, Callable[[str], str]] = field(default_factory=dict)
+    rate_budget: RateBudget | None = None
+    writer: ReceiptWriter | None = None
+    require_dpa_attested: bool = False  # set by the live path; mock never requires it
+
+
+def _error_envelope(reason: FailReason) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "status": "error",
+        "reason": reason.value,
+        "records": [],
+    }
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _wire_question(question: Question) -> dict[str, Any]:
+    wire: dict[str, Any] = {
+        "type": question.question_type.value,
+        "instructions": question.instructions,
+    }
+    if isinstance(question, ChoiceQuestion):
+        wire["criteria"] = {opt: None for opt in question.options}
+    elif isinstance(question, ScoreQuestion):
+        wire["criteria"] = {str(i): level for i, level in enumerate(question.levels)}
+    return wire
+
+
+def _option_or_level_set(question: Question) -> list[str]:
+    if isinstance(question, ChoiceQuestion):
+        return list(question.options)
+    if isinstance(question, ScoreQuestion):
+        return list(question.levels)
+    return []
+
+
+def _send_with_retries(
+    transport: Transport,
+    body: bytes,
+    deadline: Deadline,
+    budget: RateBudget,
+    est_tokens: int,
+    max_retries: int,
+) -> TransportResponse | TransportFailure:
+    attempt = 0
+    last: TransportFailure = TransportFailure(FailReason.TRANSPORT, "no_attempt")
+    while attempt <= max_retries:
+        if deadline.remaining_for_work() <= 0:
+            return TransportFailure(FailReason.TIMEOUT, "deadline")
+        if not budget.reserve(est_tokens):
+            return TransportFailure(FailReason.RATE_BUDGET, "budget")
+        result = transport.send(body, deadline)
+        if isinstance(result, TransportResponse):
+            return result
+        last = result
+        if result.reason not in _RETRYABLE:
+            return result
+        attempt += 1
+        backoff = min(
+            0.5 * (2 ** (attempt - 1)) + random.uniform(0, 0.25), deadline.remaining_for_work()
+        )
+        if backoff <= 0:
+            return TransportFailure(FailReason.TIMEOUT, "deadline")
+        time.sleep(backoff)
+    return last
+
+
+def _candidate_for(
+    answer: NoulAnswer | ChoiceAnswer | ScoreAnswer, entry: RegistryEntry
+) -> tuple[Candidate | None, FailReason | None]:
+    if entry.threshold is None:
+        return None, None
+    try:
+        return evaluate_candidate(answer, entry.threshold), None
+    except ValidationError as exc:
+        return None, exc.reason
+
+
+def _record(
+    *,
+    decision_id: str,
+    question: Question,
+    answer: Any,
+    entry: RegistryEntry | None,
+    route: Route,
+    would: Route | None,
+    reason: FailReason | None,
+    mode: Mode,
+    is_mock: bool,
+    candidate: Candidate | None,
+) -> dict[str, Any]:
+    status = entry.status.value if entry is not None else None
+    label: str | None = None
+    value: float | None = None
+    distribution: dict[str, float] | None = None
+    confidence: float | None = None
+    noul: float | None = None
+    margin: float | None = None
+    if isinstance(answer, ChoiceAnswer):
+        label = answer.choice
+        distribution = answer.probabilities
+        confidence = answer.confidence
+    elif isinstance(answer, ScoreAnswer):
+        value = answer.score
+        distribution = answer.probabilities
+        confidence = answer.confidence
+    elif isinstance(answer, NoulAnswer):
+        noul = answer.noul
+    if candidate is not None:
+        label = candidate.label if candidate.label is not None else label
+        margin = candidate.margin
+    return {
+        "decision_id": decision_id,
+        "question_id": question.question_id,
+        "consequence": question.consequence.value,
+        "route": route.value,
+        "would_route": would.value if would is not None else None,
+        "label": label,
+        "value": value,
+        "distribution": distribution,
+        "confidence": confidence,
+        "noul": noul,
+        "margin": margin,
+        "threshold_status": status,
+        "mode": mode.value,
+        "fail_reason": reason.value if reason is not None else None,
+        "is_mock": is_mock,
+        "receipt_written": False,  # set True after the receipt commits
+    }
+
+
+def _decide(
+    request: Mapping[str, Any], transport: Transport, config: EngineConfig
+) -> dict[str, Any]:
+    if not isinstance(request, Mapping) or request.get("schema_version") != 1:
+        return _error_envelope(FailReason.CONFIG)
+    mode_raw = request.get("mode", Mode.SHADOW.value)
+    if mode_raw not in (Mode.SHADOW.value, Mode.ENFORCE.value):
+        return _error_envelope(FailReason.CONFIG)
+    mode = Mode(mode_raw)
+    state = request.get("state", {})
+    if not isinstance(state, Mapping):
+        return _error_envelope(FailReason.CONFIG)
+
+    # Identify the questions first; if we cannot, return the safe envelope.
+    try:
+        if "question_set" in request:
+            qset = load_question_set(request["question_set"])
+        elif "question_set_path" in request:
+            qset = load_question_set_file(request["question_set_path"])
+        else:
+            return _error_envelope(FailReason.CONFIG)
+    except ValidationError:
+        return _error_envelope(FailReason.CONFIG)
+
+    action_id = request.get("action_id")
+    if action_id is not None:
+        try:
+            validate_action_id(action_id)
+        except ValidationError:
+            return _error_envelope(FailReason.CONFIG)
+
+    deadline = Deadline(config.deadline_seconds, reserve_seconds=config.receipt_reserve)
+    budget = config.rate_budget or RateBudget()
+    writer = config.writer or get_writer()
+    call_id = new_action_id()
+    set_digest = question_set_digest(qset.raw)
+    contract = egress_contract(qset)
+
+    # A whole-request failure (alias, registry, egress, transport, validation) sets these.
+    whole_fail: FailReason | None = None
+    answers: dict[str, Any] = {}
+    served_model: str | None = None
+    sent_digest: str | None = None
+
+    if qset.model in ("jev-latest", "jev-preview"):
+        whole_fail = FailReason.CONFIG  # aliases are refused (spec story 28)
+
+    registry: dict[str, RegistryEntry] = {}
+    if whole_fail is None:
+        try:
+            registry = (
+                registry_mod.load_registry(config.registry_path) if config.registry_path else {}
+            )
+        except ValidationError:
+            whole_fail = FailReason.CONFIG
+
+    if whole_fail is None:
+        try:
+            hmac_key = config.hmac_key
+            if hmac_key is None and personal_kinds_present(qset.schema):
+                hmac_key = secrets.resolve_hmac_key(timeout=deadline.remaining_for_work())
+            ctx = EgressContext(
+                hmac_key=hmac_key,
+                public_names=config.public_names,
+                source_allowlist=config.source_allowlist,
+                language_profiles=config.language_profiles,
+                transcript_enabled=qset.transcripts_enabled,
+                transcript_cap=qset.transcripts_cap,
+            )
+            outgoing_state = transform_state(state, qset.schema, ctx)
+            wire = {
+                "model": qset.model,
+                "state": outgoing_state,
+                "questions": {qid: _wire_question(q) for qid, q in qset.questions.items()},
+            }
+            serialized = canonical_bytes(wire)
+            hit = scan_request(serialized, wire)
+            if hit is not None:
+                whole_fail = FailReason.EGRESS_BLOCKED
+        except ValidationError as exc:
+            whole_fail = exc.reason
+
+    if whole_fail is None:
+        est_tokens = max(1, len(serialized) // 3)
+        result = _send_with_retries(
+            transport, serialized, deadline, budget, est_tokens, config.max_retries
+        )
+        if isinstance(result, TransportFailure):
+            whole_fail = result.reason
+        else:
+            sent_digest = hashlib.sha256(serialized).hexdigest()
+            try:
+                body = _parse_response_body(result.body)
+                served_model = body.get("model") if isinstance(body, dict) else None
+                if served_model != qset.model:
+                    whole_fail = FailReason.MODEL_MISMATCH
+                else:
+                    answers = validate_answer_set(qset.questions, body.get("answers"))
+            except ValidationError as exc:
+                whole_fail = exc.reason
+
+    # Route every question.
+    records: list[dict[str, Any]] = []
+    for qid, question in qset.questions.items():
+        fp = question_fingerprint(
+            instructions=question.instructions,
+            criteria=_wire_question(question).get("criteria"),
+            question_type=question.question_type.value,
+            option_or_level_set=_option_or_level_set(question),
+            model=qset.model,
+            egress_contract=contract,
+        )
+        entry = registry.get(fp)
+        answer = answers.get(qid)
+        failed = whole_fail is not None
+        reason = whole_fail
+        candidate: Candidate | None = None
+        if not failed and entry is not None and entry.status is ThresholdStatus.CALIBRATED:
+            if entry.escalation_target != qset.escalation_target:
+                failed, reason = True, FailReason.CONFIG
+            elif answer is not None:
+                candidate, cand_reason = _candidate_for(answer, entry)
+                if cand_reason is not None:
+                    failed, reason = True, cand_reason
+        resolution = resolve_route(
+            consequence=question.consequence,
+            mode=mode,
+            entry=entry,
+            candidate=candidate,
+            failed=failed,
+            fail_reason=reason,
+            is_mock=transport.is_mock,
+        )
+        records.append(
+            _record(
+                decision_id=new_action_id(),
+                question=question,
+                answer=answer,
+                entry=entry,
+                route=resolution.route,
+                would=resolution.would_route,
+                reason=resolution.reason,
+                mode=mode,
+                is_mock=transport.is_mock,
+                candidate=candidate,
+            )
+        )
+
+    _write_receipts(
+        writer, records, call_id, set_digest, qset, served_model, sent_digest, action_id
+    )
+    return {"schema_version": SCHEMA_VERSION, "status": "ok", "records": records}
+
+
+def _parse_response_body(body: bytes) -> Any:
+    import json
+
+    try:
+        return json.loads(body.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise ValidationError(FailReason.RESPONSE_MALFORMED, "body_not_json") from exc
+
+
+def _write_receipts(
+    writer: ReceiptWriter,
+    records: list[dict[str, Any]],
+    call_id: str,
+    set_digest: str,
+    qset: QuestionSet,
+    served_model: str | None,
+    sent_digest: str | None,
+    action_id: str | None,
+) -> None:
+    lines = [
+        {
+            "kind": "decision",
+            "timestamp": _now_iso(),
+            "call_id": call_id,
+            "decision_id": rec["decision_id"],
+            "question_id": rec["question_id"],
+            "question_set": {"id": qset.set_id, "version": qset.version, "digest": set_digest},
+            "requested_model": qset.model,
+            "served_model": served_model,
+            "sent_digest": sent_digest,
+            "distribution": rec["distribution"],
+            "label": rec["label"],
+            "value": rec["value"],
+            "noul": rec["noul"],
+            "threshold_status": rec["threshold_status"],
+            "would_route": rec["would_route"],
+            "route": rec["route"],
+            "mode": rec["mode"],
+            "fail_reason": rec["fail_reason"],
+            "is_mock": rec["is_mock"],
+            "action_id": action_id,
+        }
+        for rec in records
+    ]
+    committed = writer.write_call(lines)
+    for rec in records:
+        if committed:
+            rec["receipt_written"] = True
+        elif rec["route"] == Route.ACCEPT.value:
+            # No durable record: never return an accept (spec stories 75, 76).
+            is_gate = rec["consequence"] == ConsequenceClass.GATE.value
+            rec["route"] = Route.ASK.value if is_gate else Route.NO_ADVICE.value
+            rec["fail_reason"] = FailReason.RECEIPT.value
+            rec["receipt_written"] = False
+        else:
+            rec["fail_reason"] = rec["fail_reason"] or FailReason.RECEIPT.value
+            rec["receipt_written"] = False
 
 
 def run_json(request: dict[str, Any], *, transport: Transport | None = None) -> dict[str, Any]:
     """Run one decision request expressed as JSON and return the JSON response.
 
-    ``transport`` None means build the configured transport (live). Tests and the smoke
-    script pass a transport explicitly. This never raises for runtime conditions; a request
-    that cannot be understood returns the error envelope.
+    ``transport`` None builds the live transport from the resolved API key. This never raises
+    for runtime conditions; a caught exception becomes an internal error envelope.
     """
-    raise NotImplementedError("engine.run_json is implemented in a later slice")
+    try:
+        config = EngineConfig()
+        if transport is None:
+            api_key = config.api_key or secrets.resolve_api_key(timeout=config.deadline_seconds)
+            if api_key is None:
+                return _error_envelope(FailReason.CONFIG)
+            transport = LiveTransport(api_key)
+        return _decide(request, transport, config)
+    except ValidationError as exc:
+        return _error_envelope(exc.reason)
+    except Exception:
+        return _error_envelope(FailReason.INTERNAL)
+
+
+def decide(
+    request: dict[str, Any], *, transport: Transport, config: EngineConfig | None = None
+) -> dict[str, Any]:
+    """Programmatic entry point with an injected transport and optional config."""
+    try:
+        return _decide(request, transport, config or EngineConfig())
+    except ValidationError as exc:
+        return _error_envelope(exc.reason)
+    except Exception:
+        return _error_envelope(FailReason.INTERNAL)

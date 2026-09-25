@@ -11,6 +11,10 @@ Jev supplies cheap, low-variance evidence (rank, verify, gate), code decides.
 The research phase is done. Read `docs/research/` in numeric order before writing code.
 Extend that research; do not redo the prior-art sweep from scratch.
 
+Scope: general purpose. The kit must work for any agent task that has decisions worth
+typing (routing, verifying, gating, triage). Database work is the owner's first use case and
+lives in an optional domain pack, not in the core.
+
 ## Non-negotiables
 
 1. **Code owns authority.** Jev returns evidence. Code decides. The host (Claude Code,
@@ -42,7 +46,8 @@ Extend that research; do not redo the prior-art sweep from scratch.
 ## Platform
 
 - PowerShell 7.4+ (`pwsh`), Windows first, must also run on Linux. No Windows PowerShell 5.1.
-  SQL Agent jobs must call `pwsh.exe` from a CmdExec step, not the PowerShell step type.
+  Schedulers whose PowerShell host is 5.1 (for example SQL Agent) must call `pwsh.exe`
+  from a command step instead.
 - Python only where a host requires it (Hermes plugins); stdlib only unless justified.
 - API key: SecretManagement vault secret `TypeSafeApiKey`, fallback `$env:TYPESAFE_API_KEY`.
   Never commit, log or echo it.

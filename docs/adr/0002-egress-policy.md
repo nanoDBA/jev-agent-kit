@@ -9,9 +9,12 @@
 
 ## Context
 
-The client sends small state packets to TypeSafe's hosted API. Typical content in our work:
-T-SQL text, SQL Server object names, error and log lines, shell commands, file paths and
-agent transcript excerpts.
+The client sends small state packets to TypeSafe's hosted API. The kit is general purpose:
+state can hold code or query text, names of internal systems and people, error and log
+lines, shell and tool commands, file paths and URLs, free text under judgment (tickets,
+messages, documents, web content) and agent transcript excerpts. The policy is therefore
+defined over content kinds, not over any one domain. Domain-specific rules live in
+optional profiles (see below).
 
 What TypeSafe's own terms say (checked directly):
 
@@ -61,21 +64,37 @@ A detector hit anywhere in the request blocks the whole request.
 
 ### Tier 2: blocked unless allowlisted and transformed
 
-| Content | Required transform before egress | Basis |
+| Content kind | Default transform before egress | Basis |
 | --- | --- | --- |
-| T-SQL text | Replace every literal with a parameter token (`@p1`, `@p2`), in the style of PostgreSQL `pg_stat_statements` normalization; strip comments. SQL Server Query Store keeps literals, so the kit must strip them itself. | SI-12(1); SI-19(4) |
-| Object names (server, database, schema, table, column, login) | Replace with HMAC-SHA256 tokens. Names on a reviewed allowlist (for example `sys.*`, `INFORMATION_SCHEMA.*`, `msdb` job-system objects) pass unchanged. | SP 800-188 section 4.3.1; OWASP Logging ("commercially-sensitive information") |
-| Error and log lines | Keep error number, severity and state; mask quoted values, logins, host names and IP addresses. | OWASP Logging; AC-4(25) |
-| Shell commands | Keep the command and flag names; redact argument values, environment values and URLs with query strings. | OWASP LLM02; AC-4(8) |
-| File paths | Replace the user profile and UNC hosts with tokens (`%USERPROFILE%`, `<host>`); HMAC the remaining segments unless allowlisted. | SI-19(4) |
-| Agent transcripts | **Off by default.** When a question set enables it: a size-capped excerpt only, after all Tier 2 transforms, then Tier 1 detection. | OWASP LLM02; NIST AI 600-1 section 2.4 |
+| Code and query text (any language: SQL, scripts, configuration, infrastructure as code) | Replace string and numeric literals with placeholder tokens and strip comments, using the language's profile when one exists; otherwise treat as free text. Normalization follows the model of PostgreSQL `pg_stat_statements` and SQL Server `query_hash`, which identify statements that differ only by literals. | SI-12(1); SI-19(4) |
+| Internal identifiers (host, service, repository, project, customer, database object, account and user names) | Replace with HMAC-SHA256 tokens. Names on a reviewed allowlist of public or system names pass unchanged. | SP 800-188 section 4.3.1; OWASP Logging ("commercially-sensitive information") |
+| Personal contact data (email addresses, phone numbers, postal addresses, IP addresses) | Mask, or replace with HMAC tokens when linkage matters. | NIST SP 800-122 section 2.1; SI-19(4); GDPR Art. 4(5) |
+| Error and log lines | Keep codes, levels and message templates; mask quoted values, identifiers and personal contact data. | OWASP Logging; AC-4(25) |
+| Shell and tool commands | Keep the command and flag names; redact argument values, environment values and URLs with query strings. | OWASP LLM02; AC-4(8) |
+| File paths and URLs | Replace the user profile, hosts and query strings with tokens (`%USERPROFILE%`, `<host>`); HMAC the remaining segments unless allowlisted. | SI-19(4) |
+| Free text under judgment (tickets, messages, documents, web content) | Allowed only when the question set declares the field as the content being judged. Personal contact data is masked by default; a question set may opt out per field with a recorded justification. Tier 1 detection always applies. | OWASP LLM02; SI-12(1); RA-8 |
+| Agent transcripts | **Off by default.** When a question set enables them: a size-capped excerpt only, after all other transforms, then Tier 1 detection. | OWASP LLM02; NIST AI 600-1 section 2.4 |
 
 ### Tier 3: allowed as-is
 
 Only fields a question set's allowlist names, of these kinds: tool name, action category,
-the kit's own field names and decision codes, numeric metrics (durations, row counts, rows
-affected), SQL Server error numbers, product and version strings, and HMAC tokens produced by
-Tier 2. (SC-7(5); CIS 3.7, 3.8; SI-12(1).)
+the kit's own field names and decision codes, numeric metrics (durations, counts, sizes),
+error codes, product and version strings, and HMAC tokens produced by Tier 2. (SC-7(5);
+CIS 3.7, 3.8; SI-12(1).)
+
+### Domain profiles
+
+A profile adds detectors, transforms and allowlists for one domain. It may only tighten the
+core policy: a profile can add blocked patterns and stricter transforms, never remove a Tier 1
+class or relax a Tier 2 default without a recorded justification in the question set.
+Profiles are versioned data like the core rules.
+
+- **SQL profile** (first profile, because it matches the owner's current work): literal
+  stripping for T-SQL and other SQL dialects; object-name tokenization with a system-object
+  allowlist (for example `sys.*`, `INFORMATION_SCHEMA.*`); SQL Server error lines reduced to
+  error number, severity and state; SQL Server and Azure SQL connection-string detectors.
+- Other profiles (for example cloud and infrastructure as code, web content, source control)
+  are added when a question set needs them.
 
 ### Preconditions for any live egress
 
@@ -102,16 +121,18 @@ Tier 2. (SC-7(5); CIS 3.7, 3.8; SI-12(1).)
 
 ## Consequences
 
-- Some useful context (real object names, literal values) is never visible to Jev. Questions
-  must be designed to work on normalized text and tokens.
+- Some useful context (real names, literal values) is never visible to Jev. Questions must
+  be designed to work on normalized text and tokens.
 - A detector false positive costs an "ask" or "no advice", never a leak.
 - The HMAC key is a new local secret (stored like the API key, in SecretManagement).
 
 ## Open items for the owner
 
-1. Whether to pursue TypeSafe's enterprise zero data retention.
-2. Whether any of your databases' object names are non-sensitive enough to allowlist as-is.
-3. Confirm with TypeSafe whether "Telemetry" can include raw input, the actual retention
+1. Pursue TypeSafe's enterprise zero data retention (owner: yes, 2026-09-25). It is not a
+   prerequisite and does not relax this policy, because derived Telemetry may fall outside it.
+2. Which internal identifiers, per profile, are non-sensitive enough to allowlist as-is.
+3. Confirm with TypeSafe whether zero data retention also covers Telemetry derived from
+   input, whether "Telemetry" can include raw input, the actual retention
    period without zero retention, and the scope of the SOC 2 Type II report.
 
 ## References

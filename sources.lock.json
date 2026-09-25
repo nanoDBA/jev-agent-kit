@@ -141,12 +141,12 @@
     },
     {
       "repo": "pedramamini/jev (gist)",
-      "url": "https://gist.github.com/pedramamini/014676fa8684d91bf7000f4623701ada",
-      "sha": null,
+      "url": "https://gist.github.com/pedramamini/014676fa8684d91bf7000f4623701ada.git",
+      "sha": "6bb90186f27677fbc5a83b57ddcb8ee3aef3fef1",
       "kind": "gist",
       "review_depth": "source",
       "role": "reference:cli+skill,windows-select-bug",
-      "note": "Gist revision not pinned (gist host unreachable from research sandbox). Pin on first sync."
+      "note": "Pinned 2026-09-25 to the latest gist revision (committed 2026-09-20T15:27:02Z, 10 revisions total). Research predates pinning, so this is assumed, not proven, to be the reviewed revision."
     },
     {
       "repo": "RahulBalakavi/claude-code-jev",

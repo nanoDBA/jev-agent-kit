@@ -59,7 +59,7 @@ Pinned commits are in `/sources.lock.json`. "Source" means the code was cloned a
    strings from error logs).
 3. Jev scoring multiple proposers with one shared question set, measured against a Self-MoA
    baseline.
-4. Vendor exit: TypeSafe ships `system-one-adapter` (LLM-backed drop-in client). Nobody wires
+4. Vendor exit: TypeSafe ships `system-one-adapter-python` (LLM-backed drop-in client). Nobody wires
    it in as a shadow comparator or degraded-mode fallback.
 
 ## Ecosystem noise

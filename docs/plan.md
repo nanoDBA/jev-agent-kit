@@ -57,5 +57,5 @@
 - P5-3 Multi-model variant; keep only if it beats P5-2 on our tasks.
 
 ### Phase 6: resilience (depends on P1-2)
-- P6-1 `system-one-adapter` as shadow comparator.
+- P6-1 `system-one-adapter-python` as shadow comparator.
 - P6-2 Degraded mode when Jev is unavailable: advisory off, gates to ask.

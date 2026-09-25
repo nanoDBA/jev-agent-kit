@@ -49,8 +49,9 @@ Extend that research; do not redo the prior-art sweep from scratch.
 ## Coding conventions
 
 - `Set-StrictMode -Version Latest`; `$ErrorActionPreference = 'Stop'`.
-- Typed errors: distinguish auth (401/403), rate limit (429), timeout, server (5xx) and
-  validation (400). On PowerShell 7 the error body is in `$_.ErrorDetails.Message`.
+- Typed errors: distinguish auth (401/403), rate limit (429), overloaded (529), timeout,
+  server (5xx) and validation (422; SDKs also map 400). On PowerShell 7 the error body is in
+  `$_.ErrorDetails.Message`. See `docs/research/06-reverified-facts.md`.
 - Retries honor `Retry-After`, add jitter, and cap total wait.
 - Pester 5 tests. Tests never call the live API; use a labeled mock transport.
 - PSScriptAnalyzer clean.

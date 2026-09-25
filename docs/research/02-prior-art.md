@@ -52,6 +52,23 @@ Pinned commits are in `/sources.lock.json`. "Source" means the code was cloned a
 - danielgshea/jev-as-a-judge, keduseworku/Jev-Calibration, sureshbujji/jev-eval-lab:
   see `04-calibration.md` and `05-mixture-of-agents.md`.
 
+### LLM plus Jev in one loop (added 2026-09-25, README level)
+- **browser-use/jev-ultrafast** (org account of the Browser Use project): a browser agent where
+  Jev picks the operation and the target element from a live, numbered element table, and a
+  small LLM writes text only when the operation is `TYPE_TEXT`. The target questions are
+  speculative (one per operation type), so two decisions take one round trip. It is the
+  clearest public example of "Jev decides, LLM generates" inside an agent loop. The Browser Use
+  cloud waitlist is advertised in the README; treat its speed claims as marketing until read.
+- **tamaratran/fast-jev-compaction**: a Claude Code plugin that replaces the compaction
+  summary. It asks two Nouls per tool call (keep the call? keep the result verbatim?) and
+  deletes or truncates instead of summarizing. It splits questions into concurrent requests to
+  stay under the token limits, resending the full state with each. Relevant to `08` and to
+  Claude Code hook work.
+- Not pinned, for later: jaredpalmer/kev (open Jev-like decision models on Qwen), a possible
+  degraded-mode or vendor-exit option next to `system-one-adapter-python`.
+- GitHub star counts on Jev repos are very high for a 10-day-old ecosystem (tens of
+  thousands). Do not treat stars as a signal of quality.
+
 ## Gaps nobody covers (our opportunity)
 
 1. Windows and PowerShell agent integration (hooks, installers). Only dfinke's client exists.

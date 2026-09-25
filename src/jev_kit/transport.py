@@ -63,5 +63,7 @@ class MockTransport:
         return outcome
 
     @classmethod
-    def replying(cls, status: int, body: bytes, headers: Mapping[str, str] | None = None) -> MockTransport:
+    def replying(
+        cls, status: int, body: bytes, headers: Mapping[str, str] | None = None
+    ) -> MockTransport:
         return cls(outcomes=[TransportResponse(status, dict(headers or {}), body)])

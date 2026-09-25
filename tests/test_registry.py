@@ -1,0 +1,371 @@
+"""Registry loader tests (spec stories 44 to 46, 71, 72, 79a).
+
+Covers a valid registry with all three calibrated threshold shapes plus uncalibrated and
+never-auto-accept entries, the missing-file contract, and every malformed-input rejection:
+duplicate keys, non-finite numbers, bad fingerprints, unknown status, unsafe strings, a
+calibrated entry missing its threshold, and overlapping score intervals surfaced through
+the loader.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from jev_kit.errors import FailReason, ValidationError
+from jev_kit.registry import load_registry, loads_registry
+from jev_kit.routing import ChoiceThreshold, NoulThreshold, ScoreThreshold, ThresholdStatus
+
+FP_NOUL = "a" * 64
+FP_CHOICE = "b" * 64
+FP_SCORE = "c" * 64
+FP_UNCAL = "d" * 64
+FP_NEVER = "e" * 64
+
+
+def _valid_registry() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "entries": {
+            FP_NOUL: {
+                "status": "calibrated",
+                "escalation_target": "human-review",
+                "evidence_ref": "ev-2026-09-01",
+                "type": "noul",
+                "threshold": {"yes_bound": 0.9, "no_bound": 0.1},
+            },
+            FP_CHOICE: {
+                "status": "calibrated",
+                "escalation_target": "human-review",
+                "evidence_ref": "ev-2026-09-02",
+                "type": "choice",
+                "threshold": {"min_confidence": 0.7, "min_margin": 0.2},
+            },
+            FP_SCORE: {
+                "status": "calibrated",
+                "escalation_target": "human-review",
+                "evidence_ref": "ev-2026-09-03",
+                "type": "score",
+                "threshold": {
+                    "min_confidence": 0.6,
+                    "intervals": [
+                        {"lower": 0.0, "upper": 0.5, "label": "safe"},
+                        {"lower": 1.5, "upper": 2.0, "label": "unsafe"},
+                    ],
+                },
+            },
+            FP_UNCAL: {
+                "status": "uncalibrated",
+                "escalation_target": "human-review",
+                "evidence_ref": "ev-2026-09-04",
+            },
+            FP_NEVER: {
+                "status": "never_auto_accept",
+                "escalation_target": "human-review",
+                "evidence_ref": "ev-2026-09-05",
+            },
+        },
+    }
+
+
+def test_valid_registry_all_shapes(tmp_path: Path) -> None:
+    entries = loads_registry(json.dumps(_valid_registry()))
+    assert set(entries.keys()) == {FP_NOUL, FP_CHOICE, FP_SCORE, FP_UNCAL, FP_NEVER}
+
+    noul = entries[FP_NOUL]
+    assert noul.status is ThresholdStatus.CALIBRATED
+    assert isinstance(noul.threshold, NoulThreshold)
+    assert noul.threshold.yes_bound == 0.9
+    assert noul.threshold.no_bound == 0.1
+
+    choice = entries[FP_CHOICE]
+    assert isinstance(choice.threshold, ChoiceThreshold)
+    assert choice.threshold.min_confidence == 0.7
+
+    score = entries[FP_SCORE]
+    assert isinstance(score.threshold, ScoreThreshold)
+    assert len(score.threshold.intervals) == 2
+    assert score.threshold.intervals[0].label == "safe"
+
+    uncal = entries[FP_UNCAL]
+    assert uncal.status is ThresholdStatus.UNCALIBRATED
+    assert uncal.threshold is None
+
+    never = entries[FP_NEVER]
+    assert never.status is ThresholdStatus.NEVER_AUTO_ACCEPT
+    assert never.threshold is None
+
+    # load_registry reads the same content from a file.
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(_valid_registry()), encoding="utf-8")
+    from_file = load_registry(path)
+    assert set(from_file.keys()) == set(entries.keys())
+
+
+def test_missing_file_returns_empty(tmp_path: Path) -> None:
+    missing = tmp_path / "does_not_exist.json"
+    assert load_registry(missing) == {}
+
+
+def test_missing_file_by_string_path_returns_empty(tmp_path: Path) -> None:
+    missing = str(tmp_path / "also_missing.json")
+    assert load_registry(missing) == {}
+
+
+def test_directory_path_is_config_failure(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        load_registry(tmp_path)
+    assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_duplicate_keys_rejected() -> None:
+    text = f"""
+    {{
+        "schema_version": 1,
+        "entries": {{
+            "{FP_UNCAL}": {{"status": "uncalibrated", "escalation_target": "t"}},
+            "{FP_UNCAL}": {{"status": "uncalibrated", "escalation_target": "t2"}}
+        }}
+    }}
+    """
+    # Also cover a duplicate key within one object.
+    dup_within = f"""
+    {{
+        "schema_version": 1,
+        "entries": {{
+            "{FP_UNCAL}": {{
+                "status": "uncalibrated",
+                "escalation_target": "t",
+                "escalation_target": "t2",
+                "evidence_ref": "ev"
+            }}
+        }}
+    }}
+    """
+    for bad in (text, dup_within):
+        with pytest.raises(ValidationError) as exc_info:
+            loads_registry(bad)
+        assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_non_finite_number_rejected() -> None:
+    registry = _valid_registry()
+    entries = registry["entries"]
+    assert isinstance(entries, dict)
+    # Inject a raw NaN token by hand-building JSON text (json.dumps cannot emit it safely).
+    bad_text = json.dumps(registry).replace('"yes_bound": 0.9', '"yes_bound": NaN')
+    with pytest.raises(ValidationError) as exc_info:
+        loads_registry(bad_text)
+    assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_bad_fingerprint_rejected() -> None:
+    registry = {
+        "schema_version": 1,
+        "entries": {
+            "not-a-fingerprint": {
+                "status": "uncalibrated",
+                "escalation_target": "t",
+                "evidence_ref": "ev",
+            }
+        },
+    }
+    with pytest.raises(ValidationError) as exc_info:
+        loads_registry(json.dumps(registry))
+    assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_unknown_status_rejected() -> None:
+    registry = {
+        "schema_version": 1,
+        "entries": {
+            FP_UNCAL: {
+                "status": "maybe_calibrated",
+                "escalation_target": "t",
+                "evidence_ref": "ev",
+            }
+        },
+    }
+    with pytest.raises(ValidationError) as exc_info:
+        loads_registry(json.dumps(registry))
+    assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_unsafe_escalation_target_rejected() -> None:
+    registry = {
+        "schema_version": 1,
+        "entries": {
+            FP_UNCAL: {
+                "status": "uncalibrated",
+                "escalation_target": "human; rm -rf /",
+                "evidence_ref": "ev",
+            }
+        },
+    }
+    with pytest.raises(ValidationError) as exc_info:
+        loads_registry(json.dumps(registry))
+    assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_unsafe_evidence_ref_rejected() -> None:
+    registry = {
+        "schema_version": 1,
+        "entries": {
+            FP_UNCAL: {
+                "status": "uncalibrated",
+                "escalation_target": "human-review",
+                "evidence_ref": "<script>",
+            }
+        },
+    }
+    with pytest.raises(ValidationError) as exc_info:
+        loads_registry(json.dumps(registry))
+    assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_calibrated_missing_threshold_rejected() -> None:
+    registry = {
+        "schema_version": 1,
+        "entries": {
+            FP_NOUL: {
+                "status": "calibrated",
+                "escalation_target": "human-review",
+                "evidence_ref": "ev",
+                "type": "noul",
+                # threshold omitted
+            }
+        },
+    }
+    with pytest.raises(ValidationError) as exc_info:
+        loads_registry(json.dumps(registry))
+    assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_calibrated_missing_type_rejected() -> None:
+    registry = {
+        "schema_version": 1,
+        "entries": {
+            FP_NOUL: {
+                "status": "calibrated",
+                "escalation_target": "human-review",
+                "evidence_ref": "ev",
+                "threshold": {"yes_bound": 0.9, "no_bound": 0.1},
+                # type omitted
+            }
+        },
+    }
+    with pytest.raises(ValidationError) as exc_info:
+        loads_registry(json.dumps(registry))
+    assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_overlapping_score_intervals_rejected() -> None:
+    registry = {
+        "schema_version": 1,
+        "entries": {
+            FP_SCORE: {
+                "status": "calibrated",
+                "escalation_target": "human-review",
+                "evidence_ref": "ev",
+                "type": "score",
+                "threshold": {
+                    "min_confidence": 0.6,
+                    "intervals": [
+                        {"lower": 0.0, "upper": 1.2, "label": "a"},
+                        {"lower": 1.0, "upper": 2.0, "label": "b"},
+                    ],
+                },
+            }
+        },
+    }
+    with pytest.raises(ValidationError) as exc_info:
+        loads_registry(json.dumps(registry))
+    assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_unknown_schema_version_rejected() -> None:
+    registry = {"schema_version": 2, "entries": {}}
+    with pytest.raises(ValidationError) as exc_info:
+        loads_registry(json.dumps(registry))
+    assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_schema_version_rejects_bool() -> None:
+    registry = {"schema_version": True, "entries": {}}
+    with pytest.raises(ValidationError) as exc_info:
+        loads_registry(json.dumps(registry))
+    assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_not_json_rejected() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        loads_registry("not json at all")
+    assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_root_not_object_rejected() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        loads_registry("[]")
+    assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_bound_rejects_bool() -> None:
+    registry = {
+        "schema_version": 1,
+        "entries": {
+            FP_NOUL: {
+                "status": "calibrated",
+                "escalation_target": "human-review",
+                "evidence_ref": "ev",
+                "type": "noul",
+                "threshold": {"yes_bound": True, "no_bound": 0.1},
+            }
+        },
+    }
+    with pytest.raises(ValidationError) as exc_info:
+        loads_registry(json.dumps(registry))
+    assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_unknown_top_level_field_rejected() -> None:
+    registry = {"schema_version": 1, "entries": {}, "extra": "nope"}
+    with pytest.raises(ValidationError) as exc_info:
+        loads_registry(json.dumps(registry))
+    assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_unknown_entry_field_rejected() -> None:
+    registry = {
+        "schema_version": 1,
+        "entries": {
+            FP_UNCAL: {
+                "status": "uncalibrated",
+                "escalation_target": "t",
+                "evidence_ref": "ev",
+                "extra": "nope",
+            }
+        },
+    }
+    with pytest.raises(ValidationError) as exc_info:
+        loads_registry(json.dumps(registry))
+    assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_unknown_threshold_type_rejected() -> None:
+    registry = {
+        "schema_version": 1,
+        "entries": {
+            FP_NOUL: {
+                "status": "calibrated",
+                "escalation_target": "human-review",
+                "evidence_ref": "ev",
+                "type": "not_a_type",
+                "threshold": {"yes_bound": 0.9, "no_bound": 0.1},
+            }
+        },
+    }
+    with pytest.raises(ValidationError) as exc_info:
+        loads_registry(json.dumps(registry))
+    assert exc_info.value.reason is FailReason.CONFIG

@@ -8,3 +8,10 @@
 receipts/*.jsonl
 *.duckdb
 *.duckdb.wal
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+*.gate.lock*

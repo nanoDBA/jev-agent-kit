@@ -12,8 +12,8 @@ The research phase is done. Read `docs/research/` in numeric order before writin
 Extend that research; do not redo the prior-art sweep from scratch.
 
 Scope: general purpose. The kit must work for any agent task that has decisions worth
-typing (routing, verifying, gating, triage). Database work is the owner's first use case and
-lives in an optional domain pack, not in the core.
+typing (routing, verifying, gating, triage). Domain-specific rules (databases or anything
+else) live in optional domain packs, never in the core.
 
 ## Non-negotiables
 

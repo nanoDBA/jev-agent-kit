@@ -33,8 +33,8 @@
   asymmetry table, weak-spot guardrails, receipt format. One canonical copy.
 - P2-2 Versioned core question sets in `skills/jev-runtime/questions/`, domain-neutral:
   preflight route, postflight verify, tool-call gate, stop or continue. Domain packs are
-  optional add-ons with their own egress profile; the first is a SQL pack (destructiveness,
-  log-line triage) because it matches the owner's work.
+  optional add-ons with their own egress profile, built when a real use case needs one (a SQL
+  pack for destructiveness and log triage is one candidate).
 - P2-3 `install.ps1` and `install.sh` linking the canonical skill into each host's skill
   directory (paths verified in P0-5).
 - P2-4 Skill-library audit borrowed from aleksvega (prompt injection, dangerous commands).

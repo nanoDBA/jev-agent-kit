@@ -66,7 +66,7 @@ A detector hit anywhere in the request blocks the whole request.
 
 | Content kind | Default transform before egress | Basis |
 | --- | --- | --- |
-| Code and query text (any language: SQL, scripts, configuration, infrastructure as code) | Replace string and numeric literals with placeholder tokens and strip comments, using the language's profile when one exists; otherwise treat as free text. Normalization follows the model of PostgreSQL `pg_stat_statements` and SQL Server `query_hash`, which identify statements that differ only by literals. | SI-12(1); SI-19(4) |
+| Code and query text (any language: SQL, scripts, configuration, infrastructure as code) | Replace string and numeric literals with placeholder tokens and strip comments, using the language's profile when one exists; otherwise treat as free text. | SI-12(1); SI-19(4) |
 | Internal identifiers (host, service, repository, project, customer, database object, account and user names) | Replace with HMAC-SHA256 tokens. Names on a reviewed allowlist of public or system names pass unchanged. | SP 800-188 section 4.3.1; OWASP Logging ("commercially-sensitive information") |
 | Personal contact data (email addresses, phone numbers, postal addresses, IP addresses) | Mask, or replace with HMAC tokens when linkage matters. | NIST SP 800-122 section 2.1; SI-19(4); GDPR Art. 4(5) |
 | Error and log lines | Keep codes, levels and message templates; mask quoted values, identifiers and personal contact data. | OWASP Logging; AC-4(25) |
@@ -89,8 +89,10 @@ core policy: a profile can add blocked patterns and stricter transforms, never r
 class or relax a Tier 2 default without a recorded justification in the question set.
 Profiles are versioned data like the core rules.
 
-- **SQL profile** (first profile, because it matches the owner's current work): literal
-  stripping for T-SQL and other SQL dialects; object-name tokenization with a system-object
+- **SQL profile** (an example profile; which profile ships first depends on the first real use
+  case): literal stripping for SQL dialects, following the model of PostgreSQL
+  `pg_stat_statements` and SQL Server `query_hash`, which identify statements that differ only
+  by literals; object-name tokenization with a system-object
   allowlist (for example `sys.*`, `INFORMATION_SCHEMA.*`); SQL Server error lines reduced to
   error number, severity and state; SQL Server and Azure SQL connection-string detectors.
 - Other profiles (for example cloud and infrastructure as code, web content, source control)

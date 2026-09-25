@@ -35,3 +35,12 @@ threshold in this repo must be measured, fingerprinted and labeled.
 
 Literal reading, math and counting, dates as text, indirection, context rot (accuracy falls
 as state grows), adversarial content in state, contradictory instructions.
+
+## Update 2026-09-25 (see `09`)
+
+- Independent study (Rao and Callison-Burch, arXiv:2609.29769): Jev's confidence ranks its own
+  errors on most panels (AUROC about 0.57 to 0.70), and all judges show a systematic one-level
+  offset on graded criteria that per-fingerprint calibration should correct.
+- The Choice confidence formula is documented by the vendor (`07`).
+- hermes-jev's live gate calibration (56 commands, 6 positives, regex labels, no held-out split)
+  is a method template, not evidence that a Jev gate catches destructive commands.

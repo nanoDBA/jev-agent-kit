@@ -23,3 +23,13 @@
   Only add model diversity if it wins against that baseline on our tasks.
 - Route classes, not providers: Jev picks from an allowed menu of route classes; code maps a
   class to a concrete provider and model.
+
+## Update 2026-09-25 (see `09`)
+
+- Rao and Callison-Burch (arXiv:2609.29769): LLM judges repeat 96% of Jev's most confident
+  errors, so a Jev-first cascade that defers to an LLM saves cost but gains at most 1.5 points
+  (2.0 with oracle thresholds). Model diversity did not give error diversity.
+- Consequence for P5: measure error correlation between Jev and each proposer or judge before
+  counting a second opinion as independent evidence. Escalate uncertain gate decisions to a
+  human or deterministic check, not to another model.
+- browser-use/jev-ultrafast is a working "Jev decides, LLM generates" loop (`09`).

@@ -17,7 +17,7 @@ Pinned commits are in `/sources.lock.json`. "Source" means the code was cloned a
 | --- | --- | --- | --- |
 | Gilbert09/jev-cli | Source | Guard fails closed to "ask"; screen/done/rank fail open; tests enforce both. Cache key uses the model alias string (alias moves do not invalidate within the 30-min TTL). | Reference design for the asymmetry. |
 | shitianfang/jev-use | Source | Provider failure becomes "ask", but any exception inside the hook fails open. | Borrow the escalate contract, fix the exception path. |
-| DoGMaTiiC/hermes-jev | Source | Enforce mode fails open on outage; caps latency because the Hermes loader fail-closes slow pre-tool hooks. Refuses redirects, caps payload, circuit breaker, honors Retry-After. | Borrow transport hardening only. |
+| DoGMaTiiC/hermes-jev | Source (re-read at 5dddbea, see `09`) | Enforce mode still fails open on outage and on exceptions; caps latency because the Hermes loader fail-closes slow pre-tool hooks. Refuses redirects, caps payload, circuit breaker, honors Retry-After. | Borrow transport hardening only. |
 | alexj11324/open-jev-approvals | Source | Fails open on API absence, timeouts, invalid responses. | Anti-pattern for gates. |
 | TypeSafeAI/jev-harness | Source | Anything missing, malformed, unfavorable or below threshold becomes proposal-only; pins jev-1.13.0; labeled mock; honest about scripted numbers. **Community org** (created 2026-09-18), not official. | Best-in-class contract design. |
 | chayan-bit/jev-harness | README | Bounded advisory over supplied options only; Codex hooks add context and deny only via your exact deny policy; digest-bound shadow judgments; held-out threshold calibration that never activates a policy. | Closest to our receipts/digest goals. |
@@ -52,7 +52,7 @@ Pinned commits are in `/sources.lock.json`. "Source" means the code was cloned a
 - danielgshea/jev-as-a-judge, keduseworku/Jev-Calibration, sureshbujji/jev-eval-lab:
   see `04-calibration.md` and `05-mixture-of-agents.md`.
 
-### LLM plus Jev in one loop (added 2026-09-25, README level)
+### LLM plus Jev in one loop (added 2026-09-25; source-read, see `09`)
 - **browser-use/jev-ultrafast** (org account of the Browser Use project): a browser agent where
   Jev picks the operation and the target element from a live, numbered element table, and a
   small LLM writes text only when the operation is `TYPE_TEXT`. The target questions are

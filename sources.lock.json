@@ -40,7 +40,7 @@
       "url": "https://github.com/browser-use/jev-ultrafast",
       "sha": "1231850a0bf1a0c0341fe408ef1668dbbfdfac46",
       "kind": "repo",
-      "review_depth": "readme",
+      "review_depth": "source",
       "role": "reference:llm-plus-jev-loop,speculative-target-heads"
     },
     {
@@ -78,10 +78,12 @@
     {
       "repo": "DoGMaTiiC/hermes-jev",
       "url": "https://github.com/DoGMaTiiC/hermes-jev",
-      "sha": "f2a83af1838759ea98ab02dafa35dc900bda95c4",
+      "sha": "5dddbeaac5be08281e6c3b372eeaba3639971f0a",
       "kind": "repo",
       "review_depth": "source",
-      "role": "borrow:transport-hardening"
+      "role": "borrow:transport-hardening",
+      "previous_sha": "f2a83af1838759ea98ab02dafa35dc900bda95c4",
+      "note": "Re-pinned 2026-09-25 for a source read of gate v2, calibration docs and provenance (docs/research/09)."
     },
     {
       "repo": "FrancoisChastel/jev-code",
@@ -201,7 +203,7 @@
       "url": "https://github.com/tamaratran/fast-jev-compaction",
       "sha": "e3f262a7f4d42bd8dd32ced30d26176f7cb545b0",
       "kind": "repo",
-      "review_depth": "readme",
+      "review_depth": "source",
       "role": "reference:claude-code-compaction,request-splitting"
     },
     {

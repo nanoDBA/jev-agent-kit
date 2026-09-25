@@ -24,7 +24,7 @@ import hashlib
 import random
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -454,3 +454,56 @@ def decide(
         return _error_envelope(exc.reason)
     except Exception:
         return _error_envelope(FailReason.INTERNAL)
+
+
+def decide_batch(
+    requests: list[dict[str, Any]],
+    *,
+    transport: Transport,
+    config: EngineConfig | None = None,
+    max_workers: int = 4,
+) -> list[dict[str, Any]]:
+    """Run several requests concurrently through a bounded pool, results in input order.
+
+    All requests share one rate budget so the per-process cap and rate limits apply across the
+    whole batch (spec stories 8, 65, 67).
+    """
+    import concurrent.futures
+
+    shared = config or EngineConfig()
+    if shared.rate_budget is None:
+        shared = replace(shared, rate_budget=RateBudget())
+    results: list[dict[str, Any]] = [{} for _ in requests]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(decide, req, transport=transport, config=shared): i
+            for i, req in enumerate(requests)
+        }
+        for future in concurrent.futures.as_completed(futures):
+            results[futures[future]] = future.result()
+    return results
+
+
+def record_outcome(decision_id: str, outcome_code: str, action_id: str | None = None) -> bool:
+    """Append what the caller did with a decision (spec stories 55, 80).
+
+    outcome_code is drawn from a closed vocabulary; an unknown code or id returns False rather
+    than raising. Returns whether the outcome line was durably written.
+    """
+    if outcome_code not in _OUTCOME_CODES:
+        return False
+    try:
+        validate_action_id(decision_id)
+    except ValidationError:
+        return False
+    line = {
+        "kind": "outcome",
+        "timestamp": _now_iso(),
+        "decision_id": decision_id,
+        "outcome": outcome_code,
+        "action_id": action_id,
+    }
+    return get_writer().append_outcome(line)
+
+
+_OUTCOME_CODES = frozenset({"applied", "not_applied", "overridden_by_host", "overridden_by_human"})

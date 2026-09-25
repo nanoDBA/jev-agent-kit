@@ -164,3 +164,35 @@ def test_api_key_never_in_request_bytes(tmp_path: Any) -> None:
     decide(request("shadow"), transport=transport, config=config(tmp_path))
     for body in transport.requests:
         assert b"Bearer" not in body and b"Authorization" not in body
+
+
+def test_decide_batch_preserves_order(tmp_path: Any) -> None:
+    from jev_kit.engine import decide_batch
+    from jev_kit.transport import TransportResponse
+
+    def reply_body(noul: float) -> bytes:
+        answers = {"destructive": {"noul": noul}}
+        return json.dumps({"model": "jev-1.13.0", "answers": answers}).encode()
+
+    transport = MockTransport(
+        outcomes=[
+            TransportResponse(200, {}, reply_body(0.1)),
+            TransportResponse(200, {}, reply_body(0.9)),
+        ]
+    )
+    reqs = [request("shadow"), request("shadow")]
+    results = decide_batch(reqs, transport=transport, config=config(tmp_path), max_workers=2)
+    assert len(results) == 2
+    assert all(r["status"] == "ok" for r in results)
+
+
+def test_record_outcome_appends(tmp_path: Any, monkeypatch: Any) -> None:
+    from jev_kit import engine
+    from jev_kit.receipts import ReceiptWriter, new_action_id
+
+    writer = ReceiptWriter(directory=tmp_path)
+    monkeypatch.setattr(engine, "get_writer", lambda: writer)
+    did = new_action_id()
+    assert engine.record_outcome(did, "applied") is True
+    assert engine.record_outcome(did, "bogus_code") is False
+    assert engine.record_outcome("has spaces!", "applied") is False

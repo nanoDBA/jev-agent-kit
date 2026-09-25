@@ -1,4 +1,4 @@
-# jev-agent-kit
+# jev_agent_kit
 
 Reusable skill and tooling that lets coding agents (Claude Code, Hermes Agent, Codex) use
 TypeSafe's Jev typed-decision model at runtime, as a cheap evidence layer inside a

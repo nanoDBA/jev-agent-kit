@@ -7,7 +7,7 @@ Expand-Archive .\jev-agent-kit.zip -DestinationPath . ; Set-Location .\jev-agent
 git init -b main
 git add -A
 git commit -m "Scaffold: research, plan, pinned prior art, helper scripts"
-gh repo create nanoDBA/jev-agent-kit --private --source . --remote origin --push
+gh repo create nanoDBA/jev_agent_kit --private --source . --remote origin --push
 ```
 
 ## 2. Before the first session (optional, both time-sensitive)

@@ -8,7 +8,7 @@
 2. **Host priority:** Claude Code first, then Codex, then Hermes? (Default order.)
 3. **Egress policy:** may production T-SQL text, object names or log lines leave the
    machine at all? Which data classes are always blocked?
-4. **Repo name:** `jev-agent-kit` is a placeholder.
+4. **Repo name:** decided 2026-09-25: `jev_agent_kit` (matches the local folder and the Beads database).
 
 ## Phases
 

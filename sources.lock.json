@@ -1,0 +1,216 @@
+{
+  "schema": 1,
+  "reviewed_utc": "2026-09-25",
+  "note": "Commits reviewed during research. Sync-PriorArt.ps1 clones exactly these into .research/.",
+  "sources": [
+    {
+      "repo": "aleksvega/jev-skill-router",
+      "url": "https://github.com/aleksvega/jev-skill-router",
+      "sha": "a8edf3545cba1283ca7aa62562528200ba6120bb",
+      "kind": "repo",
+      "review_depth": "readme",
+      "role": "borrow:skill-library-audit"
+    },
+    {
+      "repo": "alexj11324/open-jev-approvals",
+      "url": "https://github.com/alexj11324/open-jev-approvals",
+      "sha": "889d06f3e2b6225132788a028fe4d3f35f0ee2ae",
+      "kind": "repo",
+      "review_depth": "source",
+      "role": "anti-pattern:fail-open-gate"
+    },
+    {
+      "repo": "anasbekheit/typesafe-jev-mcp",
+      "url": "https://github.com/anasbekheit/typesafe-jev-mcp",
+      "sha": "de18c76327595cf284abe348cec1d0d4bfaec5de",
+      "kind": "repo",
+      "review_depth": "source",
+      "role": "borrow:key-command,ps1-installer"
+    },
+    {
+      "repo": "AntonioCoppe/jev-harness",
+      "url": "https://github.com/AntonioCoppe/jev-harness",
+      "sha": "1a3dd4ae86de72f0df7d6e70b25feffc41ca3255",
+      "kind": "repo",
+      "review_depth": "readme",
+      "role": "reference:shadow-eval"
+    },
+    {
+      "repo": "chayan-bit/jev-harness",
+      "url": "https://github.com/chayan-bit/jev-harness",
+      "sha": "5ff0c24a6a8078d4bcd81b2737304e0e3634b3cc",
+      "kind": "repo",
+      "review_depth": "readme",
+      "role": "reference:digest-bound-receipts,calibration"
+    },
+    {
+      "repo": "danielgshea/jev-as-a-judge",
+      "url": "https://github.com/danielgshea/jev-as-a-judge",
+      "sha": "adfea74905f721ea2594e22804c8c8edf1693163",
+      "kind": "repo",
+      "review_depth": "readme",
+      "role": "reference:jev-as-judge"
+    },
+    {
+      "repo": "dfinke/Jev",
+      "url": "https://github.com/dfinke/Jev",
+      "sha": "67cedc97f76b4deb079e95f1e8d60bad44001941",
+      "kind": "repo",
+      "review_depth": "source",
+      "role": "foundation:powershell-client"
+    },
+    {
+      "repo": "dfinke/jev-experiments",
+      "url": "https://github.com/dfinke/jev-experiments",
+      "sha": "e03c3a21009bc66358cd63a212b1ebdc14f167c5",
+      "kind": "repo",
+      "review_depth": "source",
+      "role": "reference:privacy-hygiene"
+    },
+    {
+      "repo": "DoGMaTiiC/hermes-jev",
+      "url": "https://github.com/DoGMaTiiC/hermes-jev",
+      "sha": "f2a83af1838759ea98ab02dafa35dc900bda95c4",
+      "kind": "repo",
+      "review_depth": "source",
+      "role": "borrow:transport-hardening"
+    },
+    {
+      "repo": "FrancoisChastel/jev-code",
+      "url": "https://github.com/FrancoisChastel/jev-code",
+      "sha": "051b492a201d5fe97dd26c422dcc5d7ed24b033c",
+      "kind": "repo",
+      "review_depth": "source",
+      "role": "borrow:margin-auto-review"
+    },
+    {
+      "repo": "Gilbert09/jev-cli",
+      "url": "https://github.com/Gilbert09/jev-cli",
+      "sha": "5610d9cf7aa635f6c1e2af7a3b4e7b637a86ac20",
+      "kind": "repo",
+      "review_depth": "source",
+      "role": "reference:fail-asymmetry"
+    },
+    {
+      "repo": "himomohi/jev-skill-router",
+      "url": "https://github.com/himomohi/jev-skill-router",
+      "sha": "b3be6ec9545fc2526abaa8be135fbe0bd34b78e9",
+      "kind": "repo",
+      "review_depth": "readme",
+      "role": "reference:mcp-skill-router"
+    },
+    {
+      "repo": "ismaelsoilet/jev-harness",
+      "url": "https://github.com/ismaelsoilet/jev-harness",
+      "sha": "37ab8c677008410ff5c77959f0ab860bc8d1f60f",
+      "kind": "repo",
+      "review_depth": "readme",
+      "role": "reference:receipts,corpus"
+    },
+    {
+      "repo": "keduseworku/Jev-Calibration",
+      "url": "https://github.com/keduseworku/Jev-Calibration",
+      "sha": "a7ed5a88edd1d027a2f70eba3214a2c9fc205103",
+      "kind": "repo",
+      "review_depth": "readme",
+      "role": "borrow:calibration"
+    },
+    {
+      "repo": "kerpopule/hermes-jev-skills",
+      "url": "https://github.com/kerpopule/hermes-jev-skills",
+      "sha": "e797a04857885a6e68b67135b68d0e84737f05e3",
+      "kind": "repo",
+      "review_depth": "source",
+      "role": "reference:model-routing,hermes"
+    },
+    {
+      "repo": "lomeshdutta/skill-router",
+      "url": "https://github.com/lomeshdutta/skill-router",
+      "sha": "4c538d8be575d5dee09a220c3304bd311ed97903",
+      "kind": "repo",
+      "review_depth": "readme",
+      "role": "minor"
+    },
+    {
+      "repo": "ourines/hermes-jev",
+      "url": "https://github.com/ourines/hermes-jev",
+      "sha": "de6f674a99ea03e11cfb1830dd1527ae208e3fea",
+      "kind": "repo",
+      "review_depth": "source",
+      "role": "minor"
+    },
+    {
+      "repo": "pedramamini/jev (gist)",
+      "url": "https://gist.github.com/pedramamini/014676fa8684d91bf7000f4623701ada",
+      "sha": null,
+      "kind": "gist",
+      "review_depth": "source",
+      "role": "reference:cli+skill,windows-select-bug",
+      "note": "Gist revision not pinned (gist host unreachable from research sandbox). Pin on first sync."
+    },
+    {
+      "repo": "RahulBalakavi/claude-code-jev",
+      "url": "https://github.com/RahulBalakavi/claude-code-jev",
+      "sha": "629c3d852faf32fb0f88c724f029bb8e00efc109",
+      "kind": "repo",
+      "review_depth": "source",
+      "role": "reference:model-pinning"
+    },
+    {
+      "repo": "shantanugoel/ask-jev-skill",
+      "url": "https://github.com/shantanugoel/ask-jev-skill",
+      "sha": "72313d3c88f8dbff40a11ffe69656ff9843ea78e",
+      "kind": "repo",
+      "review_depth": "source",
+      "role": "minor:eval-script"
+    },
+    {
+      "repo": "shimo4228/jev-skill-router",
+      "url": "https://github.com/shimo4228/jev-skill-router",
+      "sha": "51f98f5574c9ec763bbec3d76659dab580ab3cc2",
+      "kind": "repo",
+      "review_depth": "readme",
+      "role": "negative-result:skill-routing"
+    },
+    {
+      "repo": "shitianfang/jev-use",
+      "url": "https://github.com/shitianfang/jev-use",
+      "sha": "541c86caabf1eeb0af929256649d460f2708cb42",
+      "kind": "repo",
+      "review_depth": "source",
+      "role": "borrow:escalate-contract"
+    },
+    {
+      "repo": "sureshbujji/jev-eval-lab",
+      "url": "https://github.com/sureshbujji/jev-eval-lab",
+      "sha": "301fc810baeb013dae4e7fa2c705442a15cf3440",
+      "kind": "repo",
+      "review_depth": "readme",
+      "role": "borrow:ece-brier"
+    },
+    {
+      "repo": "typesafe-ai/skills",
+      "url": "https://github.com/typesafe-ai/skills",
+      "sha": "65a39f393687675ce170e6094757de20370365b9",
+      "kind": "repo",
+      "review_depth": "source",
+      "role": "official:build-lane"
+    },
+    {
+      "repo": "TypeSafeAI/jev-harness",
+      "url": "https://github.com/TypeSafeAI/jev-harness",
+      "sha": "dee6b572219482c104e9a16b06454caf7bd3739e",
+      "kind": "repo",
+      "review_depth": "source",
+      "role": "reference:contract-design;community-org-not-official"
+    },
+    {
+      "repo": "tyroneross/typesafe-skills",
+      "url": "https://github.com/tyroneross/typesafe-skills",
+      "sha": "5fdf2413854c117a826446924fcf904cadcf87ff",
+      "kind": "repo",
+      "review_depth": "source",
+      "role": "minor:eval-playbook"
+    }
+  ]
+}

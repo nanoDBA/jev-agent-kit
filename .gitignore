@@ -1,0 +1,10 @@
+# cloned prior-art (Sync-PriorArt.ps1)
+.research/
+# secrets
+.env
+*.key
+*.secret
+# local receipts / scratch
+receipts/*.jsonl
+*.duckdb
+*.duckdb.wal

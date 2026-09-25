@@ -5,8 +5,8 @@
 1. **dfinke/Jev strategy:** decided 2026-09-25. No dependency; learn from it and build our own
    client and skill. See `adr/0001-own-jev-client-no-dfinke-dependency.md`.
 2. **Host priority:** Claude Code first, then Codex, then Hermes? (Default order.)
-3. **Egress policy:** may production T-SQL text, object names or log lines leave the
-   machine at all? Which data classes are always blocked?
+3. **Egress policy:** decided 2026-09-25, based on accepted standards. See
+   `adr/0002-egress-policy.md`.
 4. **Repo name:** decided 2026-09-25: `jev_agent_kit` (matches the local folder and the Beads database).
 
 ## Phases
@@ -21,7 +21,7 @@
   documented Choice/Score limits, error schema, Retry-After behavior, Codex and Hermes skill
   directory paths.
 
-### Phase 1: PowerShell client layer (depends on P0-5 and open question 3)
+### Phase 1: PowerShell client layer (depends on P0-5; ADRs 0001 and 0002)
 - P1-1 Deferred (ADR 0001): upstream PRs for dfinke/Jev are optional goodwill, not planned.
 - P1-2 Client module: receipts (JSONL), state budget and redaction, deterministic egress
   check, question fingerprints, per-fingerprint threshold registry marked calibrated or not.

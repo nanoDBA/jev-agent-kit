@@ -29,7 +29,8 @@ Extend that research; do not redo the prior-art sweep from scratch.
    the result in state.
 7. **State packets are small and keyed.** Use keyed objects, never positional arrays for
    long lists. Enforce a size budget. Redact. Run a deterministic egress check before any
-   state leaves the machine.
+   state leaves the machine, per `docs/adr/0002-egress-policy.md` (allowlist, transforms,
+   Tier 1 detectors on the final request).
 8. **Every decision emits a receipt** (JSONL): state digest, question-set version and
    fingerprint, requested and served model, full distribution, threshold, route, action,
    and whether the action was applied. Keys and secrets never appear in receipts.

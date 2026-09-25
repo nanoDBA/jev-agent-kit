@@ -106,6 +106,45 @@ Profiles are versioned data like the core rules.
 - Enterprise zero data retention is preferred (SI-12; SA-9(5)); until then, Tier 2 transforms
   are mandatory, not optional.
 
+## Amendment 1 (2026-09-25): free text, undetectable classes, live-use attestation
+
+Decided by the owner after the independent Codex review of the Phase 1 spec
+(`docs/reviews/2026-09-25-codex-spec-review.md`, finding R09).
+
+### Free text is allowed only from named source types
+
+- Free text under judgment (and code in a language without a profile, which is treated as free
+  text) may leave the machine only when its field declares a `source_type` that appears in the
+  owner's local source allowlist. The allowlist is local configuration, not part of the repo,
+  and **ships empty**: until the owner names source types, all free text is blocked.
+- Examples of source types the owner may name: public web pages, the owner's own issue
+  tracker, the owner's own agent tool output. Each named type is an explicit acceptance of the
+  residual risk below for that source.
+- Free text still gets the default contact-data masking and the Tier 1 detectors.
+
+### Accounting for every Tier 1 class
+
+| Class | Control |
+| --- | --- |
+| Credentials and secrets; credentialed connection strings | Pattern detectors on the final request (block) |
+| Payment card numbers | Luhn-valid PAN detector (block) |
+| Card track data | Track-format detector (block) |
+| Card verification codes and PINs | Not detectable in isolation; controlled by allowlist and source policy (never an allowed content kind) |
+| National identifiers | Named formats only (Phase 1: US SSN); further formats added by profile |
+| Health information; GDPR special categories | Not reliably detectable; controlled by source policy (named source types only) and by question sets declaring they do not carry these classes |
+| Raw data rows | Never an allowed content kind |
+
+**Residual risk accepted by the owner:** a named free-text source can still contain health
+information or special-category data that no detector recognizes. Masking and declarations
+reduce but do not eliminate this. Naming a source type is the acceptance.
+
+### Live-use attestation
+
+The live transport refuses to send unless a local attestation file records, with dates: that
+TypeSafe is in the owner's data-flow inventory (CIS 3.8, CA-3, SA-9), and whether a DPA is in
+place (required before any personal data, GDPR Art. 28). Missing or invalid attestation is a
+failure (gates ask, advisory returns no advice). Mock transports do not require it.
+
 ## Implementation rules
 
 - Detectors and transforms are **data**, versioned in the repo, with the source pattern set

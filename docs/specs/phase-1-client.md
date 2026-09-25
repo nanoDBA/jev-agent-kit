@@ -2,12 +2,30 @@
 
 - Tracker: Beads `jak-p9j.5` (labels `ready-for-agent`, `phase-1`, `spec`). This file is the
   canonical text; the Beads issue mirrors it.
-- Revision: 2 (2026-09-25). Revision 1 was published to Beads only and was reviewed and
-  refined into this version.
-- Governing decisions: ADR 0001 (own client, no dfinke/Jev dependency), ADR 0002 (egress
-  policy), ADR 0003 (Python, standard library only at runtime).
-- Scope note: this is the client engine. The agent skill (`SKILL.md`, question sets,
-  installers) is Phase 2 and calls this engine; host hooks are Phase 3.
+- Revision: 3 (2026-09-25). Revision 2 was reviewed independently by Codex
+  (`docs/reviews/2026-09-25-codex-spec-review.md`, findings R01 to R18) and by Claude; this
+  revision resolves every finding. A mapping is at the end.
+- Governing decisions: ADR 0001 (own client), ADR 0002 with Amendment 1 (egress policy),
+  ADR 0003 (Python, standard library only at runtime), and the owner decisions listed under
+  "Owner decisions for this revision".
+- Scope: this is the client engine. The agent skill (`SKILL.md`, question sets, installers) is
+  Phase 2; host hook adapters are Phase 3.
+
+## Owner decisions for this revision (2026-09-25)
+
+1. **Routes mean evidence, not permission.** The positive route is `accept`: the answer cleared
+   its calibrated threshold. Whether any action proceeds is decided by code or the host from an
+   explicit label-to-action map. The engine never authorizes actions.
+2. **Free text only from named source types** (ADR 0002 Amendment 1). The local source allowlist
+   ships empty, so free text is blocked until the owner names sources.
+3. **The deadline is cooperative in Phase 1.** The engine promises a best-effort deadline and
+   never accepts late results. Enforce mode inside real host hooks is not permitted until Phase 3
+   adapters run the engine as a child process with a hard kill and a host-specific margin.
+4. **Two narrow extra test suites** are allowed as documented exceptions to the one-seam rule:
+   a live-adapter suite against a local fake HTTP server, and receipt-write fault injection.
+5. **Decided by Claude, open to owner override:** no production language profiles in Phase 1
+   (tests use synthetic fixture profiles); callers supply an `action_id` now, and consume-once
+   and freshness enforcement belong to Phase 3 adapters.
 
 ## Problem Statement
 
@@ -15,42 +33,33 @@ The owner wants coding agents (Claude Code, Codex, Hermes) and ordinary automati
 TypeSafe's Jev as a cheap evidence layer: rank, verify and gate. No existing client meets the
 project's rules. The official Python SDK defaults to the moving `jev-latest` alias and leaves
 validation, deadlines and failure semantics to the caller. The only PowerShell client
-(dfinke/Jev) cannot tell mock answers from real ones, collapses all errors into one string,
-ignores `Retry-After`, promotes bare labels without confidence, and has no state budget,
-redaction or egress check. Every community client reviewed skips at least one of: pinning and
-checking the served model, receipts, fail asymmetry, or measured thresholds
-(`docs/research/02`, `03`, `09`).
+(dfinke/Jev) cannot tell mock answers from real ones and has no budget, redaction or egress
+check. Every community client reviewed skips at least one of: pinning and checking the served
+model, receipts, fail asymmetry, or measured thresholds (`docs/research/02`, `03`, `09`).
 
-Anything built on a weaker client (the skill, gates, calibration, mixture-of-agents) inherits
-silent failure modes: a mock or an outage that looks like approval, a threshold reused after a
-question or model changed, secrets leaving the machine, and decisions nobody can audit.
+Anything built on a weaker client inherits silent failure modes: a mock or an outage that looks
+like approval, a threshold reused after the question or its input changed, secrets or the API
+key leaving the machine, and decisions nobody can audit.
 
 ## Solution
 
 A Python package with a small public surface:
 
-- `decide`: takes one state packet, one question set and a mode, and returns one decision
-  record per question. It never raises for runtime conditions; every outcome, including
-  configuration problems, is a decision record with a route and a reason.
-- `record_outcome`: lets the caller append whether it applied a decision, so receipts show
-  what actually happened.
-- A command-line entry point that wraps both, reading and writing JSON, for hooks, schedulers
-  and CI.
+- `decide`: one state packet, one question set and a mode in; one decision record per question
+  out (or a safe error envelope when the questions cannot be identified). It never raises for
+  runtime conditions.
+- `decide_batch`: several `decide` calls through a bounded worker pool with shared budgets.
+- `record_outcome`: the caller appends what it did with a decision.
+- A command-line entry point wrapping all three with JSON in and out.
 
-Everything between input and output is enforced by code. The state passes an allowlist and
-transforms, a token budget and Tier 1 detectors before anything leaves the machine. The request
-pins a versioned model and refuses a mismatched served model. The response is validated per
-question type. Each answer is routed by a threshold that belongs to that question's
-fingerprint and carries its calibration status. Failures resolve per question by consequence
-class: advisory questions fail open to "no advice", gate questions fail closed to "ask". A
-receipt is written for every decision before the record is returned.
-
-The network call is the only swappable dependency, so tests use a labeled mock transport and
-never call the live API. A separate smoke script with a hard call cap exercises the live API
-with synthetic states and records our own measurements.
-
-From the user's point of view: one call gives typed, auditable evidence, and a mock, an outage
-or an unmeasured threshold can never be mistaken for a real, calibrated answer.
+Before anything leaves the machine, every dynamic value passes the question set's schema and
+transforms, the request passes a token and size budget and the Tier 1 detectors, and the exact
+checked bytes are what the transport sends. The live transport uses a fixed HTTPS endpoint,
+refuses redirects and never forwards the key. Responses are validated per question type.
+Answers are routed by threshold tables bound to a fingerprint of everything that could change
+the answer. Failures resolve per question: advisory to `no_advice`, gate to `ask`. Every
+decision gets a receipt; `accept` is returned only after its receipt is committed. Mock
+evidence can never produce an effective `accept` for a gate.
 
 ## User Stories
 
@@ -61,195 +70,249 @@ or an unmeasured threshold can never be mistaken for a real, calibrated answer.
 3. As an automation author, I want to mix Choice, Score and Noul questions in one call, so that all questions about one state cost one request.
 4. As an automation author, I want to include speculative questions whose answers I may ignore, so that I avoid a second round trip.
 5. As an automation author, I want each question tagged as advisory or gate, so that failures resolve by consequence.
-6. As an automation author, I want question sets stored as versioned JSON files, so that they can be reviewed, diffed and fingerprinted like code.
-7. As a scheduler, CI or hook author, I want a command-line entry point that reads a JSON request on standard input and writes JSON decision records on standard output, so that any host can call the engine without writing Python.
-8. As a hook author, I want the command-line entry point to exit 0 whenever it produced decision records (including "ask" and "no advice"), and non-zero only for invalid invocation, so that a gate outcome is never confused with a crash.
-9. As a hook or plugin author, I want the package to have no runtime dependencies, so that it installs into any host without a virtual environment and starts fast on every tool call.
+6. As an automation author, I want question sets stored as versioned JSON files whose question text is fixed and reviewed, so that they can be diffed and fingerprinted like code and never carry per-call data.
+7. As an automation author, I want the mode to default to shadow, so that nothing enforces by accident.
+8. As an automation author, I want `decide_batch` to return results in input order, so that batch output lines up with batch input.
+9. As a scheduler, CI or hook author, I want a command-line entry point that reads one JSON request on standard input and writes one JSON response on standard output, so that any host can call the engine without writing Python.
+10. As a hook author, I want the command line to exit 0 whenever it wrote a valid response (decision records or a safe error envelope) and 2 only when the invocation itself is unusable (unreadable input, unknown arguments), so that a gate outcome is never confused with a crash.
+11. As a hook or plugin author, I want the package to have no runtime dependencies, so that it installs into any host without a virtual environment and starts fast.
+
+### Routes and routing
+
+12. As an automation author, I want each record's effective `route` to be one of `accept`, `ask` or `no_advice`, where `accept` means only that the evidence cleared its calibrated threshold, so that permission to act always stays with my code or the host.
+13. As an automation author, I want each record to carry a separate `would_route` showing the candidate route before shadow, mock or failure rules applied, so that I can observe what the engine would have done without it authorizing anything.
+14. As a gate author, I want shadow mode to set every effective route to `no_advice` and put the candidate in `would_route`, so that shadow never changes host behavior.
+15. As an automation author, I want Noul routing defined by a `yes_bound` and a `no_bound` (with `no_bound` < `yes_bound`): `accept` with label `yes` when the value is at or above `yes_bound`, `accept` with label `no` when at or below `no_bound`, otherwise the review band, so that yes/no evidence has explicit boundaries.
+16. As an automation author, I want Choice routing defined by a minimum confidence and a minimum top-two probability margin, with a tie (top two equal within tolerance) always in the review band, so that ambiguous choices are never accepted.
+17. As an automation author, I want Score routing defined by labeled intervals over the level range, inclusive lower bound and exclusive upper bound (the top interval inclusive at the maximum), validated as non-overlapping, with any gap being the review band, plus a minimum confidence, so that score evidence maps to explicit labels.
+18. As a gate author, I want the review band to route gates to `ask` and advisory questions to `no_advice`, so that uncertainty never becomes acceptance.
+19. As a gate author, I want "never auto-accept" registry entries for question kinds known to be confidently wrong (correctness of code or reasoning, comparisons biased by verbosity), so that those questions never route to `accept`.
+20. As a gate author, I want enforce mode to require a calibrated registry entry for every gate question, and a missing or uncalibrated entry to be a configuration failure, so that enforcement never rests on an unmeasured number.
+21. As a calibration author, I want each question set to declare its escalation target and the registry entry to name the target it was measured against, with a mismatch treated as a configuration failure, so that a threshold is not reused when the fallback changes.
 
 ### Failure semantics
 
-10. As a gate author, I want any transport error, timeout, validation failure, egress block, configuration problem or unexpected exception to route gate questions to "ask", so that nothing can widen a permission.
-11. As an advisory author, I want the same failures to route advisory questions to an explicit "no advice", so that my workflow continues without pretending it has evidence.
-12. As a gate author, I want a failure that hits a request containing both gate and advisory questions to resolve each question by its own class, so that a shared failure cannot leak an allow.
-13. As a gate author, I want a missing or invalid answer for any question to fail the whole set, so that partial responses are never acted on.
-14. As a gate author, I want a receipt-write failure to route every gate question to "ask", so that no decision is acted on without a record.
-15. As an automation author, I want `decide` never to raise for runtime conditions, so that callers and hooks handle one result shape.
+22. As a gate author, I want any transport error, timeout, validation failure, egress block, configuration problem, budget exhaustion, receipt failure or unexpected exception to route gate questions to `ask`, so that nothing can produce acceptance by failing.
+23. As an advisory author, I want the same failures to route advisory questions to `no_advice`, so that my workflow continues without pretending it has evidence.
+24. As a gate author, I want a failure that hits a request containing both gate and advisory questions to resolve each question by its own class, so that a shared failure cannot leak acceptance.
+25. As a gate author, I want a missing, extra or invalid answer for any question to fail the whole set, so that partial responses are never acted on.
+26. As a hook author, I want a safe error envelope (schema version, `status: error`, closed-vocabulary reason, no records) when the question set is unreadable or its questions cannot be identified, and hosts told to treat it as `ask`, so that an empty result is never mistaken for approval.
+27. As an automation author, I want `decide` never to raise for runtime conditions, and only for programmer errors in the call itself (wrong argument types), so that callers handle one result shape.
 
-### Model pinning
+### Model pinning and mocks
 
-16. As an operator, I want requests to use a versioned model id (default `jev-1.13.0`) and aliases such as `jev-latest` and `jev-preview` refused as configuration errors, so that thresholds stay attached to the model they were measured on.
-17. As an operator, I want the served model read from the response and compared with the requested id, so that a silent change is detected and treated as a failure.
+28. As an operator, I want requests to use a versioned model id (default `jev-1.13.0`) and aliases such as `jev-latest` and `jev-preview` refused as configuration failures, so that thresholds stay attached to the model they were measured on.
+29. As an operator, I want the served model read from the response and compared with the requested id, with a mismatch failing the whole set, so that a silent model change is caught.
+30. As a test author, I want mock provenance carried out of band by the transport object, never by response JSON, so that a scripted body cannot claim to be real.
+31. As a test author, I want mock responses to carry a simulated served model that goes through the same pin check (recorded as `simulated_model`), so that mismatch logic is testable without weakening pinning.
+32. As a gate author, I want every mock-derived record to have `is_mock=true`, `model="mock"` and an effective route of `ask` for gates, with no configuration able to override that, so that a mock can never approve a real action; the candidate route stays visible in `would_route` for tests.
 
 ### Response validation
 
-18. As an operator, I want every Choice answer validated (the choice is one of the offered options, probability keys equal the offered set exactly, values are finite and in [0, 1] and sum to 1 within a tolerance, the choice is the argmax, confidence is in [0, 1]), so that invented or malformed answers are rejected.
-19. As an operator, I want every Score answer validated (level probabilities cover exactly the offered levels, are finite, in [0, 1] and sum to 1 within a tolerance; the score is finite and within the level range; the legend matches the offered levels), so that malformed scores are rejected.
-20. As an operator, I want every Noul answer validated as a finite number in [0, 1], so that malformed yes/no answers are rejected.
-21. As an operator, I want booleans rejected wherever a number is expected, so that `false` can never read as 0.0, "no danger".
-22. As an operator, I want Choice limited to 2 to 255 options and Score to 2 to 10 levels before sending, so that invalid questions fail locally.
+33. As an operator, I want each answer's `type` to match its question's type and the set of answer ids to equal the set of question ids exactly, so that mismatched or extra answers are rejected.
+34. As an operator, I want every Choice answer validated (the choice is an offered option, probability keys equal the offered option keys exactly, values are finite, non-boolean, in [0, 1] and sum to 1 within a named tolerance, the choice is the argmax, confidence is finite, non-boolean and in [0, 1]), so that invented or malformed answers are rejected.
+35. As an operator, I want every Score answer validated (probability and legend keys are exactly the strings `"0"` to `"n-1"`, probabilities are finite, non-boolean, in [0, 1] and sum to 1 within tolerance, the score equals the probability-weighted mean of level indices within a named tolerance, confidence is present, finite and in [0, 1]), so that a score contradicting its own distribution is rejected.
+36. As an operator, I want every Noul answer validated as a finite, non-boolean number in [0, 1], so that malformed yes/no answers are rejected.
+37. As an operator, I want every non-2xx status, including redirects, 404 and 408, treated as a typed failure and never validated as an answer, so that error bodies can never be read as evidence.
+38. As an operator, I want Choice limited to 2 to 255 options (the minimum is our rule; the API documents only the maximum) and Score to 2 to 10 levels with string descriptions only in Phase 1, so that invalid or ambiguous questions fail locally.
 
-### State, budget and egress (ADR 0002)
+### Egress: request contents (ADR 0002 with Amendment 1)
 
-23. As a security-minded operator, I want every question set to declare an allowlist of state fields, each with a content kind and a required transform, and every other field dropped, so that egress is deny by default.
-24. As an automation author, I want code and query text normalized (literals replaced by placeholder tokens, comments stripped) by a language profile, and code in a language without a profile blocked unless the question set declares it as free text under judgment, so that literals in code never leave by accident.
-25. As an operator, I want internal identifiers (hosts, services, repositories, projects, customers, accounts, database objects) replaced by HMAC-SHA256 tokens under a local key, with a reviewed allowlist of public or system names passed unchanged, so that internal structure is not disclosed but stays linkable across calls.
-26. As an operator, I want personal contact data (email addresses, phone numbers, postal addresses, IP addresses) masked or tokenized, so that it does not leave by default.
-27. As an operator, I want error and log lines reduced to codes, levels and message templates with quoted values, identifiers and contact data masked, so that diagnostics can be judged without leaking context.
-28. As an operator, I want shell and tool commands reduced to command and flag names, and file paths and URLs tokenized, so that arguments, environment values and user paths stay local.
-29. As an automation author judging free text (tickets, messages, documents, web content), I want to declare the field as the content under judgment, with contact data masked by default and any opt-out justified in the question set, so that general-purpose triage works without silently sending personal data.
-30. As an operator, I want agent transcript excerpts disabled unless a question set enables them with a size cap, so that transcripts never leave by accident.
-31. As a security-minded operator, I want pattern-detectable Tier 1 classes (secrets and credentials, connection strings carrying credentials, Luhn-valid card numbers, national identifier formats) detected over the final serialized request, with any hit blocking the whole request, so that nothing slips past a transform bug.
-32. As a security-minded operator, I want classes that patterns cannot reliably detect (health information, GDPR special categories, raw data rows) prevented by policy instead: question sets must declare that they do not carry them, raw rows are never an allowed content kind, and free text gets the default masking, so that the residual risk is explicit rather than hidden behind a detector that cannot see it.
-33. As an operator, I want long lists in state required to be keyed objects, not positional arrays, so that the documented positional-index accuracy trap is avoided.
-34. As an operator, I want the request's token count estimated conservatively against a configurable budget well under the documented limits (32k for state plus the longest question, 64k for state plus all questions), so that oversized requests are refused before egress.
-35. As an operator, I want the estimate compared with the `usage.input_tokens` the API reports and both recorded, so that estimator error is visible.
-36. As a domain pack author, I want to add an egress profile (detectors, transforms, allowlists) that can only tighten the core policy, so that domain support plugs in without weakening the defaults.
-37. As a maintainer, I want detector and transform rules stored as versioned data with the source pattern set they were adapted from recorded, so that changes are reviewable and attributable.
+39. As a security-minded operator, I want question text, criteria, option keys and question ids to come only from the reviewed question-set file and to match a safe-identifier pattern where they are identifiers, with all per-call data confined to state, so that no dynamic data bypasses the state transforms.
+40. As a security-minded operator, I want each question set to declare a state schema (field paths, content kind, transform and parameters, source type for free text), with undeclared fields and undeclared nested descendants dropped, so that allowing a parent never admits arbitrary children.
+41. As an automation author, I want code and query text normalized by a language profile (literals to placeholder tokens, comments stripped), and code in a language without a profile blocked unless its field is declared free text from a named source type, so that literals in code never leave by accident.
+42. As an operator, I want internal identifiers replaced by HMAC-SHA256 tokens under a local key, with a reviewed allowlist of public or system names passed unchanged, so that internal structure stays private but linkable.
+43. As an operator, I want personal contact data (email addresses, phone numbers, IP addresses) masked or tokenized, so that it does not leave by default.
+44. As an operator, I want error and log lines reduced to codes, levels and message templates with quoted values, identifiers and contact data masked, so that diagnostics can be judged without leaking context.
+45. As an operator, I want shell and tool commands reduced to command and flag names, and file paths and URLs tokenized, so that arguments, environment values and user paths stay local.
+46. As an automation author judging free text, I want the field to declare a `source_type` that must appear in my local source allowlist (which ships empty), with contact data masked by default, so that free text leaves only from sources I have explicitly accepted.
+47. As an operator, I want agent transcript excerpts disabled unless a question set enables them with a size cap, and then treated as free text from a named source type, so that transcripts never leave by accident.
+48. As a security-minded operator, I want every transform to document the input types and syntax it supports, and an unknown transform, an unsupported input or a transform error to block the request, so that a failed transform never becomes passthrough.
+49. As a security-minded operator, I want the Tier 1 pattern detectors (secrets and credentials including escaped multiline keys, credentialed connection strings, Luhn-valid card numbers, card track data, US SSN format) run over the exact serialized body and over every decoded key and string value, with any hit or detector error blocking the whole request, so that nothing slips past a transform bug or JSON escaping.
+50. As a security-minded operator, I want the exact bytes that passed detection to be the bytes the transport sends, never reserialized afterwards, so that the check and the egress cannot diverge.
+51. As a security-minded operator, I want input size, nesting depth, list length and detector work bounded, so that a large or adversarial input cannot stall the engine or defeat a detector.
+52. As an operator, I want the live transport to refuse to send unless the local attestation file records that TypeSafe is in my data-flow inventory (and whether a DPA is in place), so that ADR 0002's live-use preconditions are enforced, not just written down.
+53. As a domain pack author, I want to add an egress profile that can only tighten the core policy, so that domain support plugs in without weakening defaults.
+54. As a maintainer, I want detector and transform rules stored as versioned data with the source pattern set they were adapted from recorded, so that changes are reviewable and attributable.
 
-### Secrets
+### Budget
 
-38. As an operator, I want the API key read from `TYPESAFE_API_KEY` or from `TYPESAFE_API_KEY_COMMAND` (a command that prints the key from any secret store), so that keys are never in scripts or config files.
-39. As an operator, I want the HMAC key supplied the same way under its own names and never sent, so that tokens cannot be reversed by the vendor.
-40. As an operator, I want keys never written to receipts, logs, exception messages or command-line output, so that diagnostics cannot leak them.
+55. As an operator, I want the request's token count estimated with a versioned, deliberately conservative estimator and refused above a configurable budget (default well under the documented 32k and 64k limits), so that oversized requests never leave.
+56. As an operator, I want estimated and reported (`usage.input_tokens`) token counts both recorded, so that estimator error is visible and the estimate is never presented as exact.
 
-### Errors, retries and deadlines
+### Transport and key safety
 
-41. As an operator, I want errors typed as auth (401, 403), validation (422, 400), rate limit (429), overloaded (529), server (5xx), timeout and transport, with the raw error body and the `x-typesafe-request-id` header kept, so that callers and receipts can tell them apart and the offending field is visible.
-42. As an operator, I want 429, 529 and 5xx retried with exponential backoff and jitter, honoring `Retry-After` and `retry-after-ms`, so that transient pressure is absorbed.
-43. As a hook author, I want one total deadline per call that includes every retry and wait, defaulting low enough for every supported host (Hermes blocks the tool at its 30 second timeout; Codex continues on timeout), so that the engine always answers before the host gives up.
+57. As a security-minded operator, I want the live transport to use a private opener with verified TLS, the fixed HTTPS endpoint, `Content-Type: application/json`, environment proxies ignored unless a proxy is explicitly configured, HTTP debug output off, and every redirect refused as a transport failure, so that the request and key cannot be diverted.
+58. As a security-minded operator, I want the API key attached only as a non-redirected authorization header, and never included in the body, digests, recorded mock requests, receipts, logs, exception text or command-line output, so that the key has exactly one destination.
+59. As an operator, I want the API key from `TYPESAFE_API_KEY` or `TYPESAFE_API_KEY_COMMAND`, and the HMAC key from `JEV_KIT_HMAC_KEY` or `JEV_KIT_HMAC_KEY_COMMAND` (base64url for exactly 32 bytes), with both forms of the same key set at once being a configuration failure, so that key sources are unambiguous.
+60. As an operator, I want key commands given as a JSON argument array executed without a shell, with runtime bounded by the remaining deadline, output size bounded, stderr discarded, and non-zero exit, empty or invalid output treated as failure with neither output nor command text in any error, so that key retrieval is portable and cannot leak.
+61. As an operator, I want keys resolved only when a call needs them (the HMAC key only when an identifier transform runs; no keys for the mock transport) and never replaced by a default, so that missing keys fail visibly.
 
-### Fingerprints and thresholds
+### Errors, retries, deadlines and rate budgets
 
-44. As a calibration author, I want each question's fingerprint computed from its instructions, criteria, type, option or level set, model version, and the versions of the egress policy and profiles that transformed its state, so that any change that could shift the answer voids its threshold.
-45. As a calibration author, I want a threshold registry keyed by fingerprint, with each entry's status (calibrated, uncalibrated, never auto-accept), the escalation target it was measured against, evidence reference and date, so that thresholds are never shared across questions or reused when the fallback changes.
-46. As an automation author, I want threshold shapes defined per type: a Noul has a yes bound and a no bound with a review band between; a Choice has a minimum confidence and a minimum top-two margin; a Score has per-level bounds on the score, so that routing rules fit what each type returns.
-47. As a gate author, I want "never auto-accept" entries for question kinds known to be confidently wrong (correctness of code or reasoning, comparisons biased by verbosity), so that those questions always route to "ask".
-48. As a gate author, I want enforce mode to require a calibrated registry entry for every gate question, and to treat a missing or uncalibrated entry as a configuration failure that routes to "ask", so that enforcement never rests on an unmeasured number.
-49. As a gate author, I want shadow mode to compute and record the would-be route without the caller treating it as a decision, so that behavior can be compared before promotion.
+62. As an operator, I want errors typed as auth (401, 403), validation (422; 400 as SDK-compatible), rate limit (429), overloaded (529), not found (404), timeout (408 and local), server (5xx), redirect refused and transport, so that callers and receipts can tell them apart.
+63. As an operator, I want raw error bodies kept privately, bounded in size, and excluded from string forms, exception chains, JSON, receipts and command-line output, with public diagnostics limited to typed fields, so that error echoes of submitted data cannot leak.
+64. As an operator, I want 429, 529 and 5xx retried with exponential backoff and jitter, `retry-after-ms` taking precedence over `Retry-After` (seconds or HTTP date), malformed values ignored in favor of backoff, and no retry when the required delay does not fit the remaining deadline, so that retries are bounded and honest.
+65. As a hook author, I want one monotonic deadline started at entry covering preparation, key retrieval, rate waits, retries, reads and receipt writing, with time reserved for the receipt and any result arriving after expiry discarded, so that the engine answers within its budget whenever the operating system lets it.
+66. As a hook author, I want the documentation to state plainly that Phase 1's deadline is cooperative and cannot interrupt a blocked system call, and that enforce mode inside host hooks waits for the Phase 3 child-process watchdog, so that nobody relies on a guarantee the engine does not give.
+67. As an operator, I want every outbound attempt, including retries and smoke probes, to reserve a permit atomically from a shared per-process call cap and a local requests-per-minute and tokens-per-second budget, with exhaustion producing class-appropriate failure records, so that loops and retries cannot run away.
+68. As an operator, I want it documented that caps and rate budgets are per process and local, not account-wide, so that nobody assumes they prevent every 429.
+
+### Fingerprints and registry
+
+69. As a calibration author, I want each question's fingerprint computed over the complete effective contract: its instructions, criteria, type, option or level set in order, the pinned model, and the full effective egress contract for its state (field paths, kinds, transforms and their parameters, allowlists, opt-outs and justifications, source types, transcript settings, and the content hashes of the policy and profile rule files), so that any change that could shift the answer voids its threshold.
+70. As a calibration author, I want a separate question-set digest over the whole file, recorded alongside each question fingerprint, so that receipts identify both the question and the set it came from.
+71. As a calibration author, I want canonical serialization defined (UTF-8, sorted object keys, preserved array order, finite numbers only, duplicate keys rejected), with question ids, per-call state and key material excluded, so that fingerprints are reproducible across implementations.
+72. As a calibration author, I want the registry selected by an explicit path or `JEV_KIT_REGISTRY`, a missing registry meaning every question is uncalibrated, and registry entries validated (per-type threshold shape, ordered and non-overlapping bounds, status, escalation target, evidence reference, date), so that a malformed registry is a configuration failure, not a silent default.
 
 ### Decision records, receipts and outcomes
 
-50. As an automation author, I want each decision record to carry a decision id, the question id, the label or value, the full distribution, confidence (Choice, Score) or the noul value, the top-two margin (Choice), the threshold and its status, the route (`act`, `ask` or `no_advice`), mode, fail reason if any, and `is_mock`, so that I branch on evidence rather than a bare label.
-51. As an auditor, I want one JSONL receipt line per decision with timestamp, decision id, request digest (of the request as sent), question-set id, version and fingerprint, requested and served model, request id, full distribution, threshold and status, route, mode, fail reason, egress rule ids and transform names (never matched text), estimated and reported tokens, and `is_mock`, so that every decision can be reconstructed without the receipt itself leaking.
-52. As an auditor, I want receipts written before decision records are returned, so that no decision exists without a record.
-53. As an auditor, I want receipts from one request to share the request digest and request id, so that decisions made together can be grouped.
-54. As an auditor, I want fail reasons drawn from a closed vocabulary, so that receipts are queryable.
-55. As an automation author, I want `record_outcome(decision_id, applied, note)` to append an outcome line to the receipts, so that receipts show whether each decision was actually applied.
-56. As an operator, I want receipts written to a directory set by `JEV_KIT_RECEIPTS_DIR`, defaulting to the user's local application data directory, so that receipts never land in a repository by accident.
-57. As a future skill and hook author, I want the question-set, decision-record, receipt and outcome formats documented with schema versions, so that later phases can depend on them.
+73. As an automation author, I want each decision record to carry a decision id, question id, label or value, full distribution, confidence (Choice, Score) or noul value, top-two margin (Choice), threshold and status, `route`, `would_route`, mode, fail reason if any, `is_mock`, and `receipt_written`, so that I branch on evidence rather than a bare label.
+74. As an auditor, I want one JSONL receipt line per decision with: timestamp, local call id, decision id, question fingerprint, question-set digest and version, requested model, served or simulated model, attempt ids and server request ids (null when nothing was sent), digest of the bytes sent (null when nothing was sent), full distribution, selected label or value, threshold and status, `would_route` and `route`, mode, fail reason, egress rule ids with transform names and counts (never matched text), estimated and reported tokens, `is_mock`, and the caller's `action_id` when given, so that every decision can be reconstructed without the receipt leaking.
+75. As an auditor, I want all receipt lines for one call written in a single append followed by a commit marker line, flushed and synced to disk, before any record with route `accept` is returned, so that no accepted decision exists without a durable record and partial writes are detectable.
+76. As a gate author, I want a receipt failure to return safe records (`ask` or `no_advice`) marked `receipt_written=false`, with any best-effort error logging unable to recurse, so that an unrecorded decision is never accepted.
+77. As an auditor, I want receipts written to one file per process (named by start time and process id) with a lock around appends within the process, so that concurrent workers and separate hook processes never interleave lines.
+78. As an operator, I want receipts written to `JEV_KIT_RECEIPTS_DIR` (must be absolute) or the platform default (Windows `%LOCALAPPDATA%\jev_agent_kit\receipts`, macOS `~/Library/Application Support/jev_agent_kit/receipts`, Linux `$XDG_STATE_HOME/jev_agent_kit/receipts` or `~/.local/state/jev_agent_kit/receipts`), with a lookup failure treated as a receipt failure, so that receipts never land in a repository by accident.
+79. As an auditor, I want failed or pre-egress receipts never to copy state values or rejected content, so that the audit trail of a blocked request cannot leak what was blocked.
+80. As an automation author, I want `record_outcome(decision_id, outcome_code, action_id)` to append an outcome line using a closed vocabulary of outcome codes (for example `applied`, `not_applied`, `overridden_by_host`, `overridden_by_human`), returning a result rather than raising for an unknown decision id, and allowing repeated outcomes as separate lines, so that receipts show what actually happened without free-text leakage.
+81. As an auditor, I want fail reasons and outcome codes drawn from closed vocabularies, so that receipts are queryable.
+82. As a future skill and hook author, I want JSON Schemas and worked examples for the question set, registry, attestation file, command-line request and response, decision record, error envelope, receipt and outcome, each with a schema version, so that later phases can depend on them.
 
-### Mocks and tests
+### Tests and verification
 
-58. As a test author, I want a mock transport whose every answer carries `is_mock` true and model "mock", so that mock output can never be mistaken for a real answer.
-59. As a hook author, I want mock-derived records routed to "ask" for gates in enforce mode unless an explicit test-only switch is set, so that a mock can never approve a real action.
-60. As a test author, I want the mock able to script responses, errors, delays, malformed bodies, missing answers, booleans, invented options, bad sums and model mismatches, and to record every request, so that every failure path is testable through the public surface.
-61. As a maintainer, I want the test suite to make no live API calls and to pass `ruff` and `mypy --strict` on Python 3.11+ on Windows, Linux and macOS, so that it is free, deterministic, portable and meets the repo conventions.
+83. As a test author, I want the mock able to script responses, statuses, headers, delays, malformed bodies, missing or extra answers, wrong types, booleans, invented options, bad sums, inconsistent scores and simulated model mismatches, and to record the exact bytes of every request, so that every failure path is testable through the public surface.
+84. As a maintainer, I want the main test suite to make no network calls, and to pass `ruff` and `mypy --strict` on Python 3.11 and the latest release on Windows, Linux and macOS, so that it is free, portable and meets the repo conventions.
+85. As a maintainer, I want a live-adapter suite that runs the real transport against a local fake HTTP server (never the real API), covering redirect refusal, authorization handling, TLS configuration, status mapping, error-body privacy and header parsing, so that the part the mock replaces is still verified.
+86. As a maintainer, I want receipt-write fault injection covering failure on open, after the first line and on flush, so that the receipt guarantees are tested, not assumed.
+87. As a maintainer, I want command-line tests that run the entry point as a subprocess with a mock-backed offline configuration, so that the JSON contract and exit codes are verified end to end.
+88. As a maintainer, I want deadline tests to use generous margins and to claim only cooperative behavior, so that tests do not pretend to prove hard cancellation.
 
-### Live verification, batching and spend
+### Live smoke and batching
 
-62. As an operator, I want a smoke script that makes live calls only with synthetic states, refuses to run without an explicit call cap, and writes dated results under `docs/`, so that live verification is bounded and recorded.
-63. As an operator, I want the smoke script to verify the served model, error typing for a deliberate validation error, the Choice confidence formula, and the response shapes per type, so that assumptions taken from the docs are confirmed.
-64. As an operator, I want the smoke script to measure latency as question count grows, answer stability batched versus single, and concurrent single calls versus one batched call, so that we replace vendor numbers with our own.
-65. As an automation author, I want to run several states concurrently with a bounded worker pool and a shared per-process call cap, so that batch jobs stay under documented rate limits and a loop bug cannot generate unbounded spend.
+89. As an operator, I want a smoke script that makes live calls only with synthetic states, refuses to run without an explicit call cap and a valid attestation, and writes dated results under `docs/`, so that live verification is bounded, lawful and recorded.
+90. As an operator, I want the smoke script to verify the served model and response shapes per type, record Choice confidence alongside probabilities (without asserting the documentation's approximate formula), and probe error typing through a smoke-only transport path that does not bypass production validation, so that documented assumptions are checked honestly.
+91. As an operator, I want the smoke script to measure latency as question count grows, stability batched versus single, and concurrent single calls versus one batched call, so that we replace vendor numbers with our own.
 
 ## Implementation Decisions
 
-- **Package shape (ADR 0003):** one Python 3.11+ package, standard library only at runtime.
-  Public surface: `decide`, `record_outcome`, a batch helper, and a command-line entry point
-  wrapping them. Everything else (egress, budget, validation, fingerprinting, registry lookup,
-  request building, retries, served-model check, fail resolution, receipt writing) is private.
-- **Tested seam (agreed with the owner):** the public surface is the tested surface; the
-  transport is the only injectable dependency. No clock seam: retry and deadline behavior is
-  tested with small caps and mock-scripted `Retry-After` values.
-- **Transport contract:** receives the serialized request and a deadline; returns a raw
-  response (status, headers, body) or a typed transport failure. The live transport posts to
-  `https://api.typesafe.ai/v1/systemone` with bearer auth using `urllib.request`. The mock
-  transport is scripted per test, records requests, and labels all output as mock.
-- **Result, not exceptions:** `decide` converts every runtime condition into decision records
-  with a fail reason. Only programmer errors in the call itself (wrong argument types) may raise.
-- **Question-set file:** JSON, with id, version, questions (type, instructions, criteria,
-  options or levels, consequence class), state field allowlist (field, content kind,
-  transform, profile), declared excluded data classes, and optional transcript settings.
-- **Model pinning:** versioned ids only; aliases are a configuration failure. Served model must
-  equal the requested id.
-- **Validation per type:** as in stories 18 to 22; tolerance for probability sums is a named
-  constant recorded in receipts' schema documentation.
-- **Fingerprint:** sha256 over a canonical JSON serialization of instructions, criteria, type,
-  option or level set, model version, egress policy version and profile versions. Question ids
-  and the question-set version are not part of it.
-- **Threshold registry:** a versioned JSON file keyed by fingerprint. Entry: status, threshold
-  shape per type (story 46), escalation target, evidence reference, date. Enforce mode requires
-  calibrated entries for gates; "never auto-accept" always routes to "ask".
-- **Routes:** `act` (with the label or value), `ask`, `no_advice`. Shadow mode records the
-  would-be route in the same field and marks the record as shadow.
-- **Egress (ADR 0002):** allowlist per question set, deny by default; transform per content
-  kind; profiles may only tighten; Tier 1 pattern detectors over the final serialized request;
-  policy-level prevention for classes patterns cannot detect; receipts carry rule ids only.
-- **Budget:** conservative local estimate (the vendor tokenizer is not public); default budget
-  well under 32k; both estimate and reported usage recorded.
-- **Errors and retries:** as stories 41 to 43. Proposed defaults, to be confirmed by the smoke
-  script: total deadline 10 seconds, per-attempt timeout 5 seconds, at most 2 retries.
-- **Concurrency:** bounded `ThreadPoolExecutor`, default 4 workers, shared per-process call cap
-  (default 100, configurable). Caps are per process, not global; documented as such.
-- **Receipts:** JSONL, schema versioned, written and flushed before records are returned;
-  outcome lines appended by `record_outcome`. Rotation and retention are out of scope.
-- **Keys:** environment variable or key command (ADR 0003); never logged.
-- **Smoke script:** separate from the package, synthetic states only, explicit call cap
-  required.
+- **Public surface:** `decide`, `decide_batch`, `record_outcome`, the command-line entry point,
+  the transport interface, and the published JSON Schemas. Everything else is private.
+- **Tested seam (agreed with the owner):** the public surface with an injectable transport is
+  the main tested surface; no clock seam. Documented exceptions: the live-adapter suite (local
+  fake server) and receipt-write fault injection.
+- **Question-set file:** JSON, schema-versioned. Each question holds the API fields exactly as
+  sent (`type`, `instructions`, `criteria`) plus a separate `kit` object (consequence class,
+  registry hints) that is never sent. Question-level text is static; state carries all per-call
+  data. The file also declares the state schema, excluded data classes, escalation target and
+  transcript settings.
+- **Strict JSON everywhere:** duplicate keys rejected, non-finite numbers rejected on read and
+  write, unknown schema versions, modes, types and fields rejected before egress.
+- **Transport contract:** receives the checked request bytes and the remaining deadline; returns
+  a raw response or a typed failure. Mock provenance is a property of the transport object. The
+  live transport is a private `urllib` opener with no redirect handler (3xx is a failure), no
+  environment proxies unless configured, verified default TLS context, the fixed endpoint, and
+  the key as a non-redirected header.
+- **Routes:** effective `route` in {`accept`, `ask`, `no_advice`}; candidate `would_route`.
+  Precedence when computing the effective route: failure, then mock gate rule, then shadow, then
+  "never auto-accept", then thresholds.
+- **Routing tables:** per type as stories 15 to 18. Bounds validated when the registry loads.
+- **Validation:** per type as stories 33 to 38; tolerances are named constants documented with
+  the schemas.
+- **Fingerprints:** stories 69 to 71. Question fingerprint and question-set digest are both
+  SHA-256 over canonical JSON.
+- **Egress:** stories 39 to 54. Detectors run on the checked bytes and on decoded keys and
+  strings. National identifiers in Phase 1: US SSN only; others arrive with profiles. No
+  production language profiles in Phase 1; tests use at least two synthetic fixture profiles.
+- **Budget defaults (proposed, confirmed by the smoke script):** estimator v1 counts UTF-8 bytes
+  divided by 3, rounded up; request budget 16,000 estimated tokens; maximum body 48 KiB; maximum
+  depth 16; keyed lists up to 200 entries; positional arrays longer than 20 rejected.
+- **Deadline defaults (proposed):** total 10 seconds, per-attempt timeout 5 seconds, at most 2
+  retries, 500 milliseconds reserved for receipt writing. Cooperative only (owner decision 3).
+- **Concurrency and rate defaults (proposed):** 4 workers; per-process cap 100 attempts;
+  local budget 600 requests per minute and 100,000 tokens per second (half the documented
+  account limits).
+- **Receipts:** stories 73 to 81. One file per process, single append per call plus commit
+  marker, flush and fsync before returning `accept`.
+- **Secrets:** stories 57 to 61.
+- **Attestation file:** local JSON at a platform config path or `JEV_KIT_ATTESTATION`, recording
+  the inventory date and DPA status; required by the live transport only.
 
 ## Testing Decisions
 
-- Good tests exercise only external behavior: they call `decide`, `record_outcome` or the
-  command-line entry point with the mock transport, and assert on returned records, receipts
-  written and requests the mock recorded. They never call private functions.
-- Everything (validation per type, budget, egress, fingerprinting, registry lookup, routes,
-  retries, deadlines, served-model check, fail resolution, receipts, outcomes) is tested
-  through that surface.
-- Tools: `pytest`; `ruff` and `mypy --strict` in CI; matrix of Python 3.11 and the latest
-  release on Windows, Linux and macOS.
-- Egress fixtures: fake secrets, card numbers, national ids and credentialed connection strings
-  must block; placeholders such as `Password=***` and `<password>` must pass; code with literals
-  leaves only with placeholder tokens (tested with at least two language profiles); code in a
-  language without a profile is blocked; receipts never contain matched text.
-- Required patterns from prior art (`docs/research/09`): recording stub asserting exactly one
-  request per state with the exact question set; "policy never absolves" (no failure path turns
-  a gate into `act`); "bool never zero"; "invented choice rejected"; "partial answers fail the
-  whole set"; "mock output is always labeled"; "mock never approves in enforce".
-- Prior art in this repo: none yet. External: hermes-jev offline gate tests, jev-ultrafast
-  response-validation tests, Gilbert09/jev-cli fail-asymmetry tests.
+- Good tests exercise only external behavior through the public surface: returned records and
+  envelopes, receipts written, and the exact request bytes the mock recorded. They never call
+  private functions.
+- Main suite: `pytest` with the scripted mock, no network, no clock seam, generous timing
+  margins. `ruff` and `mypy --strict` in CI on Python 3.11 and latest, on Windows, Linux and
+  macOS.
+- Documented exception suites: live adapter against a local fake HTTP server; receipt-write
+  fault injection.
+- Command line tested as a subprocess with an offline mock-backed configuration.
+- Required fixtures and properties:
+  - "policy never absolves": no failure, mock or shadow path yields an effective `accept` for a
+    gate;
+  - "bool never zero"; "invented choice rejected"; "partial or extra answers fail the whole
+    set"; "score contradicting its distribution rejected";
+  - "mock output is always labeled" and "mock never accepts a gate";
+  - recording mock asserts exactly one request per call with the exact question set, and that
+    the key never appears in recorded bytes;
+  - egress: synthetic secrets (including escaped multiline private keys), credentialed
+    connection strings, Luhn-valid card numbers, track data and SSNs block; placeholders such as
+    `Password=***` pass; personal data placed in question instructions is rejected by the static
+    question rule; a sensitive keyed-list id is tokenized or rejected; code without a profile is
+    blocked unless declared free text from a named source; free text from an unnamed source is
+    blocked;
+  - fingerprint changes when any effective egress setting changes, and not when only question
+    ids change;
+  - receipts never contain matched text, state values or key material.
+- Prior art: hermes-jev offline gate tests, jev-ultrafast response validation, Gilbert09/jev-cli
+  fail-asymmetry tests (`docs/research/09`).
 
 ## Out of Scope
 
-- The skill itself, core question sets, domain packs and installers (Phase 2).
-- Claude Code, Codex and Hermes hook adapters (Phase 3), including how each host maps `ask`.
-- Calibration corpus, fitting and reports (Phase 4); this spec only stores and enforces status.
-- Pairwise order averaging for comparison questions (a Phase 2 question-set rule).
-- Mixture-of-agents (Phase 5); `system-one-adapter-python` comparator and degraded mode (Phase 6).
+- The skill itself, core question sets, domain packs, production language profiles, installers
+  (Phase 2).
+- Host hook adapters, including the child-process watchdog, consume-once and freshness
+  enforcement, and each host's mapping of `ask` (Phase 3). Enforce mode inside host hooks is
+  not permitted before Phase 3.
+- Calibration corpus, fitting and reports (Phase 4); this spec stores and enforces status only.
+- Pairwise order averaging (a Phase 2 question-set rule).
+- Mixture-of-agents (Phase 5); `system-one-adapter-python` comparator and degraded mode
+  (Phase 6).
 - Receipt rotation and retention.
-- Any dependency on dfinke/Jev or the official SDK (ADR 0001, ADR 0003).
+- Any dependency on dfinke/Jev or the official SDK (ADRs 0001, 0003).
 - Jev-based context compaction (open decision `jak-ao8`).
 
 ## Further Notes
 
-- Evidence: `docs/research/06` (verified API facts: 422 and 529, token limits, served-model
-  field, host timeouts), `08` (parallel usage), `09` (source reads; arXiv:2609.29769 and
-  2609.26550: an LLM fallback does not catch Jev's confident errors, which is why gates route
-  to "ask" and never to another model).
-- Residual risk accepted by ADR 0002: sensitive classes that patterns cannot detect are
-  controlled by declaration and allowlisting, not detection.
+- Evidence: `docs/research/06` (verified API facts), `08` (parallel usage), `09` (source reads,
+  arXiv:2609.29769 and 2609.26550), and the Codex review. The redirect and strict-JSON findings
+  were reproduced locally on Python 3.13: a 302 carries a normally added Authorization header
+  to a different host over plain HTTP; `json.loads` keeps the last duplicate key; `json.dumps`
+  emits `NaN`.
+- Residual risk accepted by the owner in ADR 0002 Amendment 1: named free-text sources may
+  contain sensitive classes no detector recognizes.
 - Prose conventions: no em dashes in docs, comments or commit messages.
 
-## Changes from revision 1
+## Resolution of review findings
 
-- Validation is per question type; Score no longer uses argmax.
-- Threshold shapes defined per type; routes named `act`, `ask`, `no_advice`.
-- Aliases always refused (revision 1 allowed them without thresholds, which conflicted with the
-  served-model check).
-- Fingerprint now includes egress policy and profile versions (revision 1 contradicted itself).
-- `decide` never raises; configuration problems become records.
-- Added `record_outcome`, receipt-write failure handling, receipt location, mock-in-enforce
-  rule, command-line contract and exit codes, question-set file format, default deadlines and
-  concurrency.
-- Egress: code without a language profile is blocked; classes patterns cannot detect are
-  handled by declaration, not claimed detection.
-- User stories renumbered 1 to 65 and grouped.
+| Finding | Resolution (stories) |
+| --- | --- |
+| R01 mock approval and pinning conflict | No override switch; out-of-band provenance; simulated model; `would_route` (30 to 32) |
+| R02 fingerprint misses egress config | Full effective contract, set digest, canonical rules (69 to 71) |
+| R03 metadata bypasses transforms | Static reviewed question text, safe ids, schema with nested rules, checked bytes sent (39, 40, 50) |
+| R04 redirect forwards key | Private opener, redirects refused, non-redirected header, no env proxies (57, 58) |
+| R05 deadline not enforceable | Monotonic cooperative deadline; honest limit; enforce waits for Phase 3 (65, 66) |
+| R06 score validation hole | Type match, string level keys, weighted-mean check, confidence required (33 to 35) |
+| R07 routing underspecified | Routing tables, shadow semantics, evidence not permission, escalation binding (12 to 21) |
+| R08 diagnostic leaks | Private bounded error bodies, closed outcome codes, no copied content (63, 79, 80) |
+| R09 declaration not ADR-approved | ADR 0002 Amendment 1; named sources; class accounting; attestation (46, 49, 52) |
+| R10 serialization and transform failures | Documented inputs, fail-closed transforms, decoded scanning, bounds (48 to 51) |
+| R11 receipt contract | Commit marker, fsync before `accept`, per-process files, null unsent fields (74 to 79) |
+| R12 seam cannot verify everything | Two exception suites, subprocess CLI tests, honest timing tests (85 to 88) |
+| R13 caps are not rate budgets | Atomic per-attempt permits, local rate budgets, header precedence (64, 67, 68) |
+| R14 schemas and malformed config | Strict JSON, error envelope, exit codes, defaults, registry selection, schemas (7 to 10, 26, 72, 82) |
+| R15 key provider protocol | Named variables, 32-byte HMAC key, argv without shell, bounded, precedence (59 to 61) |
+| R16 Choice minimum and formula | Wording fixed; smoke records rather than asserts (38, 90) |
+| R17 profile test contradiction | Fixture profiles; free-text exception tested (41, Testing Decisions) |
+| R18 paths and budgets vague | Platform paths, absolute override, estimator and defaults (55, 78, Implementation Decisions) |

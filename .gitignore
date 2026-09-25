@@ -15,3 +15,14 @@ receipts/*.jsonl
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+dist/
+build/

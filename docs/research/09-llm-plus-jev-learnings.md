@@ -179,8 +179,7 @@ This is the first independent, statistically careful comparison of Jev with LLMs
 - **Limitations stated by the authors:** observational; one snapshot per judge with default
   settings, run once; 10 to 20% stratified subsets; zero-shot; rubric wording differs from the
   raters' original instructions.
-- **Not yet read:** companion paper arXiv:2609.26550, "JEV-as-a-Judge: Accept When Confident,
-  Escalate When Unsure".
+- Companion paper: see the next section.
 
 ### What it changes for us
 
@@ -198,6 +197,60 @@ This is the first independent, statistically careful comparison of Jev with LLMs
    also argues for writing scale conventions into Score level descriptions explicitly.
 5. **Confidence is useful for ranking, weak as a gate on its own.** AUROC of 0.57 to 0.70 is
    real but modest; do not route high-consequence actions on confidence alone.
+
+## Independent evidence: Li, Miao, Krishnan and Padman (arXiv:2609.26550)
+
+"JEV-as-a-Judge: Accept When Confident, Escalate When Unsure", submitted 2026-09-22
+(https://arxiv.org/abs/2609.26550; affiliation Carnegie Mellon per the HTML version). Title,
+authors, date and abstract checked on arXiv directly (`raw/arxiv-2609.26550-abstract.md`).
+Numbers below come from a research pass over the HTML through a summarizing fetch, so tables
+were not seen directly; treat exact figures as provisional until re-read.
+
+- **Setup:** `jev-1.13.0` against 16 generative and reward-model judges on RewardBench (400
+  pairs), JudgeBench (350), HaluEval (240) plus controls, with blinded human adjudication. A
+  642-item pilot was frozen before inference; a 670-item extension was frozen before pilot
+  accuracy was inspected.
+- **Standalone:** within about 3 points of the strongest LLM judge on ordinary preference and
+  evidence-grounded factuality, at 0.36% of its fee; median latency about 0.15 s versus
+  1.9 s. Much worse where a derivation must be checked (JudgeBench reasoning about 68% versus
+  96%, coding about 76% versus 98%) or where the wrong answer is more elaborately written
+  (a 9.2-point drop on style-adversarial pairs).
+- **Confidently misled cases exist:** on reference-free prose, accuracy was near chance while
+  mean confidence was 0.90 to 0.96 (error-detection AUROC about 0.52).
+- **Cascade:** thresholds chosen on a 96-item selection set (maximize coverage while staying
+  within two points of the fallback), frozen, then tested on the disjoint extension. At
+  threshold 0.9 with the strongest LLM as fallback it accepted about 54% of pairs, lost 0.6
+  points, and cost about 57% of the fallback alone. Thresholds did not transfer to every
+  fallback model; one lost 2.35 points at its chosen threshold.
+- **Order effects:** swapping the order of a pair flipped about 11% of JudgeBench decisions;
+  they average probabilities over both orders.
+- **Temperature scaling did not transfer** across benchmarks.
+
+### How it fits with Rao and Callison-Burch
+
+The two papers agree. On items Jev accepts confidently, the LLM is nearly interchangeable
+with it (95.8% versus 96.5% here), which is the same fact Rao and Callison-Burch express as
+correlated errors. The cascade gains in this paper come from routing Jev's **uncertain**
+items to the LLM, not from catching Jev's **confident** errors. In the authors' words:
+"Confidence routes well where the first stage is competent but uncertain, and badly where it
+is confidently misled."
+
+### What it changes for us
+
+1. **Cost-saving cascades are fine for advisory work** (ranking, postflight scoring): accept
+   confident Jev answers, send uncertain ones to an LLM.
+2. **Confident-error protection must come from elsewhere:** deterministic checks and human
+   spot audits of accepted items. This confirms the gate rule from the previous section.
+3. **Some question kinds should never auto-accept:** correctness of code or reasoning, and
+   comparisons where one candidate is more verbose or persuasive. The threshold registry
+   needs a "never auto-accept" state for these.
+4. **Pairwise questions run in both orders** and average (P2-2 question-set rule).
+5. **A threshold belongs to its escalation target as well as its fingerprint.** It did not
+   transfer across fallback models.
+6. **Their selection rule is a usable template** for P4-4 promotion criteria (maximize
+   coverage subject to accuracy within X points of the reference on a selection set, confirm
+   on a disjoint frozen set), with a larger selection set than their 96 items.
+7. **Count invalid outputs as errors** during calibration.
 
 ## Claims from an external AI summary, checked
 

@@ -135,14 +135,17 @@ Decided by the owner after the independent Codex review of the Phase 1 spec
 | Raw data rows | Never an allowed content kind |
 
 **Residual risk accepted by the owner:** a named free-text source can still contain health
-information or special-category data that no detector recognizes. Masking and declarations
+information, special-category data or postal addresses that no detector recognizes. Postal
+address masking is deferred (owner, 2026-09-25): Phase 1 has no address transform, so a field
+declared as an address is blocked, and addresses inside named-source free text are accepted. Masking and declarations
 reduce but do not eliminate this. Naming a source type is the acceptance.
 
 ### Live-use attestation
 
 The live transport refuses to send unless a local attestation file records, with dates: that
 TypeSafe is in the owner's data-flow inventory (CIS 3.8, CA-3, SA-9), and whether a DPA is in
-place (required before any personal data, GDPR Art. 28). Missing or invalid attestation is a
+place (required before any personal data, GDPR Art. 28). `dpa: false` permits only requests
+whose every field is a non-personal Tier 3 kind; HMAC tokens count as personal data. Missing or invalid attestation is a
 failure (gates ask, advisory returns no advice). Mock transports do not require it.
 
 ## Implementation rules

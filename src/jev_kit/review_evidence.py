@@ -141,7 +141,8 @@ def check(
         status = token(gate["status"])
         if status not in {"pass", "fail", "skip", "not_run"}:
             raise EvidenceError("invalid_status")
-        failures += status != "pass" or integer(gate["exit_code"]) != 0
+        exit_code = integer(gate["exit_code"])
+        failures += status != "pass" or exit_code != 0
         _artifact(gate["artifact"], artifact_root)
     return {"verdict": "record_consistent" if failures == 0 else "revise",
             "candidate_sha": candidate_sha, "findings": len(findings),

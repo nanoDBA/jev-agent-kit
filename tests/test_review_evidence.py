@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -195,6 +196,18 @@ def test_nonzero_gate_exit_requires_revision(tmp_path: Path) -> None:
     assert result["verdict"] == "revise"
 
 
+@pytest.mark.parametrize("status", ["pass", "fail", "skip", "not_run"])
+@pytest.mark.parametrize("exit_code", [True, "0", None, -1, 0.0])
+def test_gate_status_cannot_short_circuit_exit_validation(
+    tmp_path: Path, status: str, exit_code: object,
+) -> None:
+    contract, evidence = fixture(tmp_path)
+    changed = rewrite(evidence, '"pass"', json.dumps(status))
+    changed = rewrite(changed, '"exit_code": 0', '"exit_code": ' + json.dumps(exit_code))
+    with pytest.raises(EvidenceError, match="invalid_integer"):
+        run(tmp_path, contract, changed)
+
+
 def test_file_limits_and_nonregular_input(tmp_path: Path) -> None:
     with pytest.raises(EvidenceError, match="not_regular_file"):
         read_bytes(tmp_path)
@@ -204,6 +217,31 @@ def test_file_limits_and_nonregular_input(tmp_path: Path) -> None:
     large.write_bytes(b" " * (MAX_BYTES + 1))
     with pytest.raises(EvidenceError, match="file_too_large"):
         read_bytes(large)
+
+
+def test_replaced_file_descriptor_is_checked_before_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "initially-regular.txt"
+    path.write_bytes(b"control")
+    assert read_bytes(path) == b"control"
+    reader, writer = os.pipe()
+
+    def replaced_open(requested: Path, flags: int) -> int:
+        assert requested == path
+        nonblocking = getattr(os, "O_NONBLOCK", 0)
+        assert flags & nonblocking == nonblocking
+        return reader
+
+    try:
+        monkeypatch.setattr(os, "open", replaced_open)
+        # The writer remains open: reading this empty pipe would wait indefinitely.
+        with pytest.raises(EvidenceError, match="not_regular_file"):
+            read_bytes(path)
+        with pytest.raises(OSError):
+            os.fstat(reader)  # The rejected descriptor was closed by the context manager.
+    finally:
+        os.close(writer)
 
 
 def test_missing_artifact_errors_do_not_echo_path(

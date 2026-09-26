@@ -6,7 +6,8 @@ mixture-of-agents workflow. Private, owned by nanoDBA.
 
 Implementation language: Python, standard library only at runtime (`docs/adr/0003-python-implementation.md`).
 
-Status: research complete, product code not started. Start with `CLAUDE.md`, then `docs/plan.md`.
+Start with `CLAUDE.md`, then `docs/plan.md`. Implementation and owner-gated activation status
+are tracked in `docs/CHARTER.md`; a passing offline check does not authorize live use.
 
 ## Layout
 
@@ -19,7 +20,7 @@ Status: research complete, product code not started. Start with `CLAUDE.md`, the
 | `docs/research/raw/` | Source material you drop in (PDF, transcripts, X JSON) |
 | `sources.lock.json` | Every prior-art repo, pinned to the commit that was reviewed |
 | `scripts/` | Helper scripts (prior-art sync, transcript and X pulls) |
-| `skills/`, `src/`, `tests/` | Empty until Phase 1 |
+| `skills/`, `src/`, `tests/` | Canonical runtime skill, Python implementation, and offline tests |
 
 ## Source material not in git yet
 

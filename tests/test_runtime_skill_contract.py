@@ -8,10 +8,13 @@ evaluation; finding a sentence in a Markdown file cannot establish those behavio
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
 import pytest
+
+from jev_kit.install import install
 
 SKILL_DIR = Path(__file__).resolve().parents[1] / "skills" / "jev-runtime"
 REFERENCE = SKILL_DIR / "references" / "evidence-contracts.md"
@@ -88,3 +91,21 @@ def test_runtime_documents_use_portable_local_links_and_no_em_dash(path: Path) -
             resolved = (path.parent / target).resolve()
             assert resolved.is_relative_to(SKILL_DIR.resolve())
             assert resolved.is_file()
+
+
+@pytest.mark.parametrize("force_copy", [False, True])
+def test_installed_tree_keeps_required_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, force_copy: bool,
+) -> None:
+    # Exercise only a private temporary target, never the user's live host directories.
+    if force_copy:
+        def unavailable(*args: object, **kwargs: object) -> None:
+            raise OSError("synthetic symlink failure")
+
+        monkeypatch.setattr(os, "symlink", unavailable)
+    target = tmp_path / "installed" / "jev-runtime"
+    actions = install([target], SKILL_DIR, apply=True)
+    assert actions[0].op in ({"copy"} if force_copy else {"link", "copy"})
+    assert (target / "references" / REFERENCE.name).read_bytes() == REFERENCE.read_bytes()
+    for source in SET_FILES:
+        assert (target / "questions" / source.name).read_bytes() == source.read_bytes()

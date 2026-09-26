@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import stat
 from pathlib import Path
@@ -68,7 +69,12 @@ def read_bytes(path: Path) -> bytes:
     # Reject special files before opening: a FIFO must not turn a read-only check into a hang.
     if not stat.S_ISREG(path.stat().st_mode):
         raise EvidenceError("not_regular_file")
-    with path.open("rb") as stream:
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
+    descriptor = os.open(path, flags)
+    with os.fdopen(descriptor, "rb") as stream:
+        # A pathname can be replaced after stat; validate the actual opened object too.
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise EvidenceError("not_regular_file")
         raw = stream.read(MAX_BYTES + 1)
     if len(raw) > MAX_BYTES:
         raise EvidenceError("file_too_large")

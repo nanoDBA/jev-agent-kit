@@ -177,6 +177,27 @@ def test_json_array_on_stdin_is_config_error(
     assert captured.err != ""
 
 
+def test_duplicate_keys_rejected_h18(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The CLI parses strictly, so a duplicate key (which json.loads would silently collapse to
+    # last-wins) is rejected before the engine ever sees an ambiguous request (finding H18).
+    _set_stdin(monkeypatch, '{"schema_version": 1, "mode": "shadow", "mode": "enforce"}')
+    exit_code = main([])
+    assert exit_code == 2
+    assert json.loads(capsys.readouterr().out) == _CONFIG_ENVELOPE
+
+
+def test_nan_rejected_h18(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # NaN/Infinity are not valid JSON and must be rejected, not accepted as Python floats.
+    _set_stdin(monkeypatch, '{"schema_version": 1, "state": {"x": NaN}}')
+    exit_code = main([])
+    assert exit_code == 2
+    assert json.loads(capsys.readouterr().out) == _CONFIG_ENVELOPE
+
+
 def test_unknown_argument_is_config_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

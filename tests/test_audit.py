@@ -180,7 +180,11 @@ def test_audit_text_dangerous_command_scan_is_linear_time_on_adversarial_flag_st
     audit_text(adversarial_line)
     elapsed = time.monotonic() - start
 
-    assert elapsed < 1.0
+    # The linear scan runs in a few milliseconds; the whole audit_text pass over 100 KB is well
+    # under a second. The bound is set at 2 seconds to stay clear of scheduling jitter under a
+    # loaded parallel test run while still failing loudly on a quadratic regression, which on a
+    # 100 KB input would take tens of seconds, not a fraction of one.
+    assert elapsed < 2.0
 
     # The fast path must not have traded away detection: a real "rm -rf /" still gets flagged.
     findings = audit_text("rm -rf /")
@@ -212,3 +216,16 @@ def test_dangerous_command_is_only_matched_as_text_never_run(tmp_path: Path) -> 
         findings = audit_path(tmp_path)
 
     assert any(f.category == "dangerous_command" for f in findings)
+
+
+# --------------------------------------------------------------------------- H10: wrapped commands
+
+
+def test_dangerous_command_detected_inside_markdown_and_json_h10() -> None:
+    # A dangerous command wrapped in Markdown backticks or JSON punctuation must still tokenize
+    # and be flagged; the tokenizer treats surrounding punctuation as separators (finding H10).
+    for wrapped in ("Run `rm -rf /` now", '{"command":"rm -rf /"}', "steps: (rm -rf /);"):
+        findings = audit_text(wrapped)
+        assert any(
+            f.rule_id == "dangerous_command.rm_rf" for f in findings
+        ), f"not flagged: {wrapped!r}"

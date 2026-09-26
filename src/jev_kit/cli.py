@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 from jev_kit import SCHEMA_VERSION
+from jev_kit.fingerprint import parse_canonical
 
 _ERROR_CONFIG: dict[str, Any] = {
     "schema_version": SCHEMA_VERSION,
@@ -175,9 +176,11 @@ def main(argv: list[str] | None = None) -> int:
     else:
         text = sys.stdin.read()
 
+    # Strict parse: reject duplicate keys and NaN/Infinity, matching the fingerprint parser so
+    # the CLI cannot accept a request the engine would treat differently (finding H18).
     try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError as exc:
+        parsed = parse_canonical(text)
+    except ValueError as exc:
         return _fail_invocation(f"invalid JSON on input: {exc}")
 
     if not isinstance(parsed, dict):

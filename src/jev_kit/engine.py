@@ -147,10 +147,14 @@ def effective_contract(qset: QuestionSet, config: EngineConfig) -> dict[str, Any
     contract = egress_contract(qset)
     # Profile identity is (name, version), so changing a profile's rules (with a version bump)
     # invalidates the prior calibration; the name alone would not (finding H3/C07).
-    profiles = {
-        name: config.language_profile_versions.get(name, "unversioned")
-        for name in sorted(config.language_profiles)
-    }
+    profiles: dict[str, str] = {}
+    for name in sorted(config.language_profiles):
+        version = config.language_profile_versions.get(name)
+        if not isinstance(version, str) or not version:
+            # A profile with no declared version could change behavior without changing the
+            # fingerprint, reusing stale calibration; refuse it (finding H3/C07).
+            raise ValidationError(FailReason.CONFIG, "profile_unversioned")
+        profiles[name] = version
     contract["effective"] = {
         "public_names": sorted(config.public_names),
         "source_allowlist": sorted(config.source_allowlist),
@@ -775,6 +779,7 @@ def _decision_committed_on_disk(decision_id: str) -> bool:
         except OSError:
             continue
         target_call_ids: set[str] = set()
+        per_call_lines: dict[str, int] = {}
         for raw in lines:
             try:
                 rec = json.loads(raw)
@@ -783,12 +788,20 @@ def _decision_committed_on_disk(decision_id: str) -> bool:
             if not isinstance(rec, dict):
                 continue
             kind = rec.get("kind")
-            if kind == "decision" and rec.get("decision_id") == decision_id:
-                call_id = rec.get("call_id")
-                if isinstance(call_id, str):
+            call_id = rec.get("call_id")
+            if kind == "decision" and isinstance(call_id, str):
+                per_call_lines[call_id] = per_call_lines.get(call_id, 0) + 1
+                if rec.get("decision_id") == decision_id:
                     target_call_ids.add(call_id)
-            elif kind == "commit" and rec.get("call_id") in target_call_ids:
-                # Only the decision's OWN call being committed counts; a later unrelated commit
-                # must not vouch for a decision in a truncated batch (finding H11 MAJOR-2).
-                return True
+            elif kind == "commit" and call_id in target_call_ids:
+                # The decision's own call must be committed AND the marker's line count must
+                # match the decision lines actually seen for that call; a malformed or wrong
+                # count is a truncated/corrupt batch and does not count (finding H11 MAJOR-2).
+                lines_field = rec.get("lines")
+                if (
+                    isinstance(lines_field, int)
+                    and not isinstance(lines_field, bool)
+                    and lines_field == per_call_lines.get(call_id, 0)
+                ):
+                    return True
     return False

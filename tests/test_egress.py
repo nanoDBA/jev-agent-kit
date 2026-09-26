@@ -444,3 +444,52 @@ def test_auth_indicator_with_short_or_placeholder_value_stays_clean() -> None:
     for value in ("none", "***", "<redacted>", "abc"):
         body = json.dumps({"authorization": value}).encode()
         assert scan_request(body, json.loads(body)) is None
+
+
+# --- PR #40 hardening: H4, H15, H16, H17 ------------------------------------
+
+
+def test_identifier_collection_keys_are_tokenized_h4() -> None:
+    # A dict under an IDENTIFIER field must not ship its keys verbatim (finding H4): each key is
+    # an identifier and is tokenized on the same terms as a value.
+    schema = {"tenants": FieldSpec(ContentKind.IDENTIFIER)}
+    out = transform_state({"tenants": {"acme_corp": "region_east"}}, schema, ctx())
+    assert "acme_corp" not in out["tenants"]
+    (key,) = out["tenants"].keys()
+    assert key.startswith("id_")
+    assert out["tenants"][key].startswith("id_")
+
+
+def test_structured_password_pair_blocked_even_when_short_h15() -> None:
+    # A short, lowercase password value under a "password" key would slip past the token-shape
+    # heuristic; a strong-secret key pairing must block regardless of value shape (finding H15).
+    assert scan_request(b"{}", {"password": "hunter2"}) == "auth_credential"
+    assert scan_request(b"{}", {"api_key": "short"}) == "auth_credential"
+    # A documented redaction placeholder under the same key is not a leak.
+    assert scan_request(b"{}", {"password": "<redacted>"}) is None
+
+
+def test_command_unbalanced_quotes_fail_closed_h16() -> None:
+    # Command text shlex cannot parse (unbalanced quote) must block, never fall back to a naive
+    # whitespace split that could spill a secret token (finding H16).
+    schema = {"cmd": FieldSpec(ContentKind.COMMAND)}
+    with pytest.raises(ValidationError) as exc:
+        transform_state({"cmd": "tool --tenant='unterminated"}, schema, ctx())
+    assert exc.value.reason is FailReason.EGRESS_BLOCKED
+
+
+def test_command_quoted_secret_arg_does_not_leak_h16() -> None:
+    schema = {"cmd": FieldSpec(ContentKind.COMMAND)}
+    out = transform_state({"cmd": "pg_dump --password='s3 cret value' mydb"}, schema, ctx())
+    assert "s3 cret value" not in out["cmd"]
+    assert "mydb" not in out["cmd"]
+    assert out["cmd"].split()[0] == "pg_dump"
+
+
+def test_log_high_entropy_token_masked_h17() -> None:
+    # An opaque high-entropy run that no named detector recognizes must still be masked in a
+    # reduced log (finding H17), while an ordinary word is left intact.
+    schema = {"line": FieldSpec(ContentKind.LOG)}
+    out = transform_state({"line": "session xG9fT2ab7Qz1LmNpV4kd started ok"}, schema, ctx())
+    assert "xG9fT2ab7Qz1LmNpV4kd" not in out["line"]
+    assert "started" in out["line"]

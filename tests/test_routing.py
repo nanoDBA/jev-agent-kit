@@ -90,6 +90,28 @@ def test_score_intervals() -> None:
     assert evaluate_candidate(mid, t).clears is False
 
 
+def test_non_top_interval_upper_is_exclusive_h9() -> None:
+    # Only the interval that reaches the rubric maximum (n-1) is inclusive at its upper bound;
+    # a non-top interval's upper is exclusive, decided by exact comparison rather than a fuzzy
+    # tolerance (finding H9). A score exactly on a non-top upper falls in the gap (review).
+    t = ScoreThreshold(
+        intervals=(
+            ScoreInterval(0.0, 1.0, "low"),
+            ScoreInterval(1.5, 2.0, "high"),
+        ),
+        min_confidence=0.5,
+    )
+    at_low_upper = ScoreAnswer(
+        "q", 1.0, {"0": 0.0, "1": 1.0, "2": 0.0}, {"0": "", "1": "", "2": ""}, 0.9
+    )
+    # 1.0 is the exclusive upper of the non-top "low" interval, so it does not clear.
+    assert evaluate_candidate(at_low_upper, t).clears is False
+    at_top = ScoreAnswer(
+        "q", 2.0, {"0": 0.0, "1": 0.0, "2": 1.0}, {"0": "", "1": "", "2": ""}, 0.9
+    )
+    assert evaluate_candidate(at_top, t) == Candidate(True, "high")
+
+
 def test_score_intervals_must_not_overlap() -> None:
     with pytest.raises(ValidationError):
         ScoreThreshold(

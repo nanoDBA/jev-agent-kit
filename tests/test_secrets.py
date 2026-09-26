@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 import traceback
 
 import pytest
@@ -40,3 +41,19 @@ def test_both_sources_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TYPESAFE_API_KEY_COMMAND", '["python","-c","print(1)"]')
     with pytest.raises(ValidationError):
         resolve_secret("TYPESAFE_API_KEY", "TYPESAFE_API_KEY_COMMAND", timeout=5.0)
+
+
+def test_key_command_that_never_closes_stdout_times_out_h20(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A child that writes a little then sleeps holding stdout open must not hang past the
+    # deadline: the bounded read runs under the timeout, so it fails closed (finding H20).
+    script = "import sys, time; sys.stdout.write('x'); sys.stdout.flush(); time.sleep(30)"
+    argv = f'["{sys.executable}", "-c", "{script}"]'
+    monkeypatch.setenv("JEV_KIT_HMAC_KEY_COMMAND", argv)
+    monkeypatch.delenv("JEV_KIT_HMAC_KEY", raising=False)
+    start = time.monotonic()
+    with pytest.raises(ValidationError) as exc:
+        resolve_secret("JEV_KIT_HMAC_KEY", "JEV_KIT_HMAC_KEY_COMMAND", timeout=1.0)
+    assert time.monotonic() - start < 10.0
+    assert exc.value.reason is FailReason.CONFIG

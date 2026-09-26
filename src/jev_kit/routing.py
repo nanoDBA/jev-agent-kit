@@ -154,7 +154,7 @@ def _score_candidate(answer: ScoreAnswer, t: ScoreThreshold) -> Candidate:
         if interval.upper > rubric_max + TIE_TOLERANCE or interval.lower < -TIE_TOLERANCE:
             raise ValidationError(FailReason.CONFIG, "score_interval_out_of_domain")
     for interval in ordered:
-        at_top = abs(interval.upper - rubric_max) <= TIE_TOLERANCE
+        at_top = interval.upper >= rubric_max  # inclusive only when it reaches the rubric max (H9)
         in_range = interval.lower <= answer.score and (
             answer.score < interval.upper or (at_top and answer.score <= interval.upper)
         )

@@ -10,6 +10,7 @@ implemented in a later slice.
 from __future__ import annotations
 
 import email.utils
+import math
 import ssl
 import threading
 import time
@@ -157,7 +158,9 @@ def parse_retry_after(headers: Mapping[str, str]) -> float | None:
     if ms is not None:
         try:
             value = float(ms)
-            if value >= 0:
+            # A finite, non-negative number only: "inf"/"nan" parse as floats but must never
+            # become an unbounded or undefined delay (finding H19).
+            if math.isfinite(value) and value >= 0:
                 return value / 1000.0
         except ValueError:
             pass
@@ -165,10 +168,15 @@ def parse_retry_after(headers: Mapping[str, str]) -> float | None:
     if ra is not None:
         try:
             value = float(ra)
-            if value >= 0:
+            if math.isfinite(value) and value >= 0:
                 return value
         except ValueError:
-            parsed = email.utils.parsedate_to_datetime(ra)
+            try:
+                parsed = email.utils.parsedate_to_datetime(ra)
+            except (ValueError, TypeError):
+                # parsedate_to_datetime raises on an unparseable date on modern Python; a
+                # malformed header must be ignored, not propagated (finding H19).
+                return None
             if parsed is not None:
                 delta = parsed.timestamp() - time.time()
                 return max(0.0, delta)

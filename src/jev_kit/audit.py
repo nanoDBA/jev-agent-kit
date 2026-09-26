@@ -207,12 +207,17 @@ def _shell_follows_pipe(tokens: list[str], pipe_index: int) -> bool:
 
 
 def _tokenize(line: str) -> list[str]:
-    """Split *line* into whitespace-separated tokens, with "|" and ">" as tokens of their own.
+    """Split *line* into tokens, treating shell and structured-text punctuation as separators.
 
-    Two `str.replace` passes plus one `str.split`, each O(len(line)); no regex is involved, so
-    nothing here can backtrack no matter how the line is shaped.
+    A dangerous command embedded in Markdown or JSON (`` `rm -rf /` ``, `{"command":"rm -rf /"}`)
+    must still tokenize to `rm`, `-rf`, `/` so the linear scan detects it (finding H10). "|" and
+    ">" are kept as their own tokens for pipe/redirect rules. All work is str.translate plus
+    split, each O(len(line)), so nothing can backtrack however the line is shaped.
     """
     spaced = line.replace("|", " | ").replace(">", " > ")
+    # Surrounding punctuation from Markdown/JSON/quoting becomes whitespace so it cannot hide a
+    # command token. Characters that are part of a command (- / . : _ = \) are preserved.
+    spaced = spaced.translate({ord(ch): " " for ch in "`\"'{}[](),;"})
     return spaced.split()
 
 

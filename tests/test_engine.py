@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from typing import Any, ClassVar
 
+import pytest
+
 from jev_kit.engine import EngineConfig, decide
 from jev_kit.errors import FailReason
 from jev_kit.ratebudget import RateBudget
@@ -476,6 +478,20 @@ def test_fingerprint_changes_with_profile_version() -> None:
     assert fp(v1) != fp(v2)
 
 
+def test_profile_without_version_is_rejected_h3() -> None:
+    # H3: a profile in use with no declared version could change behavior without changing the
+    # fingerprint, so it fails closed rather than defaulting to an "unversioned" marker.
+    from jev_kit.engine import EngineConfig, effective_contract
+    from jev_kit.errors import FailReason, ValidationError
+    from jev_kit.questionset import load_question_set
+
+    qset = load_question_set(question_set())
+    cfg = EngineConfig(language_profiles={"sql": (lambda s: s)})  # no versions map entry
+    with pytest.raises(ValidationError) as exc:
+        effective_contract(qset, cfg)
+    assert exc.value.reason is FailReason.CONFIG
+
+
 def test_record_outcome_survives_across_processes(tmp_path: Any, monkeypatch: Any) -> None:
     # H11: an outcome may reference a decision committed by a PRIOR process, via the durable
     # receipt on disk, not only the in-memory set.
@@ -492,6 +508,36 @@ def test_record_outcome_survives_across_processes(tmp_path: Any, monkeypatch: An
     monkeypatch.setattr("jev_kit.receipts.receipts_dir", lambda: tmp_path)
     assert engine.record_outcome(did, "applied") is True
     assert engine.record_outcome("act_" + "0" * 32, "applied") is False  # unknown id
+
+
+def test_commit_marker_with_wrong_line_count_does_not_vouch_h11(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    # H11: a commit marker whose line count does not match the decision lines actually written
+    # for its call is a truncated or corrupt batch and must not count a decision as committed.
+    from jev_kit import engine
+    from jev_kit.receipts import ReceiptWriter
+
+    writer = ReceiptWriter(directory=tmp_path)
+    monkeypatch.setattr(engine, "get_writer", lambda: writer)
+    rec = only(decide(request("shadow"), transport=reply(0.5), config=EngineConfig(
+        hmac_key=HMAC_KEY, writer=writer, rate_budget=RateBudget())))
+    did = rec["decision_id"]
+
+    # Corrupt the commit marker's line count in the receipt file on disk.
+    path = next(tmp_path.glob("*.jsonl"))
+    lines = path.read_text(encoding="utf-8").splitlines()
+    rewritten = []
+    for raw in lines:
+        obj = json.loads(raw)
+        if obj.get("kind") == "commit":
+            obj["lines"] = obj.get("lines", 1) + 5  # claim more lines than exist
+        rewritten.append(json.dumps(obj))
+    path.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(engine, "_committed_decisions", set())
+    monkeypatch.setattr("jev_kit.receipts.receipts_dir", lambda: tmp_path)
+    assert engine.record_outcome(did, "applied") is False
 
 
 def test_config_from_env_reads_source_allowlist(monkeypatch: Any) -> None:

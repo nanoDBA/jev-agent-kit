@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import json
 import os
 import subprocess
+import threading
 
 from jev_kit.errors import FailReason, ValidationError
 
@@ -27,6 +29,7 @@ def _run_key_command(spec: str, timeout: float) -> str:
         raise ValidationError(FailReason.CONFIG, "key_command_not_json") from None
     if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
         raise ValidationError(FailReason.CONFIG, "key_command_not_argv")
+    deadline = max(0.1, timeout)
     proc = None
     try:
         proc = subprocess.Popen(  # shell=False by construction; argv is a validated list
@@ -36,10 +39,27 @@ def _run_key_command(spec: str, timeout: float) -> str:
             shell=False,
         )
         assert proc.stdout is not None
-        # Read at most one byte past the cap, so an overflowing command is rejected rather
-        # than buffered without bound (finding C18).
-        raw: bytes = proc.stdout.read(_MAX_KEY_OUTPUT + 1)
-        proc.wait(timeout=max(0.1, timeout))
+        # The bounded read is itself run under the deadline. A plain proc.stdout.read() can
+        # block forever when the child writes less than the cap but never closes stdout (for
+        # example a lingering grandchild holding the pipe), so a later wait(timeout=...) would
+        # never be reached and the deadline would not bind (finding H20). Reading in a thread
+        # and joining with the deadline enforces the timeout across the read AND the wait, while
+        # still capping the buffer at one byte past the limit.
+        stdout = proc.stdout
+        box: dict[str, bytes] = {}
+
+        def _read() -> None:
+            # errors are surfaced by an absent result key, never by leaking anything
+            with contextlib.suppress(OSError, ValueError):
+                box["raw"] = stdout.read(_MAX_KEY_OUTPUT + 1)
+
+        reader = threading.Thread(target=_read, daemon=True)
+        reader.start()
+        reader.join(deadline)
+        if reader.is_alive() or "raw" not in box:
+            raise subprocess.TimeoutExpired(argv[0], deadline)
+        raw = box["raw"]
+        proc.wait(timeout=deadline)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         _terminate(proc)
         # No `from` clause: nothing about the command or its output reaches the error.

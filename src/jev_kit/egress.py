@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import re
+import shlex
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -132,12 +133,26 @@ _KV_PATTERN = re.compile(r"(?<![\w.-])([A-Za-z_][\w.-]*)=(\S+)")
 # it as a value.
 _BARE_IDENTIFIER = re.compile(r"\b[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+\b")
 
+# A standalone high-entropy run (16+ chars of a token/base64/hex charset that is not a plain
+# word): a reduced log is codes and templates only, so an opaque token that no named detector
+# recognizes is still masked rather than shipped verbatim (finding H17). A run that is only
+# letters is left alone here; the bare-identifier and word rules already cover ordinary words.
+_LOG_ENTROPY_TOKEN = re.compile(r"(?<![\w/+=])[A-Za-z0-9+/_=-]{16,}(?![\w/+=])")
+
+
+def _mask_entropy(match: re.Match[str]) -> str:
+    token = match.group(0)
+    if token.isalpha():
+        return token
+    return "<v>"
+
 
 def _reduce_log(text: str) -> str:
     text = re.sub(r"'[^']*'", "<v>", text)
     text = re.sub(r'"[^"]*"', "<v>", text)
     text = _KV_PATTERN.sub(r"\1=<v>", text)
     text = _BARE_IDENTIFIER.sub("<v>", text)
+    text = _LOG_ENTROPY_TOKEN.sub(_mask_entropy, text)
     return _mask_contacts(text)
 
 
@@ -153,7 +168,14 @@ def _reduce_command(text: str) -> str:
     # - a long flag ("--tenant=PRIVATE") keeps only its name, the '=value' is stripped
     # - a short flag with an attached value ("-pPRIVATE") keeps only the flag letter
     # - every positional argument token is dropped entirely rather than kept as-is
-    tokens = text.split()
+    #
+    # The text is tokenized with shell rules so a quoted secret ("--tenant='a b'") is one token
+    # and cannot spill an inner word into the kept output. Unbalanced quotes or other syntax
+    # shlex cannot parse are a fail-closed block, never a naive whitespace split (finding H16).
+    try:
+        tokens = shlex.split(text, posix=True)
+    except ValueError as exc:
+        raise ValidationError(FailReason.EGRESS_BLOCKED, "command_unparseable") from exc
     idx = 0
     while idx < len(tokens) and _ENV_ASSIGNMENT.match(tokens[idx]):
         idx += 1
@@ -259,7 +281,15 @@ def _transform_value(value: Any, spec: FieldSpec, ctx: EgressContext, depth: int
         for key, item in value.items():
             if not isinstance(key, str) or not _SAFE_KEY.match(key):
                 raise ValidationError(FailReason.EGRESS_BLOCKED, "unsafe_object_key")
-            out[key] = _transform_value(_reject_nested(item), spec, ctx, depth + 1)
+            # A collection key under an IDENTIFIER field is itself an identifier and would leak
+            # verbatim otherwise, so it is tokenized on the same terms as a value (finding H4).
+            # For other kinds the key is a structural label kept as a safe identifier.
+            out_key = (
+                _transform_scalar(ContentKind.IDENTIFIER, key, spec.params, ctx)
+                if spec.kind is ContentKind.IDENTIFIER
+                else key
+            )
+            out[out_key] = _transform_value(_reject_nested(item), spec, ctx, depth + 1)
         return out
     raise ValidationError(FailReason.EGRESS_BLOCKED, "unsupported_value_type")
 
@@ -404,19 +434,37 @@ def _walk_strings(obj: Any) -> list[str]:
 # single string contains both the auth indicator and the token. These names mark either side of
 # that split: a dict key equal to one of them, or a sibling string value equal to one of them
 # (e.g. {"h": "Authorization", "v": "<token>"}, where "h"'s value names the header generically).
-_AUTH_INDICATOR_NAMES = frozenset(
+# Strong indicators name a field whose value IS the secret: a value paired with one of these is
+# blocked whatever its shape, because a password or client secret can be short, lowercase, or an
+# ordinary word and would slip past the token-shape heuristic (finding H15). Only a documented
+# redaction placeholder is exempt.
+_STRONG_SECRET_NAMES = frozenset(
     {
-        "authorization",
-        "auth",
-        "bearer",
-        "basic",
-        "token",
+        "password",
+        "passwd",
+        "pwd",
+        "secret",
+        "client_secret",
+        "secret_key",
+        "private_key",
         "access_token",
         "id_token",
         "refresh_token",
         "api_key",
         "apikey",
         "x-api-key",
+    }
+)
+
+# Weak indicators name a field that often but not always carries a token, so a value there is
+# blocked only when it also has a credential shape (finding GATE-04).
+_AUTH_INDICATOR_NAMES = _STRONG_SECRET_NAMES | frozenset(
+    {
+        "authorization",
+        "auth",
+        "bearer",
+        "basic",
+        "token",
         "credential",
         "credentials",
     }
@@ -440,8 +488,19 @@ def _looks_like_credential(value: str) -> bool:
 
 
 def _scan_auth_pairs(obj: Any) -> str | None:
-    """Find a high-entropy token adjacent to an auth indicator key (finding GATE-04)."""
+    """Find a secret adjacent to an auth indicator key (findings GATE-04, H15)."""
     if isinstance(obj, dict):
+        # A value directly under a strong-secret key is blocked whatever its shape (H15): a
+        # short or lowercase password would pass the credential-shape heuristic otherwise.
+        for key, value in obj.items():
+            if (
+                isinstance(key, str)
+                and key.strip().lower() in _STRONG_SECRET_NAMES
+                and isinstance(value, str)
+                and value.strip() != ""
+                and not _is_placeholder(value)
+            ):
+                return "auth_credential"
         has_indicator_key = any(
             isinstance(key, str) and key.strip().lower() in _AUTH_INDICATOR_NAMES
             for key in obj

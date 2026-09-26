@@ -143,7 +143,7 @@ def test_accept_path_through_fake_server(server: HTTPServer, tmp_path: Any) -> N
         "questions": {
             "destructive": {
                 "type": "noul", "instructions": "Destructive?",
-                "kit": {"consequence": "gate"},
+                "kit": {"consequence": "gate", "gate": {"allow_labels": ["no"]}},
             }
         },
         "state_schema": {"cmd": {"kind": "command"}},
@@ -197,7 +197,7 @@ def test_late_response_is_rejected(server: HTTPServer, tmp_path: Any) -> None:
         "questions": {
             "d": {
                 "type": "noul", "instructions": "Destructive?",
-                "kit": {"consequence": "gate"},
+                "kit": {"consequence": "gate", "gate": {"allow_labels": ["no"]}},
             }
         },
         "state_schema": {"cmd": {"kind": "command"}},
@@ -260,7 +260,7 @@ def test_live_send_without_attestation_is_refused(server: HTTPServer, tmp_path: 
         "questions": {
             "d": {
                 "type": "noul", "instructions": "Destructive?",
-                "kit": {"consequence": "gate"},
+                "kit": {"consequence": "gate", "gate": {"allow_labels": ["no"]}},
             }
         },
         "state_schema": {"cmd": {"kind": "command"}},

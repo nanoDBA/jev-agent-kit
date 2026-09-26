@@ -51,7 +51,7 @@ def test_score_criteria_is_ordered_array_on_the_wire() -> None:
                     "type": "score",
                     "instructions": "How risky?",
                     "criteria": ["safe", "review", "unsafe"],
-                    "kit": {"consequence": "gate"},
+                    "kit": {"consequence": "gate", "gate": {"allow_labels": ["safe"]}},
                 }
             }
         )

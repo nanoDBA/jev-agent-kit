@@ -39,9 +39,10 @@ def test_example_question_set_loads() -> None:
             "escalation_target": "gpt-6",
             "questions": {
                 "d": {"type": "noul", "instructions": "Destructive?",
-                      "kit": {"consequence": "gate"}},
+                      "kit": {"consequence": "gate", "gate": {"allow_labels": ["no"]}}},
                 "r": {"type": "score", "instructions": "How risky?",
-                      "criteria": ["safe", "review", "unsafe"], "kit": {"consequence": "gate"}},
+                      "criteria": ["safe", "review", "unsafe"],
+                      "kit": {"consequence": "gate", "gate": {"allow_labels": ["safe"]}}},
                 "t": {"type": "choice", "instructions": "Which team?",
                       "criteria": {"billing": None, "tech": None},
                       "kit": {"consequence": "advisory"}},

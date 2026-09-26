@@ -34,7 +34,7 @@ def ok(records: list[dict[str, Any]]) -> Any:
 
 
 def test_enforce_all_accept_allows() -> None:
-    runner = ok([{"route": "accept", "is_mock": False}])
+    runner = ok([{"route": "accept", "label": "no", "allow_labels": ["no"], "is_mock": False}])
     result = hermes.pre_tool_call(
         FakeCtx(), TOOL_CALL, mode=Mode.ENFORCE, question_set_path=QS, runner=runner
     )
@@ -112,7 +112,8 @@ def test_unparseable_event_enforce_blocks() -> None:
 
 def test_register_wires_pre_tool_call_hook() -> None:
     ctx = FakeCtx()
-    hermes.register(ctx, mode=Mode.ENFORCE, question_set_path=QS, runner=ok([{"route": "accept"}]))
+    hermes.register(ctx, mode=Mode.ENFORCE, question_set_path=QS,
+                    runner=ok([{"route": "accept", "label": "no", "allow_labels": ["no"]}]))
     assert "pre_tool_call" in ctx.hooks
 
     result = ctx.hooks["pre_tool_call"](TOOL_CALL)

@@ -7,6 +7,7 @@ classes, and transcript settings. Parsing rejects duplicate keys and non-finite 
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ from jev_kit.types import (
 )
 
 EGRESS_POLICY_VERSION = 1
+_SAFE_QID = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 
 
 @dataclass(frozen=True)
@@ -72,12 +74,16 @@ def _build_question(qid: str, spec: dict[str, Any]) -> Question:
         raise ValidationError(FailReason.CONFIG, "question_kit_type")
     consequence = _consequence(_require(kit, "consequence", "question_no_consequence"))
     criteria = spec.get("criteria")
+    is_gate = consequence is ConsequenceClass.GATE
 
     if qtype == "noul":
         # Noul criteria, when present, is a {true, false} description object.
         if criteria is not None and not isinstance(criteria, dict):
             raise ValidationError(FailReason.CONFIG, "noul_criteria_type")
-        return NoulQuestion(qid, instructions, consequence, criteria=criteria)
+        allow = _gate_allow_labels(kit, is_gate, frozenset({"yes", "no"}))
+        return NoulQuestion(
+            qid, instructions, consequence, criteria=criteria, gate_allow_labels=allow
+        )
     if qtype == "choice":
         # Choice criteria is the option map: option key -> description (or null).
         if not isinstance(criteria, dict) or not criteria:
@@ -87,15 +93,51 @@ def _build_question(qid: str, spec: dict[str, Any]) -> Question:
             raise ValidationError(FailReason.CONFIG, "choice_option_key_type")
         if not 2 <= len(options) <= 255:
             raise ValidationError(FailReason.CONFIG, "choice_options_count")
-        return ChoiceQuestion(qid, instructions, options, consequence, criteria=dict(criteria))
+        allow = _gate_allow_labels(kit, is_gate, frozenset(options))
+        return ChoiceQuestion(
+            qid,
+            instructions,
+            options,
+            consequence,
+            criteria=dict(criteria),
+            gate_allow_labels=allow,
+        )
     if qtype == "score":
         # Score criteria is the ordered array of level descriptions.
         if not isinstance(criteria, list) or not all(isinstance(x, str) for x in criteria):
             raise ValidationError(FailReason.CONFIG, "score_criteria_type")
         if not 2 <= len(criteria) <= 10:
             raise ValidationError(FailReason.CONFIG, "score_levels_count")
-        return ScoreQuestion(qid, instructions, tuple(criteria), consequence)
+        # Score interval labels live in the registry threshold, so the subset is validated
+        # there, not here; a gate Score still requires the field to be present.
+        allow = _gate_allow_labels(kit, is_gate, None)
+        return ScoreQuestion(
+            qid, instructions, tuple(criteria), consequence, gate_allow_labels=allow
+        )
     raise ValidationError(FailReason.CONFIG, "unknown_question_type")
+
+
+def _gate_allow_labels(
+    kit: dict[str, Any], is_gate: bool, valid: frozenset[str] | None
+) -> frozenset[str] | None:
+    """Parse kit.gate.allow_labels: the labels a gate answer may map to ALLOW (finding H1).
+
+    Required for a gate question (fail closed: a gate with no allow-list can never ship). An
+    advisory question has none. When ``valid`` is given, every label must be one of it.
+    """
+    gate = kit.get("gate")
+    if not is_gate:
+        if gate is not None:
+            raise ValidationError(FailReason.CONFIG, "gate_block_on_advisory")
+        return None
+    if not isinstance(gate, dict):
+        raise ValidationError(FailReason.CONFIG, "gate_no_allow_labels")
+    labels = gate.get("allow_labels")
+    if not isinstance(labels, list) or not labels or not all(isinstance(x, str) for x in labels):
+        raise ValidationError(FailReason.CONFIG, "gate_allow_labels_type")
+    if valid is not None and not set(labels) <= valid:
+        raise ValidationError(FailReason.CONFIG, "gate_allow_labels_unknown")
+    return frozenset(labels)
 
 
 def _build_field(spec: Any) -> FieldSpec:
@@ -118,6 +160,11 @@ def _parse(obj: Any) -> QuestionSet:
     raw_questions = _require(obj, "questions", "no_questions")
     if not isinstance(raw_questions, dict) or not raw_questions:
         raise ValidationError(FailReason.CONFIG, "questions_type")
+    for qid in raw_questions:
+        # Question ids reach records and receipts verbatim, so they must be safe identifiers,
+        # never a channel for secret-shaped strings (finding H6/C08).
+        if not isinstance(qid, str) or not _SAFE_QID.match(qid):
+            raise ValidationError(FailReason.CONFIG, "question_id_unsafe")
     questions = {qid: _build_question(qid, spec) for qid, spec in raw_questions.items()}
 
     raw_schema = obj.get("state_schema", {})
@@ -128,6 +175,13 @@ def _parse(obj: Any) -> QuestionSet:
     transcripts = obj.get("transcripts", {})
     if not isinstance(transcripts, dict):
         raise ValidationError(FailReason.CONFIG, "transcripts_type")
+    enabled = transcripts.get("enabled", False)
+    # A real boolean only: the string "false" is truthy and would silently enable (finding H5).
+    if not isinstance(enabled, bool):
+        raise ValidationError(FailReason.CONFIG, "transcripts_enabled_type")
+    cap = transcripts.get("cap", 2000)
+    if isinstance(cap, bool) or not isinstance(cap, int) or cap <= 0:
+        raise ValidationError(FailReason.CONFIG, "transcripts_cap_type")
     excluded = obj.get("excluded_classes", [])
     if not isinstance(excluded, list) or not all(isinstance(x, str) for x in excluded):
         raise ValidationError(FailReason.CONFIG, "excluded_classes_type")
@@ -149,8 +203,8 @@ def _parse(obj: Any) -> QuestionSet:
         questions=questions,
         schema=schema,
         excluded_classes=frozenset(excluded),
-        transcripts_enabled=bool(transcripts.get("enabled", False)),
-        transcripts_cap=int(transcripts.get("cap", 2000)),
+        transcripts_enabled=enabled,
+        transcripts_cap=cap,
         raw=obj,
     )
 

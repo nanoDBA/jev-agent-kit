@@ -97,7 +97,10 @@ class ScoreThreshold:
                 raise ValidationError(FailReason.CONFIG, "score_interval_order")
         ordered = sorted(self.intervals, key=lambda i: i.lower)
         for a, b in itertools.pairwise(ordered):
-            if a.upper > b.lower + TIE_TOLERANCE:
+            # Reject any real overlap; only exact adjacency (a.upper == b.lower) is allowed.
+            # No tolerance slack, which previously permitted a tiny order-dependent overlap
+            # (finding H9/C11).
+            if a.upper > b.lower:
                 raise ValidationError(FailReason.CONFIG, "score_intervals_overlap")
 
 
@@ -146,10 +149,11 @@ def _score_candidate(answer: ScoreAnswer, t: ScoreThreshold) -> Candidate:
     # largest configured interval bound (finding C11). Intervals outside [0, n-1] are a
     # configuration error, so a broad malformed interval cannot clear a valid score.
     rubric_max = float(len(answer.probabilities) - 1)
-    for interval in t.intervals:
+    ordered = sorted(t.intervals, key=lambda i: i.lower)
+    for interval in ordered:
         if interval.upper > rubric_max + TIE_TOLERANCE or interval.lower < -TIE_TOLERANCE:
             raise ValidationError(FailReason.CONFIG, "score_interval_out_of_domain")
-    for interval in t.intervals:
+    for interval in ordered:
         at_top = abs(interval.upper - rubric_max) <= TIE_TOLERANCE
         in_range = interval.lower <= answer.score and (
             answer.score < interval.upper or (at_top and answer.score <= interval.upper)

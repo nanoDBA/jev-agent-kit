@@ -246,7 +246,10 @@ def _transform_value(value: Any, spec: FieldSpec, ctx: EgressContext, depth: int
         if len(value) > MAX_POSITIONAL_LIST:
             # Positional arrays are capped tighter than keyed collections (finding C13).
             raise ValidationError(FailReason.EGRESS_BLOCKED, "positional_list_too_long")
-        return [_transform_value(item, spec, ctx, depth + 1) for item in value]
+        # Only a flat collection of scalars is allowed; a nested container would carry
+        # undeclared descendants (finding H4/C04). The schema is flat, so there is no path to
+        # declare them.
+        return [_transform_value(_reject_nested(item), spec, ctx, depth + 1) for item in value]
     if isinstance(value, dict):
         if spec.kind is ContentKind.METRIC:
             raise ValidationError(FailReason.EGRESS_BLOCKED, "metric_value")
@@ -256,9 +259,16 @@ def _transform_value(value: Any, spec: FieldSpec, ctx: EgressContext, depth: int
         for key, item in value.items():
             if not isinstance(key, str) or not _SAFE_KEY.match(key):
                 raise ValidationError(FailReason.EGRESS_BLOCKED, "unsafe_object_key")
-            out[key] = _transform_value(item, spec, ctx, depth + 1)
+            out[key] = _transform_value(_reject_nested(item), spec, ctx, depth + 1)
         return out
     raise ValidationError(FailReason.EGRESS_BLOCKED, "unsupported_value_type")
+
+
+def _reject_nested(item: Any) -> Any:
+    """A collection element must be a scalar; an undeclared nested container is blocked (H4)."""
+    if isinstance(item, (dict, list)):
+        raise ValidationError(FailReason.EGRESS_BLOCKED, "undeclared_nested_container")
+    return item
 
 
 def transform_state(

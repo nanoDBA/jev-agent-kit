@@ -264,6 +264,7 @@ def _record(
         "decision_id": decision_id,
         "question_id": question.question_id,
         "consequence": question.consequence.value,
+        "allow_labels": sorted(question.gate_allow_labels) if question.gate_allow_labels else None,
         "fingerprint": fingerprint,
         "route": route.value,
         "would_route": would.value if would is not None else None,
@@ -505,6 +506,16 @@ def _decide(
                 requested_model=qset.model,
             )
         )
+
+    # A decision that only became an accept after the deadline passed (for example because the
+    # response or receipt work overran) must not be returned as accept (finding H8/C02). Recheck
+    # expiry before receipts, so the downgraded route is what is both recorded and returned.
+    if deadline.expired():
+        for rec in records:
+            if rec["route"] == Route.ACCEPT.value:
+                is_gate = rec["consequence"] == ConsequenceClass.GATE.value
+                rec["route"] = Route.ASK.value if is_gate else Route.NO_ADVICE.value
+                rec["fail_reason"] = FailReason.TIMEOUT.value
 
     _write_receipts(
         writer, records, call_id, set_digest, qset, served_model, sent_digest, action_id,

@@ -23,21 +23,36 @@
       "type": "noul",
       "instructions": "Would running `command` on `target` destroy, overwrite, or irreversibly change data or resources?",
       "kit": {
-        "consequence": "gate"
+        "consequence": "gate",
+        "gate": {
+          "allow_labels": [
+            "no"
+          ]
+        }
       }
     },
     "exfiltrates": {
       "type": "noul",
       "instructions": "Would `command` send data outside the local machine or trust boundary described in `context`?",
       "kit": {
-        "consequence": "gate"
+        "consequence": "gate",
+        "gate": {
+          "allow_labels": [
+            "no"
+          ]
+        }
       }
     },
     "widens_permission": {
       "type": "noul",
       "instructions": "Would `command` grant, escalate, or broaden a permission or access scope?",
       "kit": {
-        "consequence": "gate"
+        "consequence": "gate",
+        "gate": {
+          "allow_labels": [
+            "no"
+          ]
+        }
       }
     }
   }

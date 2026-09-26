@@ -22,27 +22,46 @@ _MAX_KEY_OUTPUT = 8192
 def _run_key_command(spec: str, timeout: float) -> str:
     try:
         argv = json.loads(spec)
-    except json.JSONDecodeError as exc:
-        raise ValidationError(FailReason.CONFIG, "key_command_not_json") from exc
+    except json.JSONDecodeError:
+        # `from None`: the command text must never survive in the exception chain (finding C18).
+        raise ValidationError(FailReason.CONFIG, "key_command_not_json") from None
     if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
         raise ValidationError(FailReason.CONFIG, "key_command_not_argv")
+    proc = None
     try:
-        completed = subprocess.run(
+        proc = subprocess.Popen(  # shell=False by construction; argv is a validated list
             argv,
-            capture_output=True,
-            timeout=max(0.1, timeout),
-            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,  # discard stderr so it cannot leak
             shell=False,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        # Never include the command text or any output in the error.
-        raise ValidationError(FailReason.CONFIG, "key_command_failed") from exc
-    if completed.returncode != 0:
+        assert proc.stdout is not None
+        # Read at most one byte past the cap, so an overflowing command is rejected rather
+        # than buffered without bound (finding C18).
+        raw: bytes = proc.stdout.read(_MAX_KEY_OUTPUT + 1)
+        proc.wait(timeout=max(0.1, timeout))
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        _terminate(proc)
+        # No `from` clause: nothing about the command or its output reaches the error.
+        raise ValidationError(FailReason.CONFIG, "key_command_failed") from None
+    if proc.returncode != 0:
         raise ValidationError(FailReason.CONFIG, "key_command_exit")
-    out = completed.stdout[:_MAX_KEY_OUTPUT].decode("utf-8", errors="replace").strip()
+    if len(raw) > _MAX_KEY_OUTPUT:
+        raise ValidationError(FailReason.CONFIG, "key_command_output_too_large")
+    out = raw.decode("utf-8", errors="replace").strip()
     if not out:
         raise ValidationError(FailReason.CONFIG, "key_command_empty")
     return out
+
+
+def _terminate(proc: subprocess.Popen[bytes] | None) -> None:
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        proc.kill()
+        proc.wait(timeout=1.0)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def resolve_secret(direct_env: str, command_env: str, *, timeout: float) -> str | None:

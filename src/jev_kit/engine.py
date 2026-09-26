@@ -32,7 +32,13 @@ from jev_kit import registry as registry_mod
 from jev_kit import secrets
 from jev_kit.attestation import check_attestation, load_attestation
 from jev_kit.deadline import Deadline
-from jev_kit.egress import EgressContext, personal_kinds_present, scan_request, transform_state
+from jev_kit.egress import (
+    EgressContext,
+    personal_kinds_present,
+    scan_request,
+    scan_text,
+    transform_state,
+)
 from jev_kit.errors import FailReason, ValidationError, fail_reason_for_status
 from jev_kit.fingerprint import (
     canonical_bytes,
@@ -47,7 +53,13 @@ from jev_kit.questionset import (
     load_question_set_file,
 )
 from jev_kit.ratebudget import RateBudget
-from jev_kit.receipts import ReceiptWriter, get_writer, new_action_id, validate_action_id
+from jev_kit.receipts import (
+    ReceiptWriter,
+    get_writer,
+    new_action_id,
+    validate_action_id,
+    validate_metadata_id,
+)
 from jev_kit.routing import (
     Candidate,
     RegistryEntry,
@@ -434,6 +446,21 @@ def _parse_response_body(body: bytes) -> Any:
         raise ValidationError(FailReason.RESPONSE_MALFORMED, "body_not_json") from exc
 
 
+def _safe_metadata(value: str | None) -> str | None:
+    """Omit a metadata string that is unsafe or carries a secret pattern (finding C08).
+
+    Metadata fields are a separate egress channel from the request body, so they are scanned
+    and pattern-validated independently before being persisted or returned.
+    """
+    if value is None:
+        return None
+    if validate_metadata_id(value, "metadata") is None:
+        return None
+    if scan_text(value) is not None:
+        return None
+    return value
+
+
 def _write_receipts(
     writer: ReceiptWriter,
     records: list[dict[str, Any]],
@@ -465,7 +492,7 @@ def _write_receipts(
             "mode": rec["mode"],
             "fail_reason": rec["fail_reason"],
             "is_mock": rec["is_mock"],
-            "action_id": action_id,
+            "action_id": _safe_metadata(action_id),
         }
         for rec in records
     ]

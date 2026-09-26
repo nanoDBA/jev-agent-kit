@@ -297,3 +297,19 @@ def test_positional_array_over_cap_blocked(tmp_path: Any) -> None:
     rec = only(decide(req, transport=reply(0.1), config=config(tmp_path)))
     assert rec["route"] == "ask"
     assert rec["fail_reason"] == "egress_blocked"
+
+
+# --- C08 metadata scanning --------------------------------------------------
+
+
+def test_secret_action_id_omitted_from_receipt(tmp_path: Any) -> None:
+    # An action_id that matches the safe id pattern but is a secret shape must not be recorded.
+    from jev_kit.receipts import ReceiptWriter
+
+    writer = ReceiptWriter(directory=tmp_path)
+    cfg = EngineConfig(hmac_key=HMAC_KEY, writer=writer, rate_budget=RateBudget())
+    req = request("shadow")
+    req["action_id"] = "AKIAIOSFODNN7EXAMPLE"  # passes safe-id regex, is an AWS key shape
+    decide(req, transport=reply(0.1), config=cfg)
+    text = next(tmp_path.glob("*.jsonl")).read_text(encoding="utf-8")
+    assert "AKIAIOSFODNN7EXAMPLE" not in text

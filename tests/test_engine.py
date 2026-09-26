@@ -895,3 +895,64 @@ def test_nested_code_global_dependency_fails_closed_h3() -> None:
 
     ok = EngineConfig(language_profiles={"sql": benign}, language_profile_versions={"sql": "1"})
     assert "transform_digest" in effective_contract(qset, ok)
+
+
+_CLASS_RULES = {"replacement": "SELECT ?"}
+
+
+def _class_scope_normalizer(text: str) -> str:
+    class Rule:
+        replacement = _CLASS_RULES["replacement"]
+
+    return Rule.replacement
+
+
+def _open_normalizer(text: str) -> str:
+    with open(text) as handle:  # file-backed state
+        return handle.read()
+
+
+def _import_normalizer(text: str) -> str:
+    return str(__import__("os").environ.get("RULE", text))
+
+
+def test_profile_outside_supported_subset_fails_closed_h3() -> None:
+    # Batch-12 H3: profiles are limited to a bounded supported subset. A class body (reads via
+    # LOAD_NAME), file access, dynamic import, and a user module's attributes all fail closed;
+    # so do stdlib paths to mutable state (sys.modules, os.environ). A benign generator and
+    # an allowlisted pure module (re) are still accepted.
+    import os
+    import re
+    import sys
+
+    from jev_kit.engine import EngineConfig, effective_contract
+    from jev_kit.errors import FailReason, ValidationError
+    from jev_kit.questionset import load_question_set
+
+    qset = load_question_set(question_set())
+
+    def cfg(fn: Any) -> EngineConfig:
+        return EngineConfig(language_profiles={"sql": fn}, language_profile_versions={"sql": "1"})
+
+    def sys_modules_normalizer(text: str) -> str:
+        return str(sys.modules[__name__].__dict__.get("RULE", text))  # stdlib path to state
+
+    def environ_normalizer(text: str) -> str:
+        return os.environ.get("RULE", text)  # mutable process state
+
+    for bad in (
+        _class_scope_normalizer, _open_normalizer, _import_normalizer,
+        sys_modules_normalizer, environ_normalizer,
+    ):
+        with pytest.raises(ValidationError) as exc:
+            effective_contract(qset, cfg(bad))
+        assert exc.value.reason is FailReason.CONFIG, bad.__name__
+
+    def benign(text: str) -> str:
+        return "".join(c for c in text if c.isalnum())
+
+    def stdlib(text: str) -> str:
+        return re.sub(r"\d", "?", text)
+
+    for good in (benign, stdlib):
+        assert "transform_digest" in effective_contract(qset, cfg(good))

@@ -485,6 +485,10 @@ def scan_text(text: str) -> str | None:
     The text is scanned as given and, when it contains JSON unicode escapes, also in a
     de-escaped form so an obfuscated credential key or scheme cannot slip past (finding H15).
     """
+    return _scan_text(text, 0)
+
+
+def _scan_text(text: str, depth: int) -> str | None:
     hit = _scan_text_once(text)
     if hit is not None:
         return hit
@@ -501,7 +505,7 @@ def scan_text(text: str) -> str | None:
     # representation (signed/exponent numbers, escapes, arbitrary whitespace) is judged by
     # meaning rather than by one regex spelling (finding H15).
     for candidate in candidates:
-        hit = _scan_embedded_json(candidate)
+        hit = _scan_embedded_json(candidate, depth)
         if hit is not None:
             return hit
     return None
@@ -509,11 +513,17 @@ def scan_text(text: str) -> str | None:
 
 _MAX_EMBEDDED_JSON = 65_536
 
+# How many layers of JSON-inside-a-JSON-string the scanner decodes. Deeper encoding fails
+# closed rather than being passed unscanned (finding H15).
+_MAX_JSON_LAYERS = 4
 
-def _scan_embedded_json(text: str) -> str | None:
+
+def _scan_embedded_json(text: str, depth: int = 0) -> str | None:
     stripped = text.strip()
     if not stripped or stripped[0] not in "{[" or len(stripped) > _MAX_EMBEDDED_JSON:
         return None
+    if depth >= _MAX_JSON_LAYERS:
+        return "embedded_json_too_deep"
     try:
         parsed = json.loads(stripped, object_pairs_hook=_pairs_rejecting_duplicates)
     except _DuplicateEmbeddedKey:
@@ -524,7 +534,17 @@ def _scan_embedded_json(text: str) -> str | None:
     except (ValueError, RecursionError):
         return None
     try:
-        return _scan_auth_pairs(parsed)
+        hit = _scan_auth_pairs(parsed)
+        if hit is not None:
+            return hit
+        # A string leaf may itself be JSON-encoded ({"payload": "{\" password \": \"x\"}"}),
+        # which the structural pass above sees only as an opaque string. Every decoded key and
+        # string leaf is rescanned one layer deeper, under the shared layer limit (H15).
+        for leaf in _walk_strings(parsed):
+            hit = _scan_text(leaf, depth + 1)
+            if hit is not None:
+                return hit
+        return None
     except RecursionError:
         return "embedded_json_too_deep"  # fail closed on pathological nesting
 

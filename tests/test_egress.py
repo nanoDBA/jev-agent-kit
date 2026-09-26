@@ -648,3 +648,18 @@ def test_container_and_duplicate_key_credentials_detected_h15() -> None:
     assert scan_text('{" password ":"opensesame"," password ":"<redacted>"}') is not None
     assert scan_text('{"password":[]}') is None
     assert scan_text('{"password":"<redacted>"}') is None
+
+
+def test_json_encoded_string_leaves_are_rescanned_h15() -> None:
+    # Batch-12 H15: a credential inside a JSON document that is itself carried as a string
+    # leaf of another JSON document is decoded and scanned, layer by layer; encoding deeper
+    # than the layer limit fails closed. Benign nested JSON stays clean.
+    double = json.dumps({"payload": json.dumps({" password ": "opensesame"})})
+    triple = json.dumps({"a": json.dumps({"b": json.dumps({"password": "z"})})})
+    assert scan_text(double) is not None
+    assert scan_text(triple) is not None
+    deep = json.dumps({"k": "v"})
+    for _ in range(6):
+        deep = json.dumps({"n": deep})
+    assert scan_text(deep) == "embedded_json_too_deep"
+    assert scan_text(json.dumps({"payload": json.dumps({"note": "hello"})})) is None

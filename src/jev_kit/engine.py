@@ -25,6 +25,7 @@ import json
 import random
 import re
 import time
+import types
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -217,23 +218,28 @@ def _profile_content_digest(profile: Callable[[str], str]) -> str:
 def _global_dependencies_repr(profile: Callable[[str], str], code: Any) -> str:
     """Bind the profile's referenced module globals, or fail closed on an unbound one (H3).
 
-    A profile that reads a mutable module global (a rule dict that can change without a version
-    bump) or calls a module-level helper is not fully described by its own code and captured
-    values. We inspect its LOAD_GLOBAL references: a referenced module is bound by name (a
-    stable dependency, its own code is a deploy-time concern), a bounded primitive by value, and
-    anything else (a mutable container, a function, an object) fails closed.
+    Profiles are limited to a closed, bounded SUPPORTED SUBSET of Python, and anything outside
+    it fails closed. Detecting every way Python can reach mutable state (class-body LOAD_NAME,
+    imports, attribute stores, file reads, a user module's data attributes) one case at a time
+    does not converge, so we admit only forms whose behavior is fully bound (H3):
+    - every code object, outer and nested, is walked; name-scope, class, import and super
+      opcodes and attribute/global stores are rejected outright;
+    - a builtin must be on a short allowlist of pure functions (no open, __import__, getattr,
+      eval, globals, ...);
+    - a module global must be an allowlisted pure module (bound by name), a bounded primitive is
+      bound by value, and any other global (a user module, a mutable container, a function, an
+      object) fails closed.
     """
     import dis
     import types
 
-    # Walk the outer code AND every nested code object (generator expressions, lambdas, inner
-    # functions): a global read only inside a nested generator is still a behavior dependency,
-    # and inspecting just the outer instructions let a mutable rule dict slip through (H3).
     names: set[str] = set()
     pending = [code]
     while pending:
         current = pending.pop()
         for instr in dis.get_instructions(current):
+            if _is_unsupported_opcode(instr.opname):
+                raise ValidationError(FailReason.CONFIG, "profile_content_unhashable")
             if instr.opname == "LOAD_GLOBAL" and isinstance(instr.argval, str):
                 names.add(instr.argval)
         pending.extend(const for const in current.co_consts if hasattr(const, "co_code"))
@@ -242,9 +248,15 @@ def _global_dependencies_repr(profile: Callable[[str], str], code: Any) -> str:
     parts: list[str] = []
     for name in referenced:
         if name not in module_globals:
-            continue  # a builtin (len, isinstance, ...): stable, nothing to bind
+            if name not in _SAFE_BUILTINS:
+                raise ValidationError(FailReason.CONFIG, "profile_content_unhashable")
+            continue  # an allowlisted pure builtin: stable, nothing to bind
         value = module_globals[name]
         if isinstance(value, types.ModuleType):
+            if value.__name__ not in _SAFE_MODULES:
+                # A user module's attributes, or a stdlib module exposing mutable state
+                # (sys.modules, os.environ), are data the fingerprint cannot bind.
+                raise ValidationError(FailReason.CONFIG, "profile_content_unhashable")
             parts.append(f"module:{name}={value.__name__}")
         elif isinstance(value, _STABLE_TYPES):
             parts.append(f"const:{name}={_stable_repr(value)}")
@@ -259,6 +271,38 @@ def _global_dependencies_repr(profile: Callable[[str], str], code: Any) -> str:
 # whole value, so binding them into a profile's identity is deterministic (finding H3).
 _STABLE_TYPES = (str, bytes, bool, int, float, type(None))
 
+# Pure builtins a profile may call. Anything else (open, __import__, getattr, eval, exec,
+# globals, vars, input, setattr, ...) can reach state the fingerprint does not bind (H3).
+# Pure modules a profile may use. Other standard-library modules are excluded on purpose: sys
+# (sys.modules), os (os.environ), importlib, builtins and io all reach state the fingerprint does
+# not bind (H3).
+_SAFE_MODULES = frozenset(
+    {"re", "string", "math", "unicodedata", "itertools", "operator", "json", "textwrap",
+     "fnmatch", "base64", "binascii", "hashlib"}
+)
+
+_SAFE_BUILTINS = frozenset(
+    {
+        "abs", "all", "any", "bool", "chr", "dict", "enumerate", "filter", "float", "frozenset",
+        "int", "isinstance", "iter", "len", "list", "map", "max", "min", "next", "ord", "range",
+        "repr", "reversed", "set", "sorted", "str", "sum", "tuple", "zip",
+        "ValueError", "TypeError", "KeyError", "IndexError", "StopIteration",
+    }
+)
+
+# Opcode families outside the supported profile subset: name-scope access (class bodies and
+# module-level code read through LOAD_NAME), class creation, imports, super attribute access,
+# and stores that mutate shared state. Matched by substring so a renamed variant in a newer
+# Python release is still rejected (fail closed) rather than silently admitted.
+_UNSUPPORTED_OPCODE_PARTS = ("NAME", "CLASS", "IMPORT", "SUPER", "FROM_DICT")
+_UNSUPPORTED_OPCODES = frozenset({"STORE_GLOBAL", "DELETE_GLOBAL", "STORE_ATTR", "DELETE_ATTR"})
+
+
+def _is_unsupported_opcode(opname: str) -> bool:
+    return opname in _UNSUPPORTED_OPCODES or any(
+        part in opname for part in _UNSUPPORTED_OPCODE_PARTS
+    )
+
 
 def _stable_repr(value: object, *, allow_unordered: bool = False) -> str:
     # The type name is part of the representation so behaviorally distinct types that share a
@@ -268,6 +312,12 @@ def _stable_repr(value: object, *, allow_unordered: bool = False) -> str:
         return f"bool:{value!r}"
     if isinstance(value, _STABLE_TYPES):
         return f"{type(value).__name__}:{value!r}"
+    if isinstance(value, types.ModuleType):
+        # A captured module follows the same rule as a module global: only an allowlisted pure
+        # module is bound by name; any other module can expose unbound mutable state (H3).
+        if value.__name__ in _SAFE_MODULES:
+            return f"module:{value.__name__}"
+        raise ValidationError(FailReason.CONFIG, "profile_content_unhashable")
     if allow_unordered and hasattr(value, "co_code"):
         # A nested code object in co_consts (a lambda or generator expression inside the
         # profile) is serialized canonically, never by repr, which embeds a per-process memory

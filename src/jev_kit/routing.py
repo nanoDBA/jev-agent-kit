@@ -87,10 +87,16 @@ class ScoreThreshold:
         _check_bound(self.min_confidence, "min_confidence")
         if not self.intervals:
             raise ValidationError(FailReason.CONFIG, "score_no_intervals")
+        for interval in self.intervals:
+            for name, edge in (("lower", interval.lower), ("upper", interval.upper)):
+                if isinstance(edge, bool) or not isinstance(edge, (int, float)):
+                    raise ValidationError(FailReason.CONFIG, f"score_bound_not_number:{name}")
+                if edge < 0.0 or not math.isfinite(edge):
+                    raise ValidationError(FailReason.CONFIG, f"score_bound_range:{name}")
+            if not interval.lower < interval.upper:
+                raise ValidationError(FailReason.CONFIG, "score_interval_order")
         ordered = sorted(self.intervals, key=lambda i: i.lower)
         for a, b in itertools.pairwise(ordered):
-            if isinstance(a.lower, bool) or isinstance(a.upper, bool):
-                raise ValidationError(FailReason.CONFIG, "score_bound_not_number")
             if a.upper > b.lower + TIE_TOLERANCE:
                 raise ValidationError(FailReason.CONFIG, "score_intervals_overlap")
 
@@ -136,9 +142,15 @@ def _choice_candidate(answer: ChoiceAnswer, t: ChoiceThreshold) -> Candidate:
 
 
 def _score_candidate(answer: ScoreAnswer, t: ScoreThreshold) -> Candidate:
-    top_max = max(i.upper for i in t.intervals)
+    # The rubric maximum is the top level index (n-1), from the validated answer, not the
+    # largest configured interval bound (finding C11). Intervals outside [0, n-1] are a
+    # configuration error, so a broad malformed interval cannot clear a valid score.
+    rubric_max = float(len(answer.probabilities) - 1)
     for interval in t.intervals:
-        at_top = abs(interval.upper - top_max) <= TIE_TOLERANCE
+        if interval.upper > rubric_max + TIE_TOLERANCE or interval.lower < -TIE_TOLERANCE:
+            raise ValidationError(FailReason.CONFIG, "score_interval_out_of_domain")
+    for interval in t.intervals:
+        at_top = abs(interval.upper - rubric_max) <= TIE_TOLERANCE
         in_range = interval.lower <= answer.score and (
             answer.score < interval.upper or (at_top and answer.score <= interval.upper)
         )

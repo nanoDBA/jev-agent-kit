@@ -175,3 +175,60 @@ def test_accept_path_through_fake_server(server: HTTPServer, tmp_path: Any) -> N
     assert rec["label"] == "no"  # noul 0.02 <= no_bound 0.1
     assert rec["is_mock"] is False
     assert rec["receipt_written"] is True
+
+
+def test_late_response_is_rejected(server: HTTPServer, tmp_path: Any) -> None:
+    # Finding C02: evidence arriving after the deadline is discarded, not accepted.
+    import time as _time
+
+    from jev_kit.fingerprint import question_fingerprint
+    from jev_kit.questionset import egress_contract, load_question_set
+
+    qset_obj = {
+        "schema_version": 1, "id": "t", "version": "1", "model": "jev-1.13.0",
+        "escalation_target": "gpt-6",
+        "questions": {"d": {"type": "noul", "instructions": "Destructive?", "consequence": "gate"}},
+        "state_schema": {"cmd": {"kind": "command"}},
+    }
+
+    class _SlowTransport(_HttpLiveTransport):
+        def send(self, body: bytes, deadline: Deadline) -> Any:
+            _time.sleep(0.05)
+            return TransportResponse(
+                200,
+                {},
+                json.dumps({"model": "jev-1.13.0", "answers": {"d": {"noul": 0.02}}}).encode(),
+            )
+
+    qset = load_question_set(qset_obj)
+    fp = question_fingerprint(
+        instructions="Destructive?", criteria=None, question_type="noul",
+        option_or_level_set=[], model="jev-1.13.0", egress_contract=egress_contract(qset),
+    )
+    cfg = EngineConfig(
+        hmac_key=HMAC_KEY, writer=ReceiptWriter(directory=tmp_path), rate_budget=RateBudget(),
+        registry_path=_registry_file(tmp_path, fp), deadline_seconds=0.01, receipt_reserve=0.0,
+    )
+    req = {"schema_version": 1, "question_set": qset_obj, "state": {"cmd": "ls"}, "mode": "enforce"}
+    resp = decide(req, transport=_SlowTransport("K", endpoint(server)), config=cfg)
+    rec = resp["records"][0]
+    assert rec["route"] != "accept"
+
+
+def test_raw_non_2xx_with_valid_body_not_accepted(server: HTTPServer, tmp_path: Any) -> None:
+    # Finding C09: a 429 whose body looks like a clearing answer must not be accepted.
+    _Handler.behavior = "429"
+    transport = _HttpLiveTransport("K", endpoint(server))
+    result = transport.send(b"{}", Deadline(5.0))
+    assert isinstance(result, TransportFailure)
+    assert result.reason is FailReason.RATE_LIMIT
+
+
+def test_live_transport_endpoint_is_fixed() -> None:
+    # Finding C23: no endpoint override reaches a shipped LiveTransport.
+    from jev_kit.transport import DEFAULT_ENDPOINT, LiveTransport
+
+    t = LiveTransport("K")
+    assert t._endpoint == DEFAULT_ENDPOINT
+    with pytest.raises(TypeError):
+        LiveTransport("K", endpoint="https://evil.example")  # type: ignore[call-arg]

@@ -209,3 +209,27 @@ def test_would_route_shows_candidate_in_shadow() -> None:
     )
     assert res.route is Route.NO_ADVICE  # shadow never changes behavior
     assert res.would_route is Route.ACCEPT  # but shows what enforce would do
+
+
+# --- C11: Score interval domain and gap edges -------------------------------
+
+
+def test_score_gap_edge_is_review_not_top() -> None:
+    # 3 levels (rubric max 2); only [0,1) accepted. Score 1.0 falls in the gap -> review,
+    # and must not clear just because 1.0 equals the largest configured bound (finding C11).
+    t = ScoreThreshold(intervals=(ScoreInterval(0.0, 1.0, "safe"),), min_confidence=0.5)
+    ans = ScoreAnswer("q", 1.0, {"0": 0.0, "1": 1.0, "2": 0.0}, {"0": "", "1": "", "2": ""}, 0.9)
+    assert evaluate_candidate(ans, t).clears is False
+
+
+def test_score_interval_out_of_domain_is_config_failure() -> None:
+    # An interval beyond the rubric maximum is a config failure at evaluation (finding C11).
+    t = ScoreThreshold(intervals=(ScoreInterval(0.0, 5.0, "x"),), min_confidence=0.5)
+    ans = ScoreAnswer("q", 0.0, {"0": 1.0, "1": 0.0}, {"0": "", "1": ""}, 0.9)
+    with pytest.raises(ValidationError):
+        evaluate_candidate(ans, t)
+
+
+def test_score_inverted_interval_rejected_at_construction() -> None:
+    with pytest.raises(ValidationError):
+        ScoreThreshold(intervals=(ScoreInterval(2.0, 1.0, "x"),), min_confidence=0.5)

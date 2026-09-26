@@ -127,6 +127,110 @@ def test_personal_kinds_present() -> None:
     assert personal_kinds_present({"n": FieldSpec(ContentKind.METRIC)}) is False
 
 
+# --- C04: metric is not a container or arbitrary-string escape ------------
+
+
+def test_metric_rejects_nested_container() -> None:
+    schema = {"m": FieldSpec(ContentKind.METRIC)}
+    with pytest.raises(ValidationError) as exc:
+        transform_state({"m": {"undeclared": "PRIVATE_SENTINEL"}}, schema, ctx())
+    assert exc.value.reason is FailReason.EGRESS_BLOCKED
+
+
+def test_metric_rejects_nested_list() -> None:
+    schema = {"m": FieldSpec(ContentKind.METRIC)}
+    with pytest.raises(ValidationError):
+        transform_state({"m": ["PRIVATE_SENTINEL"]}, schema, ctx())
+
+
+def test_metric_rejects_bool() -> None:
+    schema = {"m": FieldSpec(ContentKind.METRIC)}
+    with pytest.raises(ValidationError):
+        transform_state({"m": True}, schema, ctx())
+
+
+def test_metric_accepts_number_and_safe_token() -> None:
+    schema = {"m": FieldSpec(ContentKind.METRIC)}
+    assert transform_state({"m": 3.5}, schema, ctx()) == {"m": 3.5}
+    assert transform_state({"m": "v1.2.3"}, schema, ctx()) == {"m": "v1.2.3"}
+
+
+def test_metric_rejects_long_or_unsafe_string() -> None:
+    schema = {"m": FieldSpec(ContentKind.METRIC)}
+    with pytest.raises(ValidationError):
+        transform_state({"m": "a" * 65}, schema, ctx())
+    with pytest.raises(ValidationError):
+        transform_state({"m": "PRIVATE_SENTINEL;drop"}, schema, ctx())
+
+
+# --- C05: transforms must not leak values, transcripts need named source ---
+
+
+def test_reduce_command_strips_flag_values_and_bare_args() -> None:
+    schema = {"c": FieldSpec(ContentKind.COMMAND)}
+    out = transform_state(
+        {"c": "run --tenant=PRIVATE_TENANT --file=/private/person/file extra"},
+        schema,
+        ctx(),
+    )
+    assert "PRIVATE_TENANT" not in out["c"]
+    assert "/private/person/file" not in out["c"]
+    assert out["c"] == "run --tenant --file"
+
+
+def test_reduce_log_masks_unquoted_key_value_pairs() -> None:
+    schema = {"l": FieldSpec(ContentKind.LOG)}
+    out = transform_state({"l": "tenant=PRIVATE_TENANT host=internal-db"}, schema, ctx())
+    assert "PRIVATE_TENANT" not in out["l"]
+    assert "internal-db" not in out["l"]
+
+
+def test_mask_contacts_masks_ipv6() -> None:
+    schema = {"l": FieldSpec(ContentKind.LOG)}
+    out = transform_state(
+        {"l": "connect to 2001:0db8:0000:0000:0000:ff00:0042:8329 now"}, schema, ctx()
+    )
+    assert "2001:0db8:0000:0000:0000:ff00:0042:8329" not in out["l"]
+    assert "<contact>" in out["l"]
+
+
+def test_transcript_blocked_when_disabled() -> None:
+    schema = {"t": FieldSpec(ContentKind.TRANSCRIPT, {"source_type": "chat"})}
+    with pytest.raises(ValidationError) as exc:
+        transform_state(
+            {"t": "hello"},
+            schema,
+            ctx(transcript_enabled=False, source_allowlist=frozenset({"chat"})),
+        )
+    assert exc.value.reason is FailReason.EGRESS_BLOCKED
+
+
+def test_transcript_blocked_when_source_not_in_allowlist() -> None:
+    schema = {"t": FieldSpec(ContentKind.TRANSCRIPT, {"source_type": "chat"})}
+    with pytest.raises(ValidationError) as exc:
+        transform_state(
+            {"t": "hello"},
+            schema,
+            ctx(transcript_enabled=True),  # empty allowlist
+        )
+    assert exc.value.reason is FailReason.EGRESS_BLOCKED
+
+
+def test_transcript_allowed_from_named_source_masks_and_caps() -> None:
+    schema = {"t": FieldSpec(ContentKind.TRANSCRIPT, {"source_type": "chat"})}
+    out = transform_state(
+        {"t": "reach me at a@b.com " + "x" * 3000},
+        schema,
+        ctx(
+            transcript_enabled=True,
+            source_allowlist=frozenset({"chat"}),
+            transcript_cap=10,
+        ),
+    )
+    assert "a@b.com" not in out["t"]
+    assert len(out["t"]) <= 10
+
+
 # --- detectors --------------------------------------------------------------
 
 
@@ -168,3 +272,79 @@ def test_jwt_and_aws_and_github_detected() -> None:
 def test_clean_text_passes() -> None:
     assert scan_text("route this ticket to billing") is None
     assert scan_request(b'{"x":"hello"}', {"x": "hello"}) is None
+
+
+# --- C06: narrower placeholder rule, single-quoted passwords ----------------
+
+
+def test_single_quoted_password_detected() -> None:
+    assert scan_text("Password='hunter2secret'") == "connection_string_password"
+
+
+def test_single_quoted_placeholder_passes() -> None:
+    assert scan_text("Password='***'") is None
+    assert scan_text("Password='<password>'") is None
+
+
+def test_synthetic_looking_angle_bracket_value_still_detected() -> None:
+    # Only the documented redaction literals are placeholders; any other angle-bracket token
+    # (even one that looks like a redaction marker) must still be flagged as a real value.
+    assert scan_text("Password=<synthetic-review-secret>") == "connection_string_password"
+
+
+def test_documented_redaction_literals_still_pass() -> None:
+    for token in ("<redacted>", "<password>", "<secret>", "<pwd>", "<value>", "<PWD>"):
+        assert scan_text(f"Password={token}") is None
+
+
+# --- C06: credentialed connection URIs --------------------------------------
+
+
+def test_connection_string_uri_detected() -> None:
+    assert (
+        scan_text("postgres://appuser:hunter2secret@dbhost.internal/appdb")
+        == "connection_string_uri"
+    )
+    assert (
+        scan_text("mysql://appuser:hunter2secret@dbhost.internal/appdb")
+        == "connection_string_uri"
+    )
+    assert (
+        scan_text("mongodb+srv://appuser:hunter2secret@cluster0.example.net/appdb")
+        == "connection_string_uri"
+    )
+
+
+def test_connection_string_uri_without_credentials_passes() -> None:
+    assert scan_text("postgres://dbhost.internal/appdb") is None
+    assert scan_text("postgres://appuser@dbhost.internal/appdb") is None
+
+
+# --- C06: HTTP Basic auth header --------------------------------------------
+
+
+def test_authorization_basic_header_detected() -> None:
+    assert (
+        scan_text("Authorization: Basic dXNlcjpwYXNzd29yZA==") == "authorization_header"
+    )
+
+
+def test_authorization_bearer_header_still_detected() -> None:
+    assert scan_text("Authorization: Bearer sometoken12345") == "authorization_header"
+
+
+def test_authorization_other_scheme_not_flagged() -> None:
+    assert scan_text("Authorization: Negotiate abc123") is None
+
+
+# --- C06: payment card track data -------------------------------------------
+
+
+def test_card_track_data_detected() -> None:
+    track = "%B4111111111111111^REVIEW/SAMPLE^29121010000000000000?"
+    assert scan_text(track) == "card_track_data"
+
+
+def test_card_track_data_near_miss_passes() -> None:
+    # Too few PAN digits to be track data, and no other rule should fire either.
+    assert scan_text("%B123^SHORT^") is None

@@ -9,12 +9,15 @@ implemented in a later slice.
 
 from __future__ import annotations
 
+import email.utils
 import ssl
+import threading
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import ClassVar, Protocol, runtime_checkable
 
 from jev_kit.deadline import Deadline
 from jev_kit.errors import FailReason, fail_reason_for_status
@@ -31,6 +34,7 @@ class TransportResponse:
 class TransportFailure:
     reason: FailReason
     detail: str  # short and safe; never a raw server body or matched content
+    retry_after: float | None = None  # seconds the server asked us to wait, if any
 
 
 TransportResult = TransportResponse | TransportFailure
@@ -38,7 +42,7 @@ TransportResult = TransportResponse | TransportFailure
 
 @runtime_checkable
 class Transport(Protocol):
-    is_mock: bool
+    is_mock: ClassVar[bool]
 
     def send(self, body: bytes, deadline: Deadline) -> TransportResult: ...
 
@@ -49,21 +53,27 @@ class MockTransport:
 
     ``outcomes`` are returned in order, one per ``send``. Every request body is recorded so
     tests can assert exactly one request per call with the exact question set, and that the
-    key never appears in the bytes.
+    key never appears in the bytes. ``is_mock`` is a fixed class attribute, never a
+    constructor field, so a scripted mock can never claim non-mock provenance and reach an
+    effective accept (finding C01, spec story 32). Selection and cursor advance are locked so
+    a shared mock under a thread pool consumes each scripted outcome exactly once (C22).
     """
 
+    is_mock: ClassVar[bool] = True
+
     outcomes: list[TransportResult]
-    is_mock: bool = True
     requests: list[bytes] = field(default_factory=list)
     _index: int = 0
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def send(self, body: bytes, deadline: Deadline) -> TransportResult:
-        self.requests.append(body)
-        if self._index >= len(self.outcomes):
-            return TransportFailure(FailReason.TRANSPORT, "mock_exhausted")
-        outcome = self.outcomes[self._index]
-        self._index += 1
-        return outcome
+        with self._lock:
+            self.requests.append(body)
+            if self._index >= len(self.outcomes):
+                return TransportFailure(FailReason.TRANSPORT, "mock_exhausted")
+            outcome = self.outcomes[self._index]
+            self._index += 1
+            return outcome
 
     @classmethod
     def replying(
@@ -92,18 +102,20 @@ def _build_opener() -> urllib.request.OpenerDirector:
     )
 
 
+MAX_RESPONSE_BYTES = 1_048_576  # 1 MiB cap on any response body read
+
+
 class LiveTransport:
     """POST to the fixed HTTPS endpoint with bearer auth. One attempt per send; the engine
-    owns retries, backoff and the rate budget. Redirects are refused; the key is attached only
-    as a request header and never appears in the body, digests or diagnostics."""
+    owns retries, backoff and the rate budget. The destination is fixed (no override reaches
+    a shipped instance, finding C23); redirects are refused; the key is attached only as a
+    request header and never appears in the body, digests or diagnostics."""
 
-    is_mock = False
+    is_mock: ClassVar[bool] = False
 
-    def __init__(self, api_key: str, *, endpoint: str = DEFAULT_ENDPOINT) -> None:
-        if not endpoint.startswith("https://"):
-            raise ValueError("endpoint must be https")
+    def __init__(self, api_key: str) -> None:
         self._api_key = api_key
-        self._endpoint = endpoint
+        self._endpoint = DEFAULT_ENDPOINT
         self._opener = _build_opener()
 
     def send(self, body: bytes, deadline: Deadline) -> TransportResult:
@@ -117,14 +129,20 @@ class LiveTransport:
             with self._opener.open(request, timeout=timeout) as response:
                 status = response.status
                 headers = {k.lower(): v for k, v in response.headers.items()}
-                payload = response.read()
+                payload = response.read(MAX_RESPONSE_BYTES + 1)
+            if len(payload) > MAX_RESPONSE_BYTES:
+                return TransportFailure(FailReason.RESPONSE_MALFORMED, "response_too_large")
             return TransportResponse(status, headers, payload)
         except urllib.error.HTTPError as exc:
-            # A 3xx reaches here because _NoRedirect returned None; classify it as refused.
             headers = {k.lower(): v for k, v in exc.headers.items()} if exc.headers else {}
+            try:
+                exc.read(MAX_RESPONSE_BYTES)  # drain and discard; body never surfaced
+            except OSError:
+                pass
+            finally:
+                exc.close()
             if 300 <= exc.code < 400:
                 return TransportFailure(FailReason.REDIRECT_REFUSED, "redirect_refused")
-            # Keep the status; the raw body stays with the exception and is not surfaced.
             return _http_error_result(exc.code, headers)
         except TimeoutError:
             return TransportFailure(FailReason.TIMEOUT, "read_timeout")
@@ -132,8 +150,35 @@ class LiveTransport:
             return TransportFailure(FailReason.TRANSPORT, "transport_error")
 
 
+def parse_retry_after(headers: Mapping[str, str]) -> float | None:
+    """Parse retry-after-ms (preferred) or Retry-After (seconds or HTTP date). Malformed
+    values are ignored (return None), so the engine falls back to its own backoff."""
+    ms = headers.get("retry-after-ms")
+    if ms is not None:
+        try:
+            value = float(ms)
+            if value >= 0:
+                return value / 1000.0
+        except ValueError:
+            pass
+    ra = headers.get("retry-after")
+    if ra is not None:
+        try:
+            value = float(ra)
+            if value >= 0:
+                return value
+        except ValueError:
+            parsed = email.utils.parsedate_to_datetime(ra)
+            if parsed is not None:
+                delta = parsed.timestamp() - time.time()
+                return max(0.0, delta)
+    return None
+
+
 def _http_error_result(status: int, headers: Mapping[str, str]) -> TransportResult:
-    # A non-2xx status is a failure, never a body to validate as an answer (finding, story 37).
+    # A non-2xx status is a failure, never a body to validate as an answer (story 37).
     if 200 <= status < 300:
         return TransportFailure(FailReason.TRANSPORT, "unexpected_2xx_error")
-    return TransportFailure(fail_reason_for_status(status), f"http_{status}")
+    return TransportFailure(
+        fail_reason_for_status(status), f"http_{status}", retry_after=parse_retry_after(headers)
+    )

@@ -32,8 +32,13 @@ from jev_kit import registry as registry_mod
 from jev_kit import secrets
 from jev_kit.deadline import Deadline
 from jev_kit.egress import EgressContext, personal_kinds_present, scan_request, transform_state
-from jev_kit.errors import FailReason, ValidationError
-from jev_kit.fingerprint import canonical_bytes, question_fingerprint, question_set_digest
+from jev_kit.errors import FailReason, ValidationError, fail_reason_for_status
+from jev_kit.fingerprint import (
+    canonical_bytes,
+    parse_canonical,
+    question_fingerprint,
+    question_set_digest,
+)
 from jev_kit.questionset import (
     QuestionSet,
     egress_contract,
@@ -135,15 +140,20 @@ def _send_with_retries(
         if isinstance(result, TransportResponse):
             return result
         last = result
-        if result.reason not in _RETRYABLE:
-            return result
+        if result.reason not in _RETRYABLE or attempt == max_retries:
+            return result  # do not sleep after the last permitted attempt (finding C15)
         attempt += 1
-        backoff = min(
-            0.5 * (2 ** (attempt - 1)) + random.uniform(0, 0.25), deadline.remaining_for_work()
-        )
-        if backoff <= 0:
-            return TransportFailure(FailReason.TIMEOUT, "deadline")
-        time.sleep(backoff)
+        # Honor the server's requested delay when present; otherwise exponential backoff with
+        # jitter. Never wait past the remaining budget (finding C15).
+        server_delay = result.retry_after
+        if server_delay is not None:
+            wait = server_delay
+        else:
+            wait = 0.5 * (2 ** (attempt - 1)) + random.uniform(0, 0.25)
+        remaining = deadline.remaining_for_work()
+        if wait > remaining:
+            return TransportFailure(FailReason.TIMEOUT, "retry_after_exceeds_deadline")
+        time.sleep(wait)
     return last
 
 
@@ -292,16 +302,26 @@ def _decide(
                 whole_fail = FailReason.EGRESS_BLOCKED
         except ValidationError as exc:
             whole_fail = exc.reason
+        except Exception:
+            # An unexpected failure after questions are identified still produces per-question
+            # failure records, never an empty envelope (finding C17).
+            whole_fail = FailReason.INTERNAL
 
     if whole_fail is None:
         est_tokens = max(1, len(serialized) // 3)
         result = _send_with_retries(
             transport, serialized, deadline, budget, est_tokens, config.max_retries
         )
+        sent_digest = hashlib.sha256(serialized).hexdigest()  # something was sent this attempt
         if isinstance(result, TransportFailure):
             whole_fail = result.reason
+        elif not 200 <= result.status < 300:
+            # A non-2xx raw response is a failure, never a body to validate (finding C09).
+            whole_fail = fail_reason_for_status(result.status)
+        elif deadline.expired():
+            # Evidence that arrived after the deadline is discarded (finding C02).
+            whole_fail = FailReason.TIMEOUT
         else:
-            sent_digest = hashlib.sha256(serialized).hexdigest()
             try:
                 body = _parse_response_body(result.body)
                 served_model = body.get("model") if isinstance(body, dict) else None
@@ -366,10 +386,9 @@ def _decide(
 
 
 def _parse_response_body(body: bytes) -> Any:
-    import json
-
+    # Strict parse: duplicate keys and non-finite numbers are rejected (finding C10).
     try:
-        return json.loads(body.decode("utf-8"))
+        return parse_canonical(body.decode("utf-8"))
     except (ValueError, UnicodeDecodeError) as exc:
         raise ValidationError(FailReason.RESPONSE_MALFORMED, "body_not_json") from exc
 
@@ -413,15 +432,14 @@ def _write_receipts(
     for rec in records:
         if committed:
             rec["receipt_written"] = True
-        elif rec["route"] == Route.ACCEPT.value:
-            # No durable record: never return an accept (spec stories 75, 76).
-            is_gate = rec["consequence"] == ConsequenceClass.GATE.value
-            rec["route"] = Route.ASK.value if is_gate else Route.NO_ADVICE.value
-            rec["fail_reason"] = FailReason.RECEIPT.value
-            rec["receipt_written"] = False
-        else:
-            rec["fail_reason"] = rec["fail_reason"] or FailReason.RECEIPT.value
-            rec["receipt_written"] = False
+            continue
+        # A receipt failure is itself a failure: route every record failure-first, in every
+        # mode (gate -> ask, advisory -> no advice), not only downgrade an existing accept
+        # (finding C17). No decision is acted on without a durable record.
+        is_gate = rec["consequence"] == ConsequenceClass.GATE.value
+        rec["route"] = Route.ASK.value if is_gate else Route.NO_ADVICE.value
+        rec["fail_reason"] = FailReason.RECEIPT.value
+        rec["receipt_written"] = False
 
 
 def run_json(request: dict[str, Any], *, transport: Transport | None = None) -> dict[str, Any]:

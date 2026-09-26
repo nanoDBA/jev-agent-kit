@@ -196,3 +196,62 @@ def test_record_outcome_appends(tmp_path: Any, monkeypatch: Any) -> None:
     assert engine.record_outcome(did, "applied") is True
     assert engine.record_outcome(did, "bogus_code") is False
     assert engine.record_outcome("has spaces!", "applied") is False
+
+
+# --- Regression tests for the code review (C01, C10, C15, C17) --------------
+
+
+def test_mock_cannot_claim_non_mock_provenance() -> None:
+    # is_mock is a class attribute, not a constructor field (finding C01).
+    import pytest
+
+    with pytest.raises(TypeError):
+        MockTransport(outcomes=[], is_mock=False)  # type: ignore[call-arg]
+
+
+def test_duplicate_keys_in_response_are_malformed(tmp_path: Any) -> None:
+    # Strict response parse rejects duplicate keys rather than taking the last (finding C10).
+    body = (
+        b'{"model":"jev-1.13.0","answers":'
+        b'{"destructive":{"noul":0.5},"destructive":{"noul":0.99}}}'
+    )
+    transport = MockTransport.replying(200, body)
+    rec = only(decide(request("enforce"), transport=transport, config=config(tmp_path)))
+    assert rec["route"] == "ask"
+    assert rec["fail_reason"] == "response_malformed"
+
+
+def test_retry_honors_retry_after_and_stops_after_last(tmp_path: Any) -> None:
+    from jev_kit.transport import TransportFailure, TransportResponse
+
+    ok_answers = {"destructive": {"noul": 0.1}}
+    ok = TransportResponse(
+        200, {}, json.dumps({"model": "jev-1.13.0", "answers": ok_answers}).encode()
+    )
+    transport = MockTransport(
+        outcomes=[TransportFailure(FailReason.OVERLOADED, "x", retry_after=0.01), ok]
+    )
+    only(decide(request("shadow"), transport=transport, config=config(tmp_path)))
+    assert len(transport.requests) == 2  # one retry, then success
+
+
+def test_non_retryable_failure_not_retried(tmp_path: Any) -> None:
+    from jev_kit.transport import TransportFailure
+
+    transport = MockTransport(outcomes=[TransportFailure(FailReason.AUTH, "x")])
+    only(decide(request("enforce"), transport=transport, config=config(tmp_path)))
+    assert len(transport.requests) == 1
+
+
+def test_receipt_failure_routes_failure_first(tmp_path: Any, monkeypatch: Any) -> None:
+    # A successful shadow gate whose receipt fails to write must become ask, not stay
+    # no_advice (finding C17).
+    from jev_kit.receipts import ReceiptWriter
+
+    writer = ReceiptWriter(directory=tmp_path)
+    monkeypatch.setattr(writer, "write_call", lambda lines: False)
+    cfg = EngineConfig(hmac_key=HMAC_KEY, writer=writer, rate_budget=RateBudget())
+    rec = only(decide(request("shadow"), transport=reply(0.5), config=cfg))
+    assert rec["route"] == "ask"
+    assert rec["fail_reason"] == "receipt"
+    assert rec["receipt_written"] is False

@@ -35,6 +35,10 @@ MAX_DEPTH = 16
 MAX_LIST = 200
 _SAFE_KEY = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 
+# Tier 3 metric strings are product/version tokens only (spec story 39 to 40; finding C04):
+# never an arbitrary-string or container escape hatch.
+_METRIC_TOKEN = re.compile(r"^[A-Za-z0-9 ._:+/-]{0,64}$")
+
 
 class ContentKind(StrEnum):
     METRIC = "metric"  # Tier 3, non-personal: sent as-is
@@ -91,6 +95,8 @@ _CONTACT_PATTERNS = [
     re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+"),  # email
     re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b"),  # IPv4
     re.compile(r"\+?\d[\d ()-]{7,}\d"),  # phone
+    # IPv6: groups of hex separated by ':' with at least two colons (finding C05).
+    re.compile(r"\b(?:[0-9A-Fa-f]{1,4}:){2,7}[0-9A-Fa-f]{1,4}\b"),
 ]
 
 
@@ -100,23 +106,49 @@ def _mask_contacts(text: str) -> str:
     return text
 
 
+# Unquoted key=value pairs, e.g. "tenant=acme host=db01" (finding C05). Quoted spans are
+# already reduced to <v> above, so this only needs to catch what quoting missed.
+_KV_PATTERN = re.compile(r"(?<![\w.-])([A-Za-z_][\w.-]*)=(\S+)")
+
+
 def _reduce_log(text: str) -> str:
     text = re.sub(r"'[^']*'", "<v>", text)
     text = re.sub(r'"[^"]*"', "<v>", text)
+    text = _KV_PATTERN.sub(r"\1=<v>", text)
     return _mask_contacts(text)
 
 
 def _reduce_command(text: str) -> str:
+    # Keep the command word and bare flag names only. A value attached with '=' is stripped
+    # (finding C05: "--tenant=PRIVATE" becomes "--tenant"); non-flag argument tokens are
+    # dropped entirely rather than kept as-is.
     tokens = text.split()
     kept = [tokens[0]] if tokens else []
-    kept += [tok for tok in tokens[1:] if tok.startswith("-")]
+    for tok in tokens[1:]:
+        if tok.startswith("-"):
+            kept.append(tok.split("=", 1)[0])
     return " ".join(kept)
+
+
+def _require_named_source(params: Mapping[str, Any], ctx: EgressContext) -> None:
+    """Free text and transcripts share one rule: only from a source named in the allowlist.
+
+    ADR 0002 Amendment 1: the allowlist ships empty, so both are blocked until the owner names
+    sources (spec stories 46, 47; finding C05: transcripts previously skipped this check).
+    """
+    source = params.get("source_type")
+    if not isinstance(source, str) or source not in ctx.source_allowlist:
+        raise ValidationError(FailReason.EGRESS_BLOCKED, "free_text_source_not_allowed")
 
 
 def _transform_scalar(
     kind: ContentKind, value: str, params: Mapping[str, Any], ctx: EgressContext
 ) -> str:
     if kind is ContentKind.METRIC:
+        # Tier 3 metric strings are bounded safe tokens (product/version), never an arbitrary
+        # string escape (finding C04).
+        if not _METRIC_TOKEN.match(value):
+            raise ValidationError(FailReason.EGRESS_BLOCKED, "metric_value")
         return value
     if kind is ContentKind.IDENTIFIER:
         if value in ctx.public_names:
@@ -139,13 +171,15 @@ def _transform_scalar(
             raise ValidationError(FailReason.EGRESS_BLOCKED, "code_no_profile")
         return profile(value)
     if kind is ContentKind.FREE_TEXT:
-        source = params.get("source_type")
-        if not isinstance(source, str) or source not in ctx.source_allowlist:
-            raise ValidationError(FailReason.EGRESS_BLOCKED, "free_text_source_not_allowed")
+        _require_named_source(params, ctx)
         return _mask_contacts(value)
     if kind is ContentKind.TRANSCRIPT:
-        if not ctx.transcript_enabled:
+        # Real bool True only: a truthy non-bool (e.g. the string "false") must not enable
+        # transcripts (finding C05). Transcripts also need the same named-source check as free
+        # text, then the free-text masking and the size cap.
+        if ctx.transcript_enabled is not True:
             raise ValidationError(FailReason.EGRESS_BLOCKED, "transcript_disabled")
+        _require_named_source(params, ctx)
         return _mask_contacts(value[: ctx.transcript_cap])
     raise ValidationError(FailReason.EGRESS_BLOCKED, "unknown_kind")
 
@@ -157,15 +191,25 @@ def _transform_value(value: Any, spec: FieldSpec, ctx: EgressContext, depth: int
         return None
     if isinstance(value, str):
         return _transform_scalar(spec.kind, value, spec.params, ctx)
-    if isinstance(value, (bool, int, float)):
+    if isinstance(value, bool):
+        # Booleans are never a metric value either (finding C04): reject before the int check,
+        # since bool is an int subclass.
+        reason = "metric_value" if spec.kind is ContentKind.METRIC else "number_wrong_kind"
+        raise ValidationError(FailReason.EGRESS_BLOCKED, reason)
+    if isinstance(value, (int, float)):
         if spec.kind is ContentKind.METRIC:
             return value
         raise ValidationError(FailReason.EGRESS_BLOCKED, "number_wrong_kind")
     if isinstance(value, list):
+        if spec.kind is ContentKind.METRIC:
+            # A nested container is not a metric value, whatever its leaves hold (finding C04).
+            raise ValidationError(FailReason.EGRESS_BLOCKED, "metric_value")
         if len(value) > MAX_LIST:
             raise ValidationError(FailReason.EGRESS_BLOCKED, "list_too_long")
         return [_transform_value(item, spec, ctx, depth + 1) for item in value]
     if isinstance(value, dict):
+        if spec.kind is ContentKind.METRIC:
+            raise ValidationError(FailReason.EGRESS_BLOCKED, "metric_value")
         if len(value) > MAX_LIST:
             raise ValidationError(FailReason.EGRESS_BLOCKED, "object_too_large")
         out: dict[str, Any] = {}
@@ -210,27 +254,59 @@ def _luhn_ok(digits: str) -> bool:
     return total % 10 == 0
 
 
-_PLACEHOLDER = re.compile(r"^[\*x.\s]+$", re.IGNORECASE)
+_PLACEHOLDER = re.compile(r"^[*x.\s]+$", re.IGNORECASE)
+
+# Finding C06: only these documented redaction forms are placeholders. Any other
+# angle-bracket token (e.g. a synthetic secret like <synthetic-review-secret>) must still be
+# detected, so this set is exact literals, not "any <...>".
+_PLACEHOLDER_TOKENS = frozenset({"<redacted>", "<password>", "<secret>", "<pwd>", "<value>"})
 
 
 def _is_placeholder(value: str) -> bool:
-    # Redaction artifacts such as ***, xxxx, or an angle-bracket token like <password>.
-    if value.startswith("<") and value.endswith(">"):
+    # Redaction artifacts: all mask characters (***, xxxx, ....), or one of the documented
+    # redaction tokens, case-insensitive.
+    if _PLACEHOLDER.match(value):
         return True
-    return bool(_PLACEHOLDER.match(value))
+    return value.lower() in _PLACEHOLDER_TOKENS
+
 
 _DETECTORS: list[tuple[str, re.Pattern[str]]] = [
-    ("private_key", re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")),
+    # Source pattern sets: gitleaks (private_key, jwt, aws_key, github_pat), Microsoft Purview
+    # (azure_sas, connection strings), PCI DSS v4.0.1 (card patterns). Patterns are
+    # reimplemented from documentation, not copied code (ADR 0002).
+    ("private_key", re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")),  # gitleaks
+    # gitleaks
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")),
-    ("aws_key", re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")),
-    ("github_pat", re.compile(r"\bghp_[A-Za-z0-9]{36}\b")),
-    ("azure_sas", re.compile(r"[?&]sig=[A-Za-z0-9%/+]{20,}")),
-    ("authorization_header", re.compile(r"(?i)authorization\s*[:=]\s*bearer\s+\S+")),
-    ("us_ssn", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
+    ("aws_key", re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")),  # gitleaks
+    ("github_pat", re.compile(r"\bghp_[A-Za-z0-9]{36}\b")),  # gitleaks / GitHub secret scanning
+    ("azure_sas", re.compile(r"[?&]sig=[A-Za-z0-9%/+]{20,}")),  # Purview: Azure SAS/storage key
+    # Purview / gitleaks: bearer and basic HTTP Authorization headers (finding C06 extends
+    # this from bearer-only to also match Basic).
+    ("authorization_header", re.compile(r"(?i)authorization\s*[:=]\s*(?:bearer|basic)\s+\S+")),
+    ("us_ssn", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),  # NIST SP 800-122 2.1
+    # Credentialed connection URIs, e.g. postgres://user:pass@host (finding C06; Purview
+    # "connection string" family extended to URI-style DSNs for postgres/mysql/mongodb).
+    (
+        "connection_string_uri",
+        re.compile(
+            r"(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?)://"
+            r"[^\s/:@]+:[^\s/:@]+@[^\s/]+"
+        ),
+    ),
+    # PCI DSS v4.0.1 3.3.1: track 1 ("%B<PAN>^<NAME>^<data>?") and track 2
+    # (";<PAN>=<data>?") magnetic stripe formats (finding C06).
+    (
+        "card_track_data",
+        re.compile(r"%B\d{12,19}\^[A-Z0-9/. ]{2,26}\^\d{0,30}\??|;\d{12,19}=\d{0,30}\??"),
+    ),
 ]
 
-_CONNSTR = re.compile(r"(?i)(?:password|pwd)\s*=\s*([^;\"'\s]+)")
-_PAN_CANDIDATE = re.compile(r"\b(?:\d[ -]?){13,19}\b")
+# Purview "SQL Server connection string": Password=/Pwd= with an unquoted, single- or
+# double-quoted value (finding C06 adds quoted-value handling).
+_CONNSTR = re.compile(
+    r"(?i)(?:password|pwd)\s*=\s*(?:'([^']*)'|\"([^\"]*)\"|([^;\"'\s]+))"
+)
+_PAN_CANDIDATE = re.compile(r"\b(?:\d[ -]?){13,19}\b")  # PCI DSS v4.0.1 3.3.1: Luhn-valid PANs
 
 
 def scan_text(text: str) -> str | None:
@@ -239,7 +315,7 @@ def scan_text(text: str) -> str | None:
         if pattern.search(text):
             return rule_id
     for match in _CONNSTR.finditer(text):
-        value = match.group(1)
+        value = next((g for g in match.groups() if g is not None), "")
         if not _is_placeholder(value):
             return "connection_string_password"
     for match in _PAN_CANDIDATE.finditer(text):

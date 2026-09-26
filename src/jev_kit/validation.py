@@ -81,6 +81,8 @@ def _require_answer_type(raw: Any, expected: QuestionType) -> dict[str, Any]:
         raise ValidationError(FailReason.ANSWER_INVALID, "answer_not_object")
     declared = raw.get("type")
     if declared is not None and declared != expected.value:
+        # If the answer declares a type it must match; the API may omit it, and we already
+        # validate by the question's known type, so absence is allowed (see review C10 note).
         raise ValidationError(FailReason.ANSWER_INVALID, "answer_type_mismatch")
     return raw
 

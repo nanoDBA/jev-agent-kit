@@ -15,6 +15,8 @@ Scope: general purpose. The kit must work for any agent task that has decisions 
 typing (routing, verifying, gating, triage). Domain-specific rules (databases or anything
 else) live in optional domain packs, never in the core.
 
+Overall goal and the autonomous execution charter: `docs/CHARTER.md`.
+
 ## Non-negotiables
 
 1. **Code owns authority.** Jev returns evidence. Code decides. The host (Claude Code,

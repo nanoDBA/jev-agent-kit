@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "id": "preflight-route",
+  "version": "1",
+  "model": "jev-1.13.0",
+  "escalation_target": "human-review",
+  "state_schema": {
+    "request": {
+      "kind": "free_text",
+      "params": {
+        "source_type": "agent_request"
+      }
+    }
+  },
+  "questions": {
+    "route": {
+      "type": "choice",
+      "instructions": "Which handler class should take `request`?",
+      "criteria": {
+        "deterministic": "a fixed rule or lookup can answer it",
+        "specialist_llm": "needs open-ended reasoning or generation",
+        "human": "high consequence or ambiguous, needs a person"
+      },
+      "kit": {
+        "consequence": "advisory"
+      }
+    }
+  }
+}

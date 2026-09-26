@@ -62,7 +62,10 @@ from jev_kit.receipts import (
 )
 from jev_kit.routing import (
     Candidate,
+    ChoiceThreshold,
+    NoulThreshold,
     RegistryEntry,
+    ScoreThreshold,
     ThresholdStatus,
     evaluate_candidate,
     resolve_route,
@@ -209,6 +212,9 @@ def _record(
     mode: Mode,
     is_mock: bool,
     candidate: Candidate | None,
+    fingerprint: str,
+    served_model: str | None,
+    requested_model: str,
 ) -> dict[str, Any]:
     status = entry.status.value if entry is not None else None
     label: str | None = None
@@ -230,10 +236,16 @@ def _record(
     if candidate is not None:
         label = candidate.label if candidate.label is not None else label
         margin = candidate.margin
+    threshold = _threshold_repr(entry) if entry is not None else None
+    # Mock provenance is carried explicitly: model is "mock" and the answering model the mock
+    # simulated is recorded separately, never conflated with a real served model (finding C16).
+    model = "mock" if is_mock else served_model
+    simulated_model = served_model if is_mock else None
     return {
         "decision_id": decision_id,
         "question_id": question.question_id,
         "consequence": question.consequence.value,
+        "fingerprint": fingerprint,
         "route": route.value,
         "would_route": would.value if would is not None else None,
         "label": label,
@@ -242,12 +254,32 @@ def _record(
         "confidence": confidence,
         "noul": noul,
         "margin": margin,
+        "threshold": threshold,
         "threshold_status": status,
+        "requested_model": requested_model,
+        "model": model,
+        "simulated_model": simulated_model,
         "mode": mode.value,
         "fail_reason": reason.value if reason is not None else None,
         "is_mock": is_mock,
         "receipt_written": False,  # set True after the receipt commits
     }
+
+
+def _threshold_repr(entry: RegistryEntry) -> dict[str, Any] | None:
+    """A JSON-safe view of an entry's threshold values, for records and receipts (C16)."""
+    t = entry.threshold
+    if isinstance(t, NoulThreshold):
+        return {"kind": "noul", "yes_bound": t.yes_bound, "no_bound": t.no_bound}
+    if isinstance(t, ChoiceThreshold):
+        return {"kind": "choice", "min_confidence": t.min_confidence, "min_margin": t.min_margin}
+    if isinstance(t, ScoreThreshold):
+        return {
+            "kind": "score",
+            "min_confidence": t.min_confidence,
+            "intervals": [[i.lower, i.upper, i.label] for i in t.intervals],
+        }
+    return None
 
 
 def _decide(
@@ -295,6 +327,8 @@ def _decide(
     answers: dict[str, Any] = {}
     served_model: str | None = None
     sent_digest: str | None = None
+    est_tokens: int | None = None
+    reported_tokens: int | None = None
 
     if qset.model in ("jev-latest", "jev-preview"):
         whole_fail = FailReason.CONFIG  # aliases are refused (spec story 28)
@@ -361,9 +395,8 @@ def _decide(
             whole_fail = FailReason.INTERNAL
 
     if whole_fail is None:
-        est_tokens = max(1, len(serialized) // 3)
         result = _send_with_retries(
-            transport, serialized, deadline, budget, est_tokens, config.max_retries
+            transport, serialized, deadline, budget, est_tokens or 1, config.max_retries
         )
         sent_digest = hashlib.sha256(serialized).hexdigest()  # something was sent this attempt
         if isinstance(result, TransportFailure):
@@ -378,6 +411,9 @@ def _decide(
             try:
                 body = _parse_response_body(result.body)
                 served_model = body.get("model") if isinstance(body, dict) else None
+                usage = body.get("usage") if isinstance(body, dict) else None
+                if isinstance(usage, dict) and isinstance(usage.get("input_tokens"), int):
+                    reported_tokens = usage["input_tokens"]
                 if served_model != qset.model:
                     whole_fail = FailReason.MODEL_MISMATCH
                 else:
@@ -429,11 +465,15 @@ def _decide(
                 mode=mode,
                 is_mock=transport.is_mock,
                 candidate=candidate,
+                fingerprint=fp,
+                served_model=served_model,
+                requested_model=qset.model,
             )
         )
 
     _write_receipts(
-        writer, records, call_id, set_digest, qset, served_model, sent_digest, action_id
+        writer, records, call_id, set_digest, qset, served_model, sent_digest, action_id,
+        est_tokens, reported_tokens,
     )
     return {"schema_version": SCHEMA_VERSION, "status": "ok", "records": records}
 
@@ -461,6 +501,10 @@ def _safe_metadata(value: str | None) -> str | None:
     return value
 
 
+RECEIPT_SCHEMA_VERSION = 1
+_committed_decisions: set[str] = set()  # decision ids with a committed receipt this process
+
+
 def _write_receipts(
     writer: ReceiptWriter,
     records: list[dict[str, Any]],
@@ -470,22 +514,31 @@ def _write_receipts(
     served_model: str | None,
     sent_digest: str | None,
     action_id: str | None,
+    est_tokens: int | None,
+    reported_tokens: int | None,
 ) -> None:
     lines = [
         {
             "kind": "decision",
+            "schema_version": RECEIPT_SCHEMA_VERSION,
             "timestamp": _now_iso(),
             "call_id": call_id,
             "decision_id": rec["decision_id"],
             "question_id": rec["question_id"],
+            "fingerprint": rec["fingerprint"],
             "question_set": {"id": qset.set_id, "version": qset.version, "digest": set_digest},
             "requested_model": qset.model,
             "served_model": served_model,
+            "model": rec["model"],
+            "simulated_model": rec["simulated_model"],
             "sent_digest": sent_digest,
+            "estimated_tokens": est_tokens,
+            "reported_tokens": reported_tokens,
             "distribution": rec["distribution"],
             "label": rec["label"],
             "value": rec["value"],
             "noul": rec["noul"],
+            "threshold": rec["threshold"],
             "threshold_status": rec["threshold_status"],
             "would_route": rec["would_route"],
             "route": rec["route"],
@@ -500,6 +553,7 @@ def _write_receipts(
     for rec in records:
         if committed:
             rec["receipt_written"] = True
+            _committed_decisions.add(rec["decision_id"])
             continue
         # A receipt failure is itself a failure: route every record failure-first, in every
         # mode (gate -> ask, advisory -> no advice), not only downgrade an existing accept
@@ -582,12 +636,16 @@ def record_outcome(decision_id: str, outcome_code: str, action_id: str | None = 
         validate_action_id(decision_id)
     except ValidationError:
         return False
+    if decision_id not in _committed_decisions:
+        # An outcome must reference a decision committed in this process (finding C16).
+        return False
     line = {
         "kind": "outcome",
         "timestamp": _now_iso(),
         "decision_id": decision_id,
+        "schema_version": RECEIPT_SCHEMA_VERSION,
         "outcome": outcome_code,
-        "action_id": action_id,
+        "action_id": _safe_metadata(action_id),
     }
     return get_writer().append_outcome(line)
 

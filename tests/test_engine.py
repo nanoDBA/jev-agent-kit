@@ -188,13 +188,17 @@ def test_decide_batch_preserves_order(tmp_path: Any) -> None:
 
 def test_record_outcome_appends(tmp_path: Any, monkeypatch: Any) -> None:
     from jev_kit import engine
-    from jev_kit.receipts import ReceiptWriter, new_action_id
+    from jev_kit.receipts import ReceiptWriter
 
     writer = ReceiptWriter(directory=tmp_path)
     monkeypatch.setattr(engine, "get_writer", lambda: writer)
-    did = new_action_id()
+    # An outcome may only reference a decision committed in this process (finding C16).
+    cfg = EngineConfig(hmac_key=HMAC_KEY, writer=writer, rate_budget=RateBudget())
+    rec = only(decide(request("shadow"), transport=reply(0.5), config=cfg))
+    did = rec["decision_id"]
     assert engine.record_outcome(did, "applied") is True
     assert engine.record_outcome(did, "bogus_code") is False
+    assert engine.record_outcome("act_deadbeefdeadbeefdeadbeefdeadbeef", "applied") is False
     assert engine.record_outcome("has spaces!", "applied") is False
 
 
@@ -313,3 +317,19 @@ def test_secret_action_id_omitted_from_receipt(tmp_path: Any) -> None:
     decide(req, transport=reply(0.1), config=cfg)
     text = next(tmp_path.glob("*.jsonl")).read_text(encoding="utf-8")
     assert "AKIAIOSFODNN7EXAMPLE" not in text
+
+
+# --- C16 audit fields and mock identity -------------------------------------
+
+
+def test_record_carries_audit_fields_and_mock_identity(tmp_path: Any) -> None:
+    rec = only(decide(request("shadow"), transport=reply(0.5), config=config(tmp_path)))
+    assert rec["model"] == "mock"  # mock provenance is explicit
+    assert rec["simulated_model"] == "jev-1.13.0"  # what the mock claimed, kept separate
+    assert rec["requested_model"] == "jev-1.13.0"
+    assert "fingerprint" in rec and len(rec["fingerprint"]) == 64
+    files = list(tmp_path.glob("*.jsonl"))
+    line = json.loads(files[0].read_text(encoding="utf-8").splitlines()[0])
+    assert line["schema_version"] == 1
+    assert line["model"] == "mock"
+    assert line["fingerprint"] == rec["fingerprint"]

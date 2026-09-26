@@ -263,6 +263,15 @@ def _stable_repr(value: object, *, allow_unordered: bool = False) -> str:
         return f"bool:{value!r}"
     if isinstance(value, _STABLE_TYPES):
         return f"{type(value).__name__}:{value!r}"
+    if allow_unordered and hasattr(value, "co_code"):
+        # A nested code object in co_consts (a lambda or generator expression inside the
+        # profile) is serialized canonically, never by repr, which embeds a per-process memory
+        # address and the checkout path (finding H3).
+        from jev_kit.egress import _canonical_code
+
+        nested = hashlib.sha256()
+        _canonical_code(value, nested)
+        return f"code:{nested.hexdigest()}"
     if isinstance(value, (tuple, list)):
         return (
             f"{type(value).__name__}["

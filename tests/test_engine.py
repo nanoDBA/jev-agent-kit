@@ -817,13 +817,50 @@ def test_captured_set_fails_closed_h3() -> None:
     assert exc.value.reason is FailReason.CONFIG
 
 
-def test_egress_transform_change_invalidates_fingerprint_h3() -> None:
-    # Batch-9 H3: the fingerprint binds a digest of the actual egress transform/detector code, so
-    # any semantic change to how state is reduced changes the fingerprint and invalidates prior
-    # calibration. The contract exposes that digest.
-    from jev_kit.engine import EngineConfig, effective_contract
-    from jev_kit.questionset import load_question_set
+def test_egress_transform_digest_changes_with_source_but_not_line_endings_h3() -> None:
+    # Negative control (H3b): a change to the transform source changes the digest, so a registry
+    # calibrated under one transform never matches another. CRLF and LF checkouts of the SAME
+    # revision must agree.
+    from jev_kit.egress import _source_digest
 
-    qset = load_question_set(question_set())
-    contract = effective_contract(qset, EngineConfig())
-    assert isinstance(contract["transform_digest"], str) and len(contract["transform_digest"]) == 32
+    base = b"def reduce(x):\n    return x.split()[0]\n"
+    assert _source_digest(base) == _source_digest(base.replace(b"\n", b"\r\n"))
+    assert _source_digest(base) != _source_digest(base.replace(b"[0]", b"[-1]"))
+
+
+_XPROC_SCRIPT = """
+from jev_kit.engine import EngineConfig, effective_contract
+from jev_kit.fingerprint import question_fingerprint
+from jev_kit.questionset import load_question_set
+qs = {"schema_version": 1, "id": "t", "version": "1", "model": "jev-1.13.0",
+      "escalation_target": "g", "state_schema": {"cmd": {"kind": "command"}},
+      "questions": {"d": {"type": "noul", "instructions": "x",
+                          "kit": {"consequence": "advisory"}}}}
+def norm(s):
+    return "".join(c for c in s if c.isalnum())  # nested generator code object
+cfg = EngineConfig(language_profiles={"sql": norm}, language_profile_versions={"sql": "1"})
+print(question_fingerprint(instructions="x", criteria=None, question_type="noul",
+      option_or_level_set=[], model="jev-1.13.0",
+      egress_contract=effective_contract(load_question_set(qs), cfg)))
+"""
+
+
+def test_fingerprint_stable_across_fresh_processes_h3() -> None:
+    # Positive control (H3b): unchanged source and request must yield the SAME fingerprint in
+    # fresh processes, so a same-revision registry stays reusable. The earlier digest hashed
+    # repr(co_consts), which embeds per-process memory addresses and differed every run.
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    src = str(Path(__file__).resolve().parents[1] / "src")
+    env = {**os.environ, "PYTHONPATH": src}
+    outputs = {
+        subprocess.run(
+            [sys.executable, "-c", _XPROC_SCRIPT], env=env, capture_output=True, text=True,
+            check=True, timeout=60,
+        ).stdout.strip()
+        for _ in range(3)
+    }
+    assert len(outputs) == 1 and len(next(iter(outputs))) == 64

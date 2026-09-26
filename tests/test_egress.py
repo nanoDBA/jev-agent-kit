@@ -607,3 +607,32 @@ def test_numeric_and_escaped_credentials_detected_h15() -> None:
     assert scan_text('{"password":123456}') == "structured_credential"
     assert scan_text(r'\"password\":\"hunter2\"') == "structured_credential"
     assert scan_text('{"password":"<redacted>"}') is None
+
+
+def test_credential_representation_variants_detected_h15() -> None:
+    # Batch-10 H15: signed/exponent numbers, JSON-escaped tab/newline/CR separators, and nested
+    # structures are judged by meaning (bounded JSON parse + structural rules), not one spelling.
+    bs = chr(92)
+    variants = [
+        '{"password":-123456}',
+        '{"password":-1e6}',
+        "{" + bs + '"password' + bs + '"' + bs + "t:" + bs + "t" + bs + '"opensesame' + bs + '"}',
+        "{" + bs + '"password' + bs + '"' + bs + "n:" + bs + "n" + bs + '"opensesame' + bs + '"}',
+        "{" + bs + '"password' + bs + '"' + bs + "r:" + bs + "r" + bs + '"opensesame' + bs + '"}',
+        '{"a":{"b":[{"password":-7}]}}',
+    ]
+    for text in variants:
+        assert scan_text(text) is not None, text
+    for clean in ('{"password":"<redacted>"}', '{"authorization":"none"}', '{"count":-5}'):
+        assert scan_text(clean) is None, clean
+
+
+def test_free_text_signed_password_blocked_on_outgoing_bytes_h15() -> None:
+    # Public path: a named-source free-text value carrying a signed numeric password must not
+    # reach the outgoing request bytes.
+    schema = {"note": FieldSpec(ContentKind.FREE_TEXT, {"source_type": "ticket"})}
+    out = transform_state(
+        {"note": '{"password":-123456}'}, schema, ctx(source_allowlist=frozenset({"ticket"}))
+    )
+    body = json.dumps({"state": out}).encode()
+    assert scan_request(body, json.loads(body)) is not None

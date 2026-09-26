@@ -101,14 +101,15 @@ def _run_install(argv: list[str]) -> int:
     parser.add_argument("--force", action="store_true", help="overwrite a differing target")
     try:
         args = parser.parse_args(argv)
-    except _ArgumentError as exc:
-        return _fail_invocation(str(exc))
+    except _ArgumentError:
+        # Parser messages embed argv verbatim (possibly secret-shaped); fixed text only (H21).
+        return _fail_invocation("invalid command-line arguments")
 
     from jev_kit import install as install_mod
 
     source = Path(args.source)
     if not (source / "SKILL.md").is_file():
-        return _fail_invocation(f"no skill found at source: {source}")
+        return _fail_invocation("no skill found at the given source")  # no path echo (H21)
     if not install_mod.python_ok():
         sys.stderr.write("warning: Python 3.11 or later is required to run the installed skill\n")
     targets = install_mod.default_targets(args.scope, repo_root=Path.cwd())
@@ -131,14 +132,15 @@ def _run_audit(argv: list[str]) -> int:
     parser.add_argument("path", metavar="PATH")
     try:
         args = parser.parse_args(argv)
-    except _ArgumentError as exc:
-        return _fail_invocation(str(exc))
+    except _ArgumentError:
+        # Parser messages embed argv verbatim (possibly secret-shaped); fixed text only (H21).
+        return _fail_invocation("invalid command-line arguments")
 
     from jev_kit import audit as audit_mod
 
     root = Path(args.path)
     if not root.exists():
-        return _fail_invocation(f"path does not exist: {root}")
+        return _fail_invocation("path does not exist")  # no path echo (H21)
     findings = audit_mod.audit_path(root)
     _write_response(
         {
@@ -173,8 +175,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.input is not None:
         try:
             text = Path(args.input).read_text(encoding="utf-8")
-        except OSError as exc:
-            return _fail_invocation(f"could not read input file: {exc}")
+        except OSError:
+            # The OSError text names the caller-supplied path; fixed text only (H21).
+            return _fail_invocation("could not read input file")
     else:
         text = sys.stdin.read()
 

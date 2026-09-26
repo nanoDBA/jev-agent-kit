@@ -275,3 +275,28 @@ def test_cli_audit_missing_path_is_invocation_error(capsys: Any) -> None:
 
     rc = cli.main(["audit", "/no/such/path/here"])
     assert rc == 2
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["install", "--AKIAABCDEFGHIJKLMNOP"],
+        ["install", "--scope", "AKIAABCDEFGHIJKLMNOP"],
+        ["install", "--source", "AKIAABCDEFGHIJKLMNOP"],
+        ["audit", ".", "--AKIAABCDEFGHIJKLMNOP"],
+        ["audit", "AKIAABCDEFGHIJKLMNOP"],
+        ["--input", "AKIAABCDEFGHIJKLMNOP"],
+    ],
+)
+def test_no_invocation_branch_echoes_input_h21(argv: list[str]) -> None:
+    # Batch-10 H21: every invocation-error branch (subcommand parsers, missing paths, unreadable
+    # input) uses fixed diagnostics; a real subprocess must never echo the argv token.
+    repo_root = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "PYTHONPATH": str(repo_root / "src")}
+    proc = subprocess.run(
+        [sys.executable, "-m", "jev_kit.cli", *argv], env=env, capture_output=True,
+        text=True, stdin=subprocess.DEVNULL, timeout=60,
+    )
+    assert proc.returncode == 2
+    assert "AKIAABCDEFGHIJKLMNOP" not in proc.stdout
+    assert "AKIAABCDEFGHIJKLMNOP" not in proc.stderr

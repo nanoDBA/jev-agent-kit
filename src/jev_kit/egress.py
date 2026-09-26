@@ -23,10 +23,12 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 from jev_kit.errors import FailReason, ValidationError
@@ -443,15 +445,19 @@ _STRONG_SECRET_NAMES = frozenset(
 _JSON_SECRET_KV = re.compile(
     r'(?i)"(?:'
     + "|".join(re.escape(k) for k in sorted(_STRONG_SECRET_NAMES, key=len, reverse=True))
-    + r')"\s*:\s*(?:"([^"]*)"|([0-9][0-9.eE+-]*|true|false))'
+    + r')"\s*:\s*(?:"([^"]*)"|(-?[0-9][0-9.eE+-]*|true|false))'
 )
 
 # JSON string escapes that can obfuscate an embedded credential in a free-text value: a
 # \uXXXX unicode escape (e.g. "Authorization") or an escaped quote (e.g. \"password\").
 # scan_text scans a de-escaped copy so these forms are still caught (finding H15).
-_JSON_ESCAPE = re.compile(r'\\(["\\/]|u[0-9a-fA-F]{4})')
+_JSON_ESCAPE = re.compile(r'\\(["\\/bfnrt]|u[0-9a-fA-F]{4})')
 
-_JSON_ESCAPE_SIMPLE = {'"': '"', "\\": "\\", "/": "/"}
+# Every JSON short escape (RFC 8259 section 7), so an escaped tab/newline separator between a
+# key and its value cannot hide an embedded credential (finding H15).
+_JSON_ESCAPE_SIMPLE = {
+    '"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t",
+}
 
 
 def _deescape_json(text: str) -> str:
@@ -482,11 +488,40 @@ def scan_text(text: str) -> str | None:
     hit = _scan_text_once(text)
     if hit is not None:
         return hit
+    candidates = [text]
     if "\\" in text:
         deescaped = _deescape_json(text)
         if deescaped != text:
-            return _scan_text_once(deescaped)
+            hit = _scan_text_once(deescaped)
+            if hit is not None:
+                return hit
+            candidates.append(deescaped)
+    # Structural pass: a value that is itself a JSON document is parsed (bounded) and checked
+    # with the same structural credential rules as real request objects, so any JSON
+    # representation (signed/exponent numbers, escapes, arbitrary whitespace) is judged by
+    # meaning rather than by one regex spelling (finding H15).
+    for candidate in candidates:
+        hit = _scan_embedded_json(candidate)
+        if hit is not None:
+            return hit
     return None
+
+
+_MAX_EMBEDDED_JSON = 65_536
+
+
+def _scan_embedded_json(text: str) -> str | None:
+    stripped = text.strip()
+    if not stripped or stripped[0] not in "{[" or len(stripped) > _MAX_EMBEDDED_JSON:
+        return None
+    try:
+        parsed = json.loads(stripped)
+    except (ValueError, RecursionError):
+        return None
+    try:
+        return _scan_auth_pairs(parsed)
+    except RecursionError:
+        return "embedded_json_too_deep"  # fail closed on pathological nesting
 
 
 def _scan_text_once(text: str) -> str | None:
@@ -642,16 +677,43 @@ def scan_request(serialized: bytes, decoded: Any) -> str | None:
 
 
 def _compute_transform_digest() -> str:
-    """A digest of the actual egress transform and detector behavior (finding H3, story 69).
+    """A deterministic digest of the shipped egress transform/detector implementation (H3).
 
-    The fingerprint that thresholds calibrate against must change whenever the transform or
-    detection logic changes, or a registry calibrated under one transform would be treated as
-    calibrated under a different one (a change from ``tool --flag`` to ``tool`` reuses stale
-    calibration otherwise). We hash the bytecode and constants of every function defined in this
-    module, every module-level compiled pattern, the string-set constants, and the detector
-    table, so any semantic change here invalidates prior calibration automatically rather than
-    relying on a manually bumped version number.
+    The fingerprint that thresholds calibrate against must change whenever transform or
+    detection logic changes (story 69), AND must stay identical for unchanged code across
+    processes, or a same-revision registry would never match again. We therefore hash the
+    shipped source artifact itself, with line endings normalized so CRLF and LF checkouts of the
+    same revision agree. It is deliberately conservative: any edit to this module (even a
+    comment) invalidates prior calibration, which is safe. If the source is unavailable (a
+    bytecode-only install) we fall back to a canonical, address-free walk of the code objects.
     """
+    try:
+        source = Path(__file__).read_bytes()
+    except OSError:
+        return _canonical_module_code_digest()
+    return _source_digest(source)
+
+
+def _source_digest(source: bytes) -> str:
+    normalized = source.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return "src:" + hashlib.sha256(normalized).hexdigest()[:28]
+
+
+def _canonical_code(code: Any, digest: Any) -> None:
+    # Bytecode, names and constants, recursing into nested code objects instead of using their
+    # repr (which embeds a memory address and the checkout filename and so differs per process).
+    digest.update(code.co_code)
+    digest.update(repr(code.co_names).encode("utf-8"))
+    for const in code.co_consts:
+        if hasattr(const, "co_code"):
+            _canonical_code(const, digest)
+        elif isinstance(const, frozenset):
+            digest.update(repr(sorted(const, key=repr)).encode("utf-8"))
+        else:
+            digest.update(repr(const).encode("utf-8"))
+
+
+def _canonical_module_code_digest() -> str:
     import types
 
     digest = hashlib.sha256()
@@ -659,18 +721,10 @@ def _compute_transform_digest() -> str:
         obj = globals()[name]
         if isinstance(obj, types.FunctionType) and obj.__module__ == __name__:
             digest.update(name.encode("utf-8"))
-            digest.update(obj.__code__.co_code)
-            digest.update(repr(obj.__code__.co_consts).encode("utf-8"))
+            _canonical_code(obj.__code__, digest)
         elif isinstance(obj, re.Pattern):
-            digest.update(name.encode("utf-8"))
-            digest.update(obj.pattern.encode("utf-8"))
-        elif isinstance(obj, frozenset) and all(isinstance(x, str) for x in obj):
-            digest.update(name.encode("utf-8"))
-            digest.update(repr(sorted(obj)).encode("utf-8"))
-    for rule_id, pattern in _DETECTORS:
-        digest.update(rule_id.encode("utf-8"))
-        digest.update(pattern.pattern.encode("utf-8"))
-    return digest.hexdigest()[:32]
+            digest.update(name.encode("utf-8") + obj.pattern.encode("utf-8"))
+    return "code:" + digest.hexdigest()[:27]
 
 
 EGRESS_TRANSFORM_DIGEST = _compute_transform_digest()

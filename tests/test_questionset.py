@@ -158,3 +158,13 @@ def test_noul_criteria_unknown_key_rejected_h18() -> None:
         "kit": {"consequence": "advisory"},
     }})
     assert load_question_set(ok) is not None
+
+
+def test_signed_password_in_question_set_id_rejected_h15() -> None:
+    # Batch-10 H15: question-set metadata reaches receipts verbatim, so a signed-number credential
+    # shape in the id is refused at load (no receipt is written for it).
+    obj = base(_noul_q())
+    obj["id"] = '{"password":-123456}'
+    with pytest.raises(ValidationError) as exc:
+        load_question_set(obj)
+    assert exc.value.reason is FailReason.CONFIG

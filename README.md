@@ -242,3 +242,7 @@ python -m mypy
 ```
 
 Tests never call the live API.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

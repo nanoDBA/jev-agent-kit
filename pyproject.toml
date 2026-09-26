@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]  # PEP 639 license metadata
 build-backend = "hatchling.build"
 
 [project]
@@ -7,6 +7,9 @@ name = "jev-agent-kit"
 version = "0.1.0"
 description = "A cautious client for TypeSafe's Jev, for coding agents. Code owns authority; Jev supplies evidence."
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Lars Rasmussen" }]
 # Runtime dependencies: none, by ADR 0003. Do not add any without an ADR.
 dependencies = []
 

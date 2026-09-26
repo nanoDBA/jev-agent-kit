@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "stop-or-continue",
+  "version": "1",
+  "model": "jev-1.13.0",
+  "escalation_target": "deterministic-budget-check",
+  "state_schema": {
+    "goal": {
+      "kind": "free_text",
+      "params": {
+        "source_type": "agent_goal"
+      }
+    },
+    "evidence_summary": {
+      "kind": "free_text",
+      "params": {
+        "source_type": "agent_context"
+      }
+    }
+  },
+  "questions": {
+    "enough_to_finish": {
+      "type": "noul",
+      "instructions": "Is there enough in `evidence_summary` to satisfy `goal` without another step?",
+      "kit": {
+        "consequence": "advisory"
+      }
+    },
+    "another_step_would_help": {
+      "type": "noul",
+      "instructions": "Would one more gathering step materially improve the ability to satisfy `goal`?",
+      "kit": {
+        "consequence": "advisory"
+      }
+    }
+  }
+}

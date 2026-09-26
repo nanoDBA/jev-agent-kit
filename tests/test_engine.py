@@ -333,3 +333,27 @@ def test_record_carries_audit_fields_and_mock_identity(tmp_path: Any) -> None:
     assert line["schema_version"] == 1
     assert line["model"] == "mock"
     assert line["fingerprint"] == rec["fingerprint"]
+
+
+# --- C21 op dispatch --------------------------------------------------------
+
+
+def test_run_json_record_outcome_op_needs_no_transport() -> None:
+    from jev_kit.engine import run_json
+
+    resp = run_json({"schema_version": 1, "op": "record_outcome",
+                     "decision_id": "act_deadbeefdeadbeefdeadbeefdeadbeef", "outcome": "applied"})
+    # Unknown (never committed) decision id -> recorded False, but a well-formed response.
+    assert resp["status"] == "error" and resp["recorded"] is False
+
+
+def test_run_json_decide_batch_op(tmp_path: Any) -> None:
+    from jev_kit.engine import run_json
+
+    body = json.dumps({"model": "jev-1.13.0", "answers": {"destructive": {"noul": 0.1}}}).encode()
+    from jev_kit.transport import TransportResponse
+    transport = MockTransport(outcomes=[TransportResponse(200, {}, body)] * 2)
+    req = {"schema_version": 1, "op": "decide_batch",
+           "requests": [request("shadow"), request("shadow")]}
+    resp = run_json(req, transport=transport)
+    assert resp["status"] == "ok" and len(resp["results"]) == 2

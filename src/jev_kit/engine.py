@@ -579,11 +579,29 @@ def run_json(request: dict[str, Any], *, transport: Transport | None = None) -> 
     """
     try:
         config = EngineConfig()
+        op = request.get("op", "decide") if isinstance(request, dict) else None
+        if op == "record_outcome":
+            # An outcome operation needs no transport (finding C21).
+            ok = record_outcome(
+                str(request.get("decision_id", "")),
+                str(request.get("outcome", "")),
+                request.get("action_id"),
+            )
+            return {"schema_version": SCHEMA_VERSION, "status": "ok" if ok else "error",
+                    "recorded": ok, "records": []}
         if transport is None:
             api_key = config.api_key or secrets.resolve_api_key(timeout=config.deadline_seconds)
             if api_key is None:
                 return _error_envelope(FailReason.CONFIG)
             transport = LiveTransport(api_key)
+        if op == "decide_batch":
+            reqs = request.get("requests")
+            if not isinstance(reqs, list):
+                return _error_envelope(FailReason.CONFIG)
+            results = decide_batch(reqs, transport=transport, config=config)
+            return {"schema_version": SCHEMA_VERSION, "status": "ok", "results": results}
+        if op != "decide":
+            return _error_envelope(FailReason.CONFIG)
         return _decide(request, transport, config)
     except ValidationError as exc:
         return _error_envelope(exc.reason)

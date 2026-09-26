@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nanoDBA/jev_agent_kit/schemas/registry.schema.json",
+  "title": "Threshold registry",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "entries"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "entries": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "status",
+          "escalation_target",
+          "evidence_ref"
+        ],
+        "properties": {
+          "status": {
+            "enum": [
+              "calibrated",
+              "uncalibrated",
+              "never_auto_accept"
+            ]
+          },
+          "escalation_target": {
+            "type": "string"
+          },
+          "evidence_ref": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "type": {
+            "enum": [
+              "noul",
+              "choice",
+              "score"
+            ]
+          },
+          "threshold": {
+            "type": "object"
+          }
+        },
+        "if": {
+          "properties": {
+            "status": {
+              "const": "calibrated"
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "type",
+            "threshold",
+            "date"
+          ]
+        }
+      }
+    }
+  }
+}

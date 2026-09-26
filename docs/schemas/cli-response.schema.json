@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nanoDBA/jev_agent_kit/schemas/cli-response.schema.json",
+  "title": "CLI response",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "status"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "status": {
+      "enum": [
+        "ok",
+        "error"
+      ]
+    },
+    "reason": {
+      "type": "string"
+    },
+    "records": {
+      "type": "array"
+    },
+    "results": {
+      "type": "array"
+    },
+    "recorded": {
+      "type": "boolean"
+    }
+  }
+}

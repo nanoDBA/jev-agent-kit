@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nanoDBA/jev_agent_kit/schemas/receipt.schema.json",
+  "title": "Receipt line",
+  "type": "object",
+  "required": [
+    "kind",
+    "schema_version"
+  ],
+  "properties": {
+    "kind": {
+      "enum": [
+        "decision",
+        "outcome",
+        "commit"
+      ]
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "decision_id": {
+      "type": "string"
+    },
+    "fingerprint": {
+      "type": "string"
+    },
+    "route": {
+      "enum": [
+        "accept",
+        "ask",
+        "no_advice"
+      ]
+    },
+    "model": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "simulated_model": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "estimated_tokens": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "reported_tokens": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  }
+}

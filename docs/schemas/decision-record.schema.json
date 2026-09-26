@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nanoDBA/jev_agent_kit/schemas/decision-record.schema.json",
+  "title": "Decision record",
+  "type": "object",
+  "required": [
+    "decision_id",
+    "question_id",
+    "route",
+    "would_route",
+    "threshold_status",
+    "mode",
+    "is_mock",
+    "receipt_written"
+  ],
+  "properties": {
+    "decision_id": {
+      "type": "string"
+    },
+    "question_id": {
+      "type": "string"
+    },
+    "consequence": {
+      "enum": [
+        "gate",
+        "advisory"
+      ]
+    },
+    "fingerprint": {
+      "type": "string"
+    },
+    "route": {
+      "enum": [
+        "accept",
+        "ask",
+        "no_advice"
+      ]
+    },
+    "would_route": {
+      "oneOf": [
+        {
+          "enum": [
+            "accept",
+            "ask",
+            "no_advice"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "label": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "value": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "distribution": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "confidence": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "noul": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "margin": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "threshold": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "threshold_status": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "requested_model": {
+      "type": "string"
+    },
+    "model": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "simulated_model": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mode": {
+      "enum": [
+        "shadow",
+        "enforce"
+      ]
+    },
+    "fail_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "is_mock": {
+      "type": "boolean"
+    },
+    "receipt_written": {
+      "type": "boolean"
+    }
+  }
+}

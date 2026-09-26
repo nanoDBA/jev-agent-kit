@@ -443,8 +443,9 @@ def _decide(
                 body = _parse_response_body(result.body)
                 served_model = body.get("model") if isinstance(body, dict) else None
                 usage = body.get("usage") if isinstance(body, dict) else None
-                if isinstance(usage, dict) and isinstance(usage.get("input_tokens"), int):
-                    reported_tokens = usage["input_tokens"]
+                tok = usage.get("input_tokens") if isinstance(usage, dict) else None
+                if isinstance(tok, int) and not isinstance(tok, bool):
+                    reported_tokens = tok
                 if served_model != qset.model:
                     whole_fail = FailReason.MODEL_MISMATCH
                 else:
@@ -671,7 +672,9 @@ def decide_batch(
 
     shared = config or EngineConfig()
     if shared.rate_budget is None:
-        shared = replace(shared, rate_budget=RateBudget())
+        # Share the process-wide budget so the cap spans batches and batch-vs-single calls
+        # (finding MAJOR-1; spec story 67), not a fresh per-batch budget.
+        shared = replace(shared, rate_budget=_default_budget())
     results: list[dict[str, Any]] = [{} for _ in requests]
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {

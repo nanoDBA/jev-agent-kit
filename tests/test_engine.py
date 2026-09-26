@@ -432,3 +432,21 @@ def test_transport_raising_yields_records(tmp_path: Any) -> None:
     resp = decide(request("enforce"), transport=_Raising(), config=config(tmp_path))
     assert resp["status"] == "ok"
     assert resp["records"][0]["route"] == "ask"
+
+
+def test_decide_batch_shares_process_wide_cap(tmp_path: Any, monkeypatch: Any) -> None:
+    # MAJOR-1: a batch must draw from the shared default budget, not a fresh per-batch one.
+    from jev_kit import engine
+    from jev_kit.ratebudget import RateBudget as RB
+    from jev_kit.transport import TransportResponse
+
+    monkeypatch.setattr(engine, "_DEFAULT_BUDGET", RB(max_calls=1))
+    body = json.dumps({"model": "jev-1.13.0", "answers": {"destructive": {"noul": 0.1}}}).encode()
+    transport = MockTransport(outcomes=[TransportResponse(200, {}, body)] * 3)
+    cfg = EngineConfig(hmac_key=HMAC_KEY, writer=ReceiptWriter(directory=tmp_path))
+    results = engine.decide_batch(
+        [request("shadow"), request("shadow"), request("shadow")], transport=transport, config=cfg
+    )
+    reasons = [r["records"][0]["fail_reason"] for r in results]
+    # With a shared cap of 1, only one request can send; the others hit the rate budget.
+    assert reasons.count("rate_budget") == 2

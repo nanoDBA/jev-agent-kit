@@ -89,17 +89,24 @@ def decide_tool_call(
     run: Callable[[dict[str, Any]], dict[str, Any]]
     run = runner if runner is not None else (lambda req: _default_runner(req, self_deadline_s))
 
-    # Own the deadline: abandon a result that misses it (the watchdog child is killed on its
-    # own shorter timeout; this guarantees the core itself returns in time).
+    # Own the deadline independently of the runner: on a miss, abandon the worker without
+    # joining it (a plain `with` block would join on exit and defeat the bound), so the core
+    # itself returns within self_deadline even if the runner hangs. The watchdog child is also
+    # killed on its own shorter timeout (finding Phase3/4 MAJOR-2).
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(run, request)
-            try:
-                response = future.result(timeout=self_deadline_s)
-            except concurrent.futures.TimeoutError:
-                return _fail_closed(mode, "timeout", timed_out=True)
-    except Exception:
-        return _fail_closed(mode, "internal")
+        future = pool.submit(run, request)
+        try:
+            response = future.result(timeout=self_deadline_s)
+        except concurrent.futures.TimeoutError:
+            pool.shutdown(wait=False, cancel_futures=True)
+            return _fail_closed(mode, "timeout", timed_out=True)
+        except Exception:
+            pool.shutdown(wait=False, cancel_futures=True)
+            return _fail_closed(mode, "internal")
+    finally:
+        # Do not block on a still-running worker; a hung runner must not hang the hook.
+        pool.shutdown(wait=False, cancel_futures=True)
 
     return _map_response(response, mode)
 
@@ -126,7 +133,9 @@ def _map_response(response: dict[str, Any], mode: Mode) -> HookResult:
     # Enforce: any gate not clearing to accept means ask (fail closed). The tool-call-gate set
     # is all gate questions, so a single non-accept route escalates.
     routes = [r.get("route") for r in records if isinstance(r, dict)]
-    if all(route == "accept" for route in routes):
+    # `routes` must be non-empty: an all-non-dict records list would make all() vacuously true
+    # and allow in enforce (finding Phase3/4 MAJOR-1). No route may be missing either.
+    if routes and len(routes) == len(records) and all(route == "accept" for route in routes):
         return HookResult(HookOutcome.ALLOW, "accept", None, is_mock)
     reason = next(
         (r.get("fail_reason") for r in records if isinstance(r, dict) and r.get("fail_reason")),

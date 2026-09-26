@@ -14,6 +14,7 @@ Status: research complete, product code not started. Start with `CLAUDE.md`, the
 | --- | --- |
 | `CLAUDE.md` | Rules for any agent working in this repo. Read first. |
 | `docs/plan.md` | Phases, backlog (Beads import source), open questions |
+| `docs/evidence-backed-maintenance.md` | Offline evidence contracts, finding verification, and skill revision workflow |
 | `docs/research/` | Digested research, numbered in reading order |
 | `docs/research/raw/` | Source material you drop in (PDF, transcripts, X JSON) |
 | `sources.lock.json` | Every prior-art repo, pinned to the commit that was reviewed |

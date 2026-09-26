@@ -26,3 +26,6 @@ __pycache__/
 .venv/
 dist/
 build/
+
+# Local skill-behavior comparison artifacts; reviewed summary lives under docs/reviews.
+eval-results/

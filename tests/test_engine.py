@@ -503,3 +503,23 @@ def test_config_from_env_reads_source_allowlist(monkeypatch: Any) -> None:
     cfg = engine._config_from_env()
     assert cfg.source_allowlist == frozenset({"web", "agent_context"})
     assert cfg.public_names == frozenset({"sys.tables"})
+
+
+def test_outcome_rejects_decision_in_truncated_batch(tmp_path: Any, monkeypatch: Any) -> None:
+    # H11 MAJOR-2: a decision whose own call was never committed must not be vouched for by a
+    # later unrelated commit marker in the same file.
+    from jev_kit import engine
+
+    f = tmp_path / "20260926T000000Z-1.jsonl"
+    f.write_text(
+        # call A: a decision line but NO commit (truncated)
+        json.dumps({"kind": "decision", "call_id": "callA", "decision_id": "act_truncated"}) + "\n"
+        # call B: an unrelated decision then its commit
+        + json.dumps({"kind": "decision", "call_id": "callB", "decision_id": "act_other"}) + "\n"
+        + json.dumps({"kind": "commit", "call_id": "callB", "lines": 1}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(engine, "_committed_decisions", set())
+    monkeypatch.setattr("jev_kit.receipts.receipts_dir", lambda: tmp_path)
+    assert engine.record_outcome("act_truncated", "applied") is False  # own call not committed
+    assert engine.record_outcome("act_other", "applied") is True  # own call committed

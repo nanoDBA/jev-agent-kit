@@ -99,3 +99,13 @@ def test_missing_kit_rejected() -> None:
         load_question_set(
             base({"d": {"type": "noul", "instructions": "Destructive?"}})
         )
+
+
+def test_secret_shaped_question_id_rejected() -> None:
+    # H6 MAJOR-1: a charset-safe but credential-shaped question id is rejected at load.
+    with pytest.raises(ValidationError) as exc:
+        load_question_set(
+            base({"AKIAIOSFODNN7EXAMPLE": {"type": "noul", "instructions": "x?",
+                                          "kit": {"consequence": "advisory"}}})
+        )
+    assert exc.value.reason is FailReason.CONFIG

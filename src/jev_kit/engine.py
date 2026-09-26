@@ -774,7 +774,7 @@ def _decision_committed_on_disk(decision_id: str) -> bool:
             lines = path.read_text(encoding="utf-8").splitlines()
         except OSError:
             continue
-        pending: set[str] = set()
+        target_call_ids: set[str] = set()
         for raw in lines:
             try:
                 rec = json.loads(raw)
@@ -784,7 +784,11 @@ def _decision_committed_on_disk(decision_id: str) -> bool:
                 continue
             kind = rec.get("kind")
             if kind == "decision" and rec.get("decision_id") == decision_id:
-                pending.add(decision_id)
-            elif kind == "commit" and decision_id in pending:
-                return True  # the batch holding this decision was committed
+                call_id = rec.get("call_id")
+                if isinstance(call_id, str):
+                    target_call_ids.add(call_id)
+            elif kind == "commit" and rec.get("call_id") in target_call_ids:
+                # Only the decision's OWN call being committed counts; a later unrelated commit
+                # must not vouch for a decision in a truncated batch (finding H11 MAJOR-2).
+                return True
     return False

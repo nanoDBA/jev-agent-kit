@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from jev_kit.egress import ContentKind, FieldSpec
+from jev_kit.egress import ContentKind, FieldSpec, scan_text
 from jev_kit.errors import FailReason, ValidationError
 from jev_kit.fingerprint import parse_canonical
 from jev_kit.types import (
@@ -165,6 +165,10 @@ def _parse(obj: Any) -> QuestionSet:
         # never a channel for secret-shaped strings (finding H6/C08).
         if not isinstance(qid, str) or not _SAFE_QID.match(qid):
             raise ValidationError(FailReason.CONFIG, "question_id_unsafe")
+        if scan_text(qid) is not None:
+            # A charset-safe id can still be a credential shape (AWS/GitHub token); it would
+            # land verbatim in a durable receipt, so reject it at load (finding H6 MAJOR-1).
+            raise ValidationError(FailReason.CONFIG, "question_id_secret_shaped")
     questions = {qid: _build_question(qid, spec) for qid, spec in raw_questions.items()}
 
     raw_schema = obj.get("state_schema", {})

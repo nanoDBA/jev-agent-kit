@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nanoDBA/jev_agent_kit/schemas/question-set.schema.json",
+  "title": "Jev question set",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "version",
+    "model",
+    "escalation_target",
+    "questions"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {},
+    "model": {
+      "type": "string",
+      "pattern": "^jev-[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "escalation_target": {
+      "type": "string",
+      "minLength": 1
+    },
+    "excluded_classes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "transcripts": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "cap": {
+          "type": "integer"
+        }
+      }
+    },
+    "state_schema": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "questions": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "type",
+          "instructions",
+          "kit"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "enum": [
+              "noul",
+              "choice",
+              "score"
+            ]
+          },
+          "instructions": {
+            "type": "string",
+            "minLength": 1
+          },
+          "criteria": {
+            "description": "choice: option->description map; score: ordered array of level strings; noul: optional {true,false}"
+          },
+          "kit": {
+            "type": "object",
+            "required": [
+              "consequence"
+            ],
+            "properties": {
+              "consequence": {
+                "enum": [
+                  "gate",
+                  "advisory"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

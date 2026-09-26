@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jev-agent-kit"
+version = "0.1.0"
+description = "A cautious client for TypeSafe's Jev, for coding agents. Code owns authority; Jev supplies evidence."
+requires-python = ">=3.11"
+# Runtime dependencies: none, by ADR 0003. Do not add any without an ADR.
+dependencies = []
+
+[project.scripts]
+jev-kit = "jev_kit.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jev_kit"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src", "tests"]

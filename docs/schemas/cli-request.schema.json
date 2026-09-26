@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nanoDBA/jev_agent_kit/schemas/cli-request.schema.json",
+  "title": "CLI request",
+  "type": "object",
+  "required": [
+    "schema_version"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "op": {
+      "enum": [
+        "decide",
+        "decide_batch",
+        "record_outcome"
+      ],
+      "default": "decide"
+    },
+    "question_set": {
+      "type": "object"
+    },
+    "question_set_path": {
+      "type": "string"
+    },
+    "state": {
+      "type": "object"
+    },
+    "mode": {
+      "enum": [
+        "shadow",
+        "enforce"
+      ]
+    },
+    "action_id": {
+      "type": "string"
+    },
+    "requests": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "decision_id": {
+      "type": "string"
+    },
+    "outcome": {
+      "type": "string"
+    }
+  }
+}

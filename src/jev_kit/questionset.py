@@ -83,9 +83,12 @@ def _build_question(qid: str, spec: dict[str, Any]) -> Question:
     is_gate = consequence is ConsequenceClass.GATE
 
     if qtype == "noul":
-        # Noul criteria, when present, is a {true, false} description object.
+        # Noul criteria, when present, is a {true, false} description object. Its keys are
+        # restricted to that pair so an unknown key cannot ride along (finding H18).
         if criteria is not None and not isinstance(criteria, dict):
             raise ValidationError(FailReason.CONFIG, "noul_criteria_type")
+        if isinstance(criteria, dict) and not set(criteria) <= {"true", "false"}:
+            raise ValidationError(FailReason.CONFIG, "noul_criteria_unknown_key")
         allow = _gate_allow_labels(kit, is_gate, frozenset({"yes", "no"}))
         return NoulQuestion(
             qid, instructions, consequence, criteria=criteria, gate_allow_labels=allow

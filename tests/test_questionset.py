@@ -140,3 +140,21 @@ def test_unknown_top_level_field_rejected_h18() -> None:
     with pytest.raises(ValidationError) as exc:
         load_question_set(obj)
     assert exc.value.reason is FailReason.CONFIG
+
+
+def test_noul_criteria_unknown_key_rejected_h18() -> None:
+    # Batch-8 H18: Noul criteria is a {true,false} description object; an extra key is rejected.
+    obj = base({"d": {
+        "type": "noul", "instructions": "x",
+        "criteria": {"true": "y", "false": "n", "unknown": "z"},
+        "kit": {"consequence": "advisory"},
+    }})
+    with pytest.raises(ValidationError) as exc:
+        load_question_set(obj)
+    assert exc.value.reason is FailReason.CONFIG
+    # The valid {true,false} form still loads.
+    ok = base({"d": {
+        "type": "noul", "instructions": "x", "criteria": {"true": "y", "false": "n"},
+        "kit": {"consequence": "advisory"},
+    }})
+    assert load_question_set(ok) is not None

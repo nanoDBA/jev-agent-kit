@@ -350,3 +350,25 @@ def test_malformed_route_correction_is_not_applied_h8(tmp_path: Any) -> None:
     assert decisions[0]["route"] == "accept"  # unchanged: the malformed correction was ignored
     assert "route_before_correction" not in decisions[0]
     assert stats["dropped_corrections"] == 1
+
+
+def test_correction_with_unhashable_route_is_dropped_not_crash_h8(tmp_path: Any) -> None:
+    # Batch-8 H8: a correction whose route/reason is a list or dict is unhashable; it must be
+    # dropped (counted) rather than raise TypeError and abort the whole report.
+    import json as _json
+
+    from tools.receipts_report import read_receipts
+
+    path = tmp_path / "r.jsonl"
+    lines = [
+        {"kind": "decision", "call_id": "c1", "decision_id": "d1", "route": "accept",
+         "fail_reason": None},
+        {"kind": "commit", "call_id": "c1", "lines": 1},
+        {"kind": "route_correction", "schema_version": 1, "call_id": "c1", "decision_id": "d1",
+         "route": ["ask"], "fail_reason": {}},
+    ]
+    path.write_text("\n".join(_json.dumps(x) for x in lines) + "\n", encoding="utf-8")
+    stats: dict[str, int] = {}
+    decisions = read_receipts(path, stats=stats)  # must not raise
+    assert decisions[0]["route"] == "accept"
+    assert stats["dropped_corrections"] == 1

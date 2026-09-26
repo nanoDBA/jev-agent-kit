@@ -153,16 +153,24 @@ def read_receipts(
             continue
         decision = by_decision_id[decision_id]
         corrected_route = correction.get("route")
+        fail_reason = correction.get("fail_reason")
+        schema_version = correction.get("schema_version")
+        # Validate exact types BEFORE any set-membership test: a list- or dict-valued route/reason
+        # is unhashable and would raise TypeError from `in`, aborting the whole report; a float or
+        # bool schema_version must not be accepted as 1 (finding H8, minor).
         if (
-            correction.get("schema_version") == _CORRECTION_SCHEMA_VERSION
+            type(schema_version) is int
+            and schema_version == _CORRECTION_SCHEMA_VERSION
             and correction.get("call_id") == decision.get("call_id")
+            and isinstance(corrected_route, str)
             and corrected_route in _CORRECTION_ROUTES
-            and correction.get("fail_reason") in _CORRECTION_REASONS
+            and isinstance(fail_reason, str)
+            and fail_reason in _CORRECTION_REASONS
             and decision.get("route") == "accept"  # only a late accept may be downgraded
         ):
             decision.setdefault("route_before_correction", decision.get("route"))
             decision["route"] = corrected_route
-            decision["fail_reason"] = correction.get("fail_reason")
+            decision["fail_reason"] = fail_reason
         else:
             local_stats["dropped_corrections"] = local_stats.get("dropped_corrections", 0) + 1
 

@@ -176,32 +176,21 @@ _CMD_CONTROL = re.compile(r"[;&|<>`\n]|\$\(")
 # non-whitespace path character (a Windows path) does not match.
 _CMD_ESCAPE = re.compile(r"\\(\s|$)")
 
-# A long-flag NAME at the start of a token: everything up to the first character that is not part
-# of a flag name (so "--tenant=PRIVATE" and '--password="s3' both yield only "--tenant"/
-# "--password"). The attached "=value" or a spilled quoted fragment never survives (finding H16).
-_LONG_FLAG_NAME = re.compile(r"^--[A-Za-z][A-Za-z0-9._-]*")
-
-
 def _reduce_command(text: str) -> str:
-    # Keep the command NAME and bare flag names only; nothing else survives (finding GATE-02).
-    # The reduction never depends on correct shell parsing to avoid a leak: it emits only the
-    # command basename and flag-name prefixes, so a value can never spill however the line is
-    # quoted (finding H16). A compound/redirecting line is blocked outright, since it is more
-    # than one command.
+    # Emit ONLY the command basename; every argument token is dropped (finding H16). Without a
+    # per-command option-arity grammar we cannot tell a flag name from an option's argument
+    # value: "git -C --PRIVATE_CUSTOMER ..." feeds --PRIVATE_CUSTOMER to -C as a directory, so a
+    # token starting with a dash is not proof of a flag. Rather than guess, we keep nothing after
+    # the command word. A declared safe option grammar that could retain known flags is deferred
+    # (tracked as a follow-up). Compound/redirecting, quoted and escaped inputs are rejected
+    # first, since even the command word cannot be located unambiguously in them.
     if _CMD_CONTROL.search(text):
         raise ValidationError(FailReason.EGRESS_BLOCKED, "command_compound_unsupported")
-    # Quoting makes whitespace tokenization ambiguous: a quoted value can split so a fragment
-    # ("PRIVATE ALICE" -> ALICE) reads as the command word, or a flag-shaped word inside a
-    # quoted argument ("hello --SECRET world") reads as a flag name. We do not carry a real
-    # shell parser, so a quoted command is rejected outright rather than mis-tokenized (finding
-    # H16). A quote-free command splits unambiguously into whole-word tokens.
     if '"' in text or "'" in text:
         raise ValidationError(FailReason.EGRESS_BLOCKED, "command_quoting_unsupported")
-    # A backslash before whitespace (an escaped space) or at end of a token (line continuation)
-    # joins tokens the whitespace split would otherwise separate, so a value fragment or a
-    # flag-shaped word can survive ("PRIVATE\ ALICE", "hello\ --SECRET"). We do not interpret
-    # escapes, so such input is rejected (finding H16). A Windows path backslash (followed by a
-    # path character, not whitespace) is unaffected.
+    # A backslash before whitespace (escaped space) or at end of a token (line continuation)
+    # joins tokens across the whitespace split, so it is rejected; a Windows path backslash
+    # (followed by a path character, not whitespace) is unaffected.
     if _CMD_ESCAPE.search(text):
         raise ValidationError(FailReason.EGRESS_BLOCKED, "command_escape_unsupported")
     tokens = text.split()
@@ -210,21 +199,12 @@ def _reduce_command(text: str) -> str:
         idx += 1
     if idx >= len(tokens):
         return ""
-    # Command word: basename only, dropping any POSIX or Windows directory path and surrounding
-    # quotes. If anything odd survives (a quote, an '='), emit a placeholder rather than a guess.
-    name = tokens[idx].strip("'\"").replace("\\", "/").rsplit("/", 1)[-1]
+    # Command word: basename only, dropping any POSIX or Windows directory path. If anything odd
+    # survives (a quote or '='), emit a placeholder rather than a guess.
+    name = tokens[idx].replace("\\", "/").rsplit("/", 1)[-1]
     if not name or any(ch in name for ch in "'\"="):
         name = "<command>"
-    kept = [name]
-    for tok in tokens[idx + 1 :]:
-        if tok == "--":
-            break  # end-of-options marker: everything after is a positional argument, dropped
-        long_flag = _LONG_FLAG_NAME.match(tok)
-        if long_flag:
-            kept.append(long_flag.group(0))  # the flag NAME only, never its =value
-        elif tok.startswith("-") and len(tok) > 1:
-            kept.append(tok[:2])  # short flag: keep only the flag letter, drop any attached value
-    return " ".join(kept)
+    return name
 
 
 def _require_named_source(params: Mapping[str, Any], ctx: EgressContext) -> None:
@@ -406,8 +386,9 @@ _DETECTORS: list[tuple[str, re.Pattern[str]]] = [
     # this from bearer-only to also match Basic).
     # The separator class tolerates the quotes/colon and any run of whitespace of JSON-embedded
     # auth, e.g. {"Authorization":        "Basic dTpw"} (finding H15), as well as a plain header.
-    # The class is a linear character run, so an unbounded count cannot cause backtracking.
-    ("authorization_header", re.compile(r"(?i)authorization[\"'\s:=]{1,80}(?:bearer|basic)\s+\S+")),
+    # It is a single character class with an unbounded but non-overlapping `+`, so there is no
+    # length cutoff to bypass and no backtracking ambiguity (linear scan).
+    ("authorization_header", re.compile(r"(?i)authorization[\"'\s:=]+(?:bearer|basic)\s+\S+")),
     # GATE-04: the same bearer/basic credential shape, but without requiring the literal word
     # "authorization" nearby. JSON serialization puts a quote between the key and its value
     # (e.g. {"authorization": "Basic <b64>"}), which breaks the rule above; scanning each
@@ -442,16 +423,26 @@ _CONNSTR = re.compile(
     r"(?i)(?:password|pwd)\s*=\s*(?:'([^']*)'|\"([^\"]*)\"|([^;\"'\s]+))"
 )
 
-# A structured (JSON-style) STRONG-secret key mapped to a string value, e.g. {"password":"x"}
-# or {"api_key":"..."} embedded in a free-text string that the structural pair scan (which only
-# sees real decoded dicts) cannot look inside (finding H15). Only strong-secret keys are here,
-# where any non-placeholder value is a leak; weak indicators (authorization, token) still need a
-# credential shape and are handled by _scan_auth_pairs on real decoded dicts, so they are not
-# listed to avoid flagging a benign value like {"authorization":"none"}. The value is captured
-# so a documented redaction placeholder is not flagged.
+# The single authoritative set of STRONG-secret key names: a value under one of these is a leak
+# whatever its shape (finding H15). Both the JSON-text detector below and the structural pair
+# scan (_scan_auth_pairs, on real decoded dicts) derive from this one set so they can never
+# drift apart and leave a key covered by one but not the other.
+_STRONG_SECRET_NAMES = frozenset(
+    {
+        "password", "passwd", "pwd", "secret", "client_secret", "secret_key", "private_key",
+        "access_token", "id_token", "refresh_token", "api_key", "api-key", "apikey", "x-api-key",
+    }
+)
+
+# A structured (JSON-style) strong-secret key mapped to a string value, e.g. {"password":"x"} or
+# {"private_key":"..."} embedded in a free-text string that the structural pair scan cannot look
+# inside. Weak indicators (authorization, token) are NOT here: they still need a credential shape
+# and are handled by _scan_auth_pairs, so a benign {"authorization":"none"} is not flagged. The
+# value is captured so a documented redaction placeholder is not flagged.
 _JSON_SECRET_KV = re.compile(
-    r'(?i)"(?:password|passwd|pwd|secret|client_secret|secret_key|api[_-]?key|apikey'
-    r'|access_token|refresh_token|id_token)"\s*:\s*"([^"]*)"'
+    r'(?i)"(?:'
+    + "|".join(re.escape(k) for k in sorted(_STRONG_SECRET_NAMES, key=len, reverse=True))
+    + r')"\s*:\s*"([^"]*)"'
 )
 
 # A JSON \uXXXX unicode escape. A credential key/scheme can be obfuscated as escapes inside a
@@ -527,26 +518,9 @@ def _walk_strings(obj: Any) -> list[str]:
 # blocked whatever its shape, because a password or client secret can be short, lowercase, or an
 # ordinary word and would slip past the token-shape heuristic (finding H15). Only a documented
 # redaction placeholder is exempt.
-_STRONG_SECRET_NAMES = frozenset(
-    {
-        "password",
-        "passwd",
-        "pwd",
-        "secret",
-        "client_secret",
-        "secret_key",
-        "private_key",
-        "access_token",
-        "id_token",
-        "refresh_token",
-        "api_key",
-        "apikey",
-        "x-api-key",
-    }
-)
-
 # Weak indicators name a field that often but not always carries a token, so a value there is
-# blocked only when it also has a credential shape (finding GATE-04).
+# blocked only when it also has a credential shape (finding GATE-04). _STRONG_SECRET_NAMES (the
+# authoritative set) is defined once with the JSON-text detector above.
 _AUTH_INDICATOR_NAMES = _STRONG_SECRET_NAMES | frozenset(
     {
         "authorization",

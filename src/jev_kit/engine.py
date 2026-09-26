@@ -264,11 +264,15 @@ def _stable_repr(value: object) -> str:
     if isinstance(value, (tuple, list)):
         return f"{type(value).__name__}[" + ",".join(_stable_repr(v) for v in value) + "]"
     if isinstance(value, (frozenset, set)):
+        # A set/frozenset has no meaningful order, so sort for a stable representation.
         items = sorted(value, key=repr)
         return f"{type(value).__name__}[" + ",".join(_stable_repr(v) for v in items) + "]"
     if isinstance(value, dict):
+        # A dict's INSERTION ORDER is behaviorally significant in Python (iteration reflects it,
+        # so a normalizer reading next(iter(...)) depends on it); it must be preserved, not
+        # sorted, or two dicts with the same entries in different orders would collide (H3).
         return "dict{" + ",".join(
-            f"{_stable_repr(k)}:{_stable_repr(v)}" for k, v in sorted(value.items(), key=repr)
+            f"{_stable_repr(k)}:{_stable_repr(v)}" for k, v in value.items()
         ) + "}"
     # Anything else (a captured object, function, code, or a value whose repr embeds an address)
     # cannot be bound deterministically, so the profile fails closed (finding H3).

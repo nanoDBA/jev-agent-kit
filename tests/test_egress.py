@@ -166,7 +166,9 @@ def test_metric_rejects_long_or_unsafe_string() -> None:
 # --- C05: transforms must not leak values, transcripts need named source ---
 
 
-def test_reduce_command_strips_flag_values_and_bare_args() -> None:
+def test_reduce_command_emits_basename_only() -> None:
+    # Command reduction emits only the command basename; every argument token is dropped, since
+    # without an option-arity grammar a dashed token cannot be told from an option's value (H16).
     schema = {"c": FieldSpec(ContentKind.COMMAND)}
     out = transform_state(
         {"c": "run --tenant=PRIVATE_TENANT --file=/private/person/file extra"},
@@ -175,7 +177,7 @@ def test_reduce_command_strips_flag_values_and_bare_args() -> None:
     )
     assert "PRIVATE_TENANT" not in out["c"]
     assert "/private/person/file" not in out["c"]
-    assert out["c"] == "run --tenant --file"
+    assert out["c"] == "run"
 
 
 def test_reduce_log_masks_unquoted_key_value_pairs() -> None:
@@ -210,14 +212,14 @@ def test_reduce_command_strips_leading_path() -> None:
     out = transform_state({"c": "/home/alice/bin/tool --flag"}, schema, ctx())
     assert "/home/alice/bin" not in out["c"]
     assert "alice" not in out["c"]
-    assert out["c"] == "tool --flag"
+    assert out["c"] == "tool"
 
 
 def test_reduce_command_strips_short_flag_attached_value() -> None:
     schema = {"c": FieldSpec(ContentKind.COMMAND)}
     out = transform_state({"c": "tool -pPRIVATE_VALUE"}, schema, ctx())
     assert "PRIVATE_VALUE" not in out["c"]
-    assert out["c"] == "tool -p"
+    assert out["c"] == "tool"
 
 
 def test_reduce_command_combined_leak_vectors() -> None:
@@ -230,7 +232,7 @@ def test_reduce_command_combined_leak_vectors() -> None:
     assert "PRIVATE_VALUE" not in out["c"]
     assert "/home/alice/bin" not in out["c"]
     assert "alice" not in out["c"]
-    assert out["c"] == "tool -p"
+    assert out["c"] == "tool"
 
 
 # --- GATE-03: bare identifiers and compressed IPv6 must not leak ----------------
@@ -509,14 +511,26 @@ def test_command_quoting_is_rejected_h16() -> None:
         assert exc.value.reason is FailReason.EGRESS_BLOCKED
 
 
-def test_command_quote_free_reduces_to_name_and_flags_h16() -> None:
-    # A quote-free command tokenizes unambiguously; only basename and flag-name prefixes survive.
+def test_command_reduces_to_basename_only_h16() -> None:
+    # Only the command basename survives; no argument token is kept, because a dashed token may
+    # actually be an option's argument value ("git -C --DIR"), not a flag (finding H16).
     schema = {"cmd": FieldSpec(ContentKind.COMMAND)}
     out = transform_state(
         {"cmd": "TOKEN=secret /home/alice/bin/tool --tenant=PRIVATE -pSECRET extra"}, schema, ctx()
     )
-    assert out["cmd"] == "tool --tenant -p"
+    assert out["cmd"] == "tool"
     assert "secret" not in out["cmd"] and "PRIVATE" not in out["cmd"] and "alice" not in out["cmd"]
+
+
+def test_command_option_argument_value_not_kept_as_flag_h16() -> None:
+    # "git -C --PRIVATE_CUSTOMER ..." feeds --PRIVATE_CUSTOMER to -C as a directory value; it
+    # must not survive as a supposed flag (finding H16).
+    schema = {"cmd": FieldSpec(ContentKind.COMMAND)}
+    out = transform_state(
+        {"cmd": "git -C --PRIVATE_CUSTOMER rev-parse --show-toplevel"}, schema, ctx()
+    )
+    assert out["cmd"] == "git"
+    assert "PRIVATE_CUSTOMER" not in out["cmd"]
 
 
 def test_command_positional_after_double_dash_dropped_h16() -> None:
@@ -534,7 +548,7 @@ def test_command_windows_path_basename_not_mangled_h16() -> None:
     schema = {"cmd": FieldSpec(ContentKind.COMMAND)}
     out = transform_state({"cmd": r"C:\Users\Alice\tool.exe --flag"}, schema, ctx())
     assert "Alice" not in out["cmd"] and "Users" not in out["cmd"]
-    assert out["cmd"] == "tool.exe --flag"
+    assert out["cmd"] == "tool.exe"
 
 
 def test_log_free_form_identifiers_masked_h17() -> None:
@@ -573,4 +587,14 @@ def test_command_escaped_whitespace_rejected_h16() -> None:
             transform_state({"cmd": leaky}, schema, ctx())
         assert exc.value.reason is FailReason.EGRESS_BLOCKED
     out = transform_state({"cmd": r"C:\Users\Alice\tool.exe --flag"}, schema, ctx())
-    assert out["cmd"] == "tool.exe --flag"
+    assert out["cmd"] == "tool.exe"
+
+
+def test_private_key_and_xapikey_json_values_detected_h15() -> None:
+    # Batch-8 H15: the JSON-embedded strong-secret detector uses the one authoritative key set,
+    # so private_key and x-api-key are covered too, and the separator has no length cutoff.
+    assert scan_text('{"private_key":"-secretmaterial-"}') is not None
+    assert scan_text('{"x-api-key":"abc123def456"}') is not None
+    assert scan_text('{"Authorization":' + " " * 100 + '"Basic dTpw"}') is not None
+
+

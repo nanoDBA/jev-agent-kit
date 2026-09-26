@@ -761,3 +761,35 @@ def test_pinned_model_rejects_trailing_newline_h22(tmp_path: Any) -> None:
     req["question_set"]["model"] = "jev-1.13.0\n"
     rec = only(decide(req, transport=reply(0.01), config=config(tmp_path)))
     assert rec["route"] == "ask"
+
+
+def test_fingerprint_sensitive_to_captured_dict_order_h3() -> None:
+    # Batch-8 H3: a dict's insertion order is behaviorally significant (a normalizer reading
+    # next(iter(rules.values())) depends on it), so two dicts with the same entries in different
+    # orders must not share a fingerprint.
+    from jev_kit.engine import EngineConfig, effective_contract
+    from jev_kit.fingerprint import question_fingerprint
+    from jev_kit.questionset import load_question_set
+
+    qset = load_question_set(question_set())
+
+    def make(rules: Any) -> Any:
+        def normalize(text: str) -> str:
+            return str(next(iter(rules.values())))
+        return normalize
+
+    def fp(cfg: EngineConfig) -> str:
+        return question_fingerprint(
+            instructions="x", criteria=None, question_type="noul", option_or_level_set=[],
+            model="jev-1.13.0", egress_contract=effective_contract(qset, cfg),
+        )
+
+    ab = EngineConfig(
+        language_profiles={"sql": make({"a": "SELECT", "b": "DELETE"})},
+        language_profile_versions={"sql": "1"},
+    )
+    ba = EngineConfig(
+        language_profiles={"sql": make({"b": "DELETE", "a": "SELECT"})},
+        language_profile_versions={"sql": "1"},
+    )
+    assert fp(ab) != fp(ba)

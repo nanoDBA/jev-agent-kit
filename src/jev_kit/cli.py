@@ -165,8 +165,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     try:
         args = parser.parse_args(args_list)
-    except _ArgumentError as exc:
-        return _fail_invocation(str(exc))
+    except _ArgumentError:
+        # The parser's message embeds the offending argument verbatim, which could be
+        # secret-shaped (e.g. an --AKIA... token); emit a fixed message instead (finding H21).
+        return _fail_invocation("invalid command-line arguments")
 
     if args.input is not None:
         try:

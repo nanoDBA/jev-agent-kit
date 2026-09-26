@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from jev_kit.egress import ContentKind, FieldSpec, scan_text
+from jev_kit.egress import EGRESS_TRANSFORM_DIGEST, ContentKind, FieldSpec, scan_text
 from jev_kit.errors import FailReason, ValidationError
 from jev_kit.fingerprint import parse_canonical
 from jev_kit.types import (
@@ -290,6 +290,9 @@ def egress_contract(qset: QuestionSet) -> dict[str, Any]:
     """The effective egress contract hashed into every question fingerprint (story 69)."""
     return {
         "policy_version": EGRESS_POLICY_VERSION,
+        # A digest of the actual transform/detector behavior, so a change to how state is reduced
+        # (e.g. command reduction) invalidates prior calibration automatically (finding H3).
+        "transform_digest": EGRESS_TRANSFORM_DIGEST,
         "schema": {
             name: {"kind": spec.kind.value, "params": dict(spec.params)}
             for name, spec in sorted(qset.schema.items())

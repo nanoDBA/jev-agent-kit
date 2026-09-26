@@ -197,7 +197,9 @@ def _profile_content_digest(profile: Callable[[str], str]) -> str:
         raise ValidationError(FailReason.CONFIG, "profile_content_unhashable")
     digest = hashlib.sha256()
     digest.update(code.co_code)
-    digest.update(_stable_repr(code.co_consts).encode("utf-8"))
+    # co_consts may hold compiler-interned membership sets (a `x in {...}` literal), where order
+    # is irrelevant, so unordered collections are allowed and sorted here.
+    digest.update(_stable_repr(code.co_consts, allow_unordered=True).encode("utf-8"))
     digest.update(repr(code.co_names).encode("utf-8"))
     captured: list[object] = []
     for cell in getattr(profile, "__closure__", None) or ():
@@ -253,7 +255,7 @@ def _global_dependencies_repr(profile: Callable[[str], str], code: Any) -> str:
 _STABLE_TYPES = (str, bytes, bool, int, float, type(None))
 
 
-def _stable_repr(value: object) -> str:
+def _stable_repr(value: object, *, allow_unordered: bool = False) -> str:
     # The type name is part of the representation so behaviorally distinct types that share a
     # value repr (a list ['r'] versus a tuple ('r',), which a type-sensitive normalizer treats
     # differently) do not collide (finding H3). bool is checked before int since it subclasses it.
@@ -262,17 +264,31 @@ def _stable_repr(value: object) -> str:
     if isinstance(value, _STABLE_TYPES):
         return f"{type(value).__name__}:{value!r}"
     if isinstance(value, (tuple, list)):
-        return f"{type(value).__name__}[" + ",".join(_stable_repr(v) for v in value) + "]"
+        return (
+            f"{type(value).__name__}["
+            + ",".join(_stable_repr(v, allow_unordered=allow_unordered) for v in value)
+            + "]"
+        )
     if isinstance(value, (frozenset, set)):
-        # A set/frozenset has no meaningful order, so sort for a stable representation.
+        # A set/frozenset has no defined iteration order, so a captured one whose order a
+        # normalizer observes (next(iter(...))) cannot be bound to a stable, behavior-preserving
+        # digest: it fails closed (finding H3). It is only allowed as an order-irrelevant
+        # membership constant in a function's co_consts (a compiled `x in {...}` literal), where
+        # sorting is a faithful representation.
+        if not allow_unordered:
+            raise ValidationError(FailReason.CONFIG, "profile_content_unhashable")
         items = sorted(value, key=repr)
-        return f"{type(value).__name__}[" + ",".join(_stable_repr(v) for v in items) + "]"
+        return f"{type(value).__name__}[" + ",".join(
+            _stable_repr(v, allow_unordered=allow_unordered) for v in items
+        ) + "]"
     if isinstance(value, dict):
         # A dict's INSERTION ORDER is behaviorally significant in Python (iteration reflects it,
         # so a normalizer reading next(iter(...)) depends on it); it must be preserved, not
         # sorted, or two dicts with the same entries in different orders would collide (H3).
         return "dict{" + ",".join(
-            f"{_stable_repr(k)}:{_stable_repr(v)}" for k, v in value.items()
+            f"{_stable_repr(k, allow_unordered=allow_unordered)}:"
+            f"{_stable_repr(v, allow_unordered=allow_unordered)}"
+            for k, v in value.items()
         ) + "}"
     # Anything else (a captured object, function, code, or a value whose repr embeds an address)
     # cannot be bound deterministically, so the profile fails closed (finding H3).

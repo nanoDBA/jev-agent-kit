@@ -209,6 +209,20 @@ def test_unknown_argument_is_config_error(
     assert captured.err != ""
 
 
+def test_unknown_argument_does_not_echo_secret_shaped_text_h21(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # H21: an unknown argument containing a secret-shaped token must not be echoed verbatim to
+    # stderr; a fixed invocation-error message is emitted instead.
+    secret = "--AKIAABCDEFGHIJKLMNOP"
+    exit_code = main([secret])
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert "AKIAABCDEFGHIJKLMNOP" not in captured.err
+    assert "AKIAABCDEFGHIJKLMNOP" not in captured.out
+    assert json.loads(captured.out) == _CONFIG_ENVELOPE
+
+
 def test_subprocess_stub_engine_yields_internal_envelope_and_exit_zero() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     src_dir = repo_root / "src"

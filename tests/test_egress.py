@@ -598,3 +598,12 @@ def test_private_key_and_xapikey_json_values_detected_h15() -> None:
     assert scan_text('{"Authorization":' + " " * 100 + '"Basic dTpw"}') is not None
 
 
+
+
+def test_numeric_and_escaped_credentials_detected_h15() -> None:
+    # Batch-9 H15: a numeric value under a strong-secret key (structural and JSON-text), and an
+    # escaped-quote JSON credential in free text, are all detected; placeholders stay clean.
+    assert scan_request(b'{"password":123456}', {"password": 123456}) is not None
+    assert scan_text('{"password":123456}') == "structured_credential"
+    assert scan_text(r'\"password\":\"hunter2\"') == "structured_credential"
+    assert scan_text('{"password":"<redacted>"}') is None

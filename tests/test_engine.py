@@ -793,3 +793,37 @@ def test_fingerprint_sensitive_to_captured_dict_order_h3() -> None:
         language_profile_versions={"sql": "1"},
     )
     assert fp(ab) != fp(ba)
+
+
+def test_captured_set_fails_closed_h3() -> None:
+    # Batch-9 H3: a captured set/frozenset has no defined iteration order, so a normalizer that
+    # observes it cannot be bound to a behavior-preserving digest and must fail closed.
+    from jev_kit.engine import EngineConfig, effective_contract
+    from jev_kit.errors import FailReason, ValidationError
+    from jev_kit.questionset import load_question_set
+
+    qset = load_question_set(question_set())
+
+    def make(rules: Any) -> Any:
+        def normalize(text: str) -> str:
+            return "SELECT" if next(iter(rules)) == 1 else "DELETE"
+        return normalize
+
+    cfg = EngineConfig(
+        language_profiles={"sql": make({1, 9})}, language_profile_versions={"sql": "1"}
+    )
+    with pytest.raises(ValidationError) as exc:
+        effective_contract(qset, cfg)
+    assert exc.value.reason is FailReason.CONFIG
+
+
+def test_egress_transform_change_invalidates_fingerprint_h3() -> None:
+    # Batch-9 H3: the fingerprint binds a digest of the actual egress transform/detector code, so
+    # any semantic change to how state is reduced changes the fingerprint and invalidates prior
+    # calibration. The contract exposes that digest.
+    from jev_kit.engine import EngineConfig, effective_contract
+    from jev_kit.questionset import load_question_set
+
+    qset = load_question_set(question_set())
+    contract = effective_contract(qset, EngineConfig())
+    assert isinstance(contract["transform_digest"], str) and len(contract["transform_digest"]) == 32

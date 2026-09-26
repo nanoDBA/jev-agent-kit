@@ -434,20 +434,34 @@ _STRONG_SECRET_NAMES = frozenset(
     }
 )
 
-# A structured (JSON-style) strong-secret key mapped to a string value, e.g. {"password":"x"} or
-# {"private_key":"..."} embedded in a free-text string that the structural pair scan cannot look
-# inside. Weak indicators (authorization, token) are NOT here: they still need a credential shape
-# and are handled by _scan_auth_pairs, so a benign {"authorization":"none"} is not flagged. The
-# value is captured so a documented redaction placeholder is not flagged.
+# A structured (JSON-style) strong-secret key mapped to a value, e.g. {"password":"x"},
+# {"private_key":"..."} or a NUMERIC {"password":123456}, embedded in a free-text string that the
+# structural pair scan cannot look inside. Weak indicators (authorization, token) are NOT here:
+# they still need a credential shape and are handled by _scan_auth_pairs, so a benign
+# {"authorization":"none"} is not flagged. Group 1 (a quoted string value) is checked against the
+# placeholder set; group 2 (a numeric or true/false literal) is always a leak.
 _JSON_SECRET_KV = re.compile(
     r'(?i)"(?:'
     + "|".join(re.escape(k) for k in sorted(_STRONG_SECRET_NAMES, key=len, reverse=True))
-    + r')"\s*:\s*"([^"]*)"'
+    + r')"\s*:\s*(?:"([^"]*)"|([0-9][0-9.eE+-]*|true|false))'
 )
 
-# A JSON \uXXXX unicode escape. A credential key/scheme can be obfuscated as escapes inside a
-# free-text string (e.g. "Authorization"); scanning a de-escaped copy catches it (H15).
-_UNICODE_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
+# JSON string escapes that can obfuscate an embedded credential in a free-text value: a
+# \uXXXX unicode escape (e.g. "Authorization") or an escaped quote (e.g. \"password\").
+# scan_text scans a de-escaped copy so these forms are still caught (finding H15).
+_JSON_ESCAPE = re.compile(r'\\(["\\/]|u[0-9a-fA-F]{4})')
+
+_JSON_ESCAPE_SIMPLE = {'"': '"', "\\": "\\", "/": "/"}
+
+
+def _deescape_json(text: str) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        body = match.group(1)
+        if body[0] == "u":
+            return chr(int(body[1:], 16))
+        return _JSON_ESCAPE_SIMPLE.get(body, body)
+
+    return _JSON_ESCAPE.sub(_replace, text)
 _PAN_CANDIDATE = re.compile(r"\b(?:\d[ -]?){13,19}\b")  # PCI DSS v4.0.1 3.3.1: Luhn-valid PANs
 
 # A whole value that is an HTTP auth scheme plus a single credential token, e.g. "Basic dTpw",
@@ -468,8 +482,8 @@ def scan_text(text: str) -> str | None:
     hit = _scan_text_once(text)
     if hit is not None:
         return hit
-    if "\\u" in text:
-        deescaped = _UNICODE_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), text)
+    if "\\" in text:
+        deescaped = _deescape_json(text)
         if deescaped != text:
             return _scan_text_once(deescaped)
     return None
@@ -482,7 +496,10 @@ def _scan_text_once(text: str) -> str | None:
     if _AUTH_SCHEME_VALUE.match(text.strip()):
         return "authorization_scheme_value"
     for match in _JSON_SECRET_KV.finditer(text):
-        if not _is_placeholder(match.group(1)):
+        string_value, literal_value = match.group(1), match.group(2)
+        if literal_value is not None:  # a numeric or true/false value is always a leak
+            return "structured_credential"
+        if string_value is not None and not _is_placeholder(string_value):
             return "structured_credential"
     for match in _CONNSTR.finditer(text):
         value = next((g for g in match.groups() if g is not None), "")
@@ -550,18 +567,33 @@ def _looks_like_credential(value: str) -> bool:
     return has_digit or has_mixed_case or has_symbol
 
 
+def _is_nonempty_secret_scalar(value: Any) -> bool:
+    """True for a non-empty, non-placeholder scalar value under a strong-secret key (H15).
+
+    Covers strings and numbers (bool included): a numeric password is still a secret. None,
+    empty/whitespace strings and documented redaction placeholders are not treated as leaks.
+    """
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, (int, float)):
+        return True
+    if isinstance(value, str):
+        return value.strip() != "" and not _is_placeholder(value)
+    return False
+
+
 def _scan_auth_pairs(obj: Any) -> str | None:
     """Find a secret adjacent to an auth indicator key (findings GATE-04, H15)."""
     if isinstance(obj, dict):
         # A value directly under a strong-secret key is blocked whatever its shape (H15): a
-        # short or lowercase password would pass the credential-shape heuristic otherwise.
+        # short or lowercase password, or a NUMERIC one (e.g. {"password": 123456}), would pass
+        # the string-only / credential-shape heuristics otherwise. Any non-empty, non-placeholder
+        # scalar value counts.
         for key, value in obj.items():
             if (
                 isinstance(key, str)
                 and key.strip().lower() in _STRONG_SECRET_NAMES
-                and isinstance(value, str)
-                and value.strip() != ""
-                and not _is_placeholder(value)
+                and _is_nonempty_secret_scalar(value)
             ):
                 return "auth_credential"
         has_indicator_key = any(
@@ -604,3 +636,41 @@ def scan_request(serialized: bytes, decoded: Any) -> str | None:
         if hit is not None:
             return hit
     return _scan_auth_pairs(decoded)
+
+
+# --------------------------------------------------------------------------- policy identity
+
+
+def _compute_transform_digest() -> str:
+    """A digest of the actual egress transform and detector behavior (finding H3, story 69).
+
+    The fingerprint that thresholds calibrate against must change whenever the transform or
+    detection logic changes, or a registry calibrated under one transform would be treated as
+    calibrated under a different one (a change from ``tool --flag`` to ``tool`` reuses stale
+    calibration otherwise). We hash the bytecode and constants of every function defined in this
+    module, every module-level compiled pattern, the string-set constants, and the detector
+    table, so any semantic change here invalidates prior calibration automatically rather than
+    relying on a manually bumped version number.
+    """
+    import types
+
+    digest = hashlib.sha256()
+    for name in sorted(globals()):
+        obj = globals()[name]
+        if isinstance(obj, types.FunctionType) and obj.__module__ == __name__:
+            digest.update(name.encode("utf-8"))
+            digest.update(obj.__code__.co_code)
+            digest.update(repr(obj.__code__.co_consts).encode("utf-8"))
+        elif isinstance(obj, re.Pattern):
+            digest.update(name.encode("utf-8"))
+            digest.update(obj.pattern.encode("utf-8"))
+        elif isinstance(obj, frozenset) and all(isinstance(x, str) for x in obj):
+            digest.update(name.encode("utf-8"))
+            digest.update(repr(sorted(obj)).encode("utf-8"))
+    for rule_id, pattern in _DETECTORS:
+        digest.update(rule_id.encode("utf-8"))
+        digest.update(pattern.pattern.encode("utf-8"))
+    return digest.hexdigest()[:32]
+
+
+EGRESS_TRANSFORM_DIGEST = _compute_transform_digest()

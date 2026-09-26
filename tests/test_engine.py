@@ -9,7 +9,7 @@ fake HTTP server, since accept requires a non-mock transport.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, ClassVar
 
 from jev_kit.engine import EngineConfig, decide
 from jev_kit.errors import FailReason
@@ -357,3 +357,78 @@ def test_run_json_decide_batch_op(tmp_path: Any) -> None:
            "requests": [request("shadow"), request("shadow")]}
     resp = run_json(req, transport=transport)
     assert resp["status"] == "ok" and len(resp["results"]) == 2
+
+
+# --- GATE round: further review findings ------------------------------------
+
+
+def test_relabeled_mock_still_cannot_accept(tmp_path: Any) -> None:
+    # GATE-01: an instance is_mock=False must not reach accept; provenance is read from type.
+    from jev_kit.engine import effective_contract
+    from jev_kit.fingerprint import question_fingerprint
+    from jev_kit.questionset import load_question_set
+
+    qs = load_question_set(question_set())
+    fp = question_fingerprint(
+        instructions="Is the command destructive?", criteria=None, question_type="noul",
+        option_or_level_set=[], model="jev-1.13.0",
+        egress_contract=effective_contract(qs, EngineConfig()),
+    )
+    reg = tmp_path / "r.json"
+    reg.write_text(json.dumps({"schema_version": 1, "entries": {fp: {
+        "status": "calibrated", "escalation_target": "gpt-6", "evidence_ref": "e",
+        "type": "noul", "threshold": {"yes_bound": 0.9, "no_bound": 0.1}, "date": "2026-09-25"}}}),
+        encoding="utf-8")
+    transport = reply(0.02)
+    transport.is_mock = False  # type: ignore[misc]  # runtime attempt to lie about provenance
+    cfg = EngineConfig(
+        hmac_key=HMAC_KEY, writer=ReceiptWriter(directory=tmp_path), rate_budget=RateBudget(),
+        registry_path=str(reg),
+        attestation={"inventory": True, "inventory_date": "2026-09-25", "dpa": True},
+    )
+    rec = only(decide(request("enforce"), transport=transport, config=cfg))
+    assert rec["route"] == "ask"  # still treated as a mock; cannot accept
+    assert rec["is_mock"] is True
+
+
+def test_process_wide_cap_across_sequential_calls(tmp_path: Any, monkeypatch: Any) -> None:
+    # GATE-05: the default budget is shared across calls, not recreated per call.
+    from jev_kit import engine
+    from jev_kit.ratebudget import RateBudget as RB
+
+    monkeypatch.setattr(engine, "_DEFAULT_BUDGET", RB(max_calls=1))
+    writer = ReceiptWriter(directory=tmp_path)
+    # No rate_budget in config -> uses the shared default.
+    cfg = EngineConfig(hmac_key=HMAC_KEY, writer=writer)
+    r1 = only(decide(request("shadow"), transport=reply(0.1), config=cfg))
+    r2 = only(decide(request("shadow"), transport=reply(0.1), config=cfg))
+    # First call consumes the one permit; the second is refused by the shared cap.
+    assert r1["fail_reason"] != "rate_budget"
+    assert r2["fail_reason"] == "rate_budget"
+
+
+def test_sent_digest_absent_when_nothing_sent(tmp_path: Any) -> None:
+    # GATE-06: a zero-cap budget means no send, so the receipt has no sent_digest.
+    from jev_kit.ratebudget import RateBudget as RB
+
+    writer = ReceiptWriter(directory=tmp_path)
+    cfg = EngineConfig(hmac_key=HMAC_KEY, writer=writer, rate_budget=RB(max_calls=0))
+    decide(request("shadow"), transport=reply(0.1), config=cfg)
+    line = json.loads(next(tmp_path.glob("*.jsonl")).read_text(encoding="utf-8").splitlines()[0])
+    assert line["sent_digest"] is None
+
+
+def test_transport_raising_yields_records(tmp_path: Any) -> None:
+    # GATE-08: a transport that raises still produces per-question records, not an empty envelope.
+    from jev_kit.deadline import Deadline
+    from jev_kit.transport import TransportResult
+
+    class _Raising:
+        is_mock: ClassVar[bool] = True
+
+        def send(self, body: bytes, deadline: Deadline) -> TransportResult:
+            raise RuntimeError("boom")
+
+    resp = decide(request("enforce"), transport=_Raising(), config=config(tmp_path))
+    assert resp["status"] == "ok"
+    assert resp["records"][0]["route"] == "ask"

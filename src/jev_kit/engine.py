@@ -87,6 +87,14 @@ from jev_kit.validation import validate_answer_set
 
 SCHEMA_VERSION = 1
 _RETRYABLE = {FailReason.RATE_LIMIT, FailReason.OVERLOADED, FailReason.SERVER}
+_DEFAULT_BUDGET: RateBudget | None = None
+
+
+def _default_budget() -> RateBudget:
+    global _DEFAULT_BUDGET
+    if _DEFAULT_BUDGET is None:
+        _DEFAULT_BUDGET = RateBudget()
+    return _DEFAULT_BUDGET
 
 
 @dataclass
@@ -167,20 +175,24 @@ def _send_with_retries(
     budget: RateBudget,
     est_tokens: int,
     max_retries: int,
-) -> TransportResponse | TransportFailure:
+) -> tuple[TransportResponse | TransportFailure, int]:
+    """Return the transport result and the number of actual send attempts made, so the caller
+    can tell a genuine send from a request that never left (findings GATE-06)."""
     attempt = 0
+    sends = 0
     last: TransportFailure = TransportFailure(FailReason.TRANSPORT, "no_attempt")
     while attempt <= max_retries:
         if deadline.remaining_for_work() <= 0:
-            return TransportFailure(FailReason.TIMEOUT, "deadline")
+            return TransportFailure(FailReason.TIMEOUT, "deadline"), sends
         if not budget.reserve(est_tokens):
-            return TransportFailure(FailReason.RATE_BUDGET, "budget")
+            return TransportFailure(FailReason.RATE_BUDGET, "budget"), sends
+        sends += 1
         result = transport.send(body, deadline)
         if isinstance(result, TransportResponse):
-            return result
+            return result, sends
         last = result
         if result.reason not in _RETRYABLE or attempt == max_retries:
-            return result  # do not sleep after the last permitted attempt (finding C15)
+            return result, sends  # do not sleep after the last permitted attempt (finding C15)
         attempt += 1
         # Honor the server's requested delay when present; otherwise exponential backoff with
         # jitter. Never wait past the remaining budget (finding C15).
@@ -191,9 +203,9 @@ def _send_with_retries(
             wait = 0.5 * (2 ** (attempt - 1)) + random.uniform(0, 0.25)
         remaining = deadline.remaining_for_work()
         if wait > remaining:
-            return TransportFailure(FailReason.TIMEOUT, "retry_after_exceeds_deadline")
+            return TransportFailure(FailReason.TIMEOUT, "retry_after_exceeds_deadline"), sends
         time.sleep(wait)
-    return last
+    return last, sends
 
 
 def _candidate_for(
@@ -292,6 +304,9 @@ def _threshold_repr(entry: RegistryEntry) -> dict[str, Any] | None:
 def _decide(
     request: Mapping[str, Any], transport: Transport, config: EngineConfig
 ) -> dict[str, Any]:
+    # Provenance is a property of the transport TYPE; an instance attribute cannot override it
+    # to claim non-mock and reach accept (finding GATE-01).
+    is_mock = type(transport).is_mock
     if not isinstance(request, Mapping) or request.get("schema_version") != 1:
         return _error_envelope(FailReason.CONFIG)
     mode_raw = request.get("mode", Mode.SHADOW.value)
@@ -321,7 +336,9 @@ def _decide(
             return _error_envelope(FailReason.CONFIG)
 
     deadline = Deadline(config.deadline_seconds, reserve_seconds=config.receipt_reserve)
-    budget = config.rate_budget or RateBudget()
+    # A process-wide default budget so the call cap and rate limits hold across sequential
+    # calls, not only within one batch (finding GATE-05).
+    budget = config.rate_budget or _default_budget()
     writer = config.writer or get_writer()
     call_id = new_action_id()
     set_digest = question_set_digest(qset.raw)
@@ -334,8 +351,10 @@ def _decide(
     answers: dict[str, Any] = {}
     served_model: str | None = None
     sent_digest: str | None = None
+    server_request_id: str | None = None
     est_tokens: int | None = None
     reported_tokens: int | None = None
+    transforms = {name: spec.kind.value for name, spec in qset.schema.items()}
 
     if qset.model in ("jev-latest", "jev-preview"):
         whole_fail = FailReason.CONFIG  # aliases are refused (spec story 28)
@@ -389,7 +408,7 @@ def _decide(
                 hit = scan_request(serialized, wire)
                 if hit is not None:
                     whole_fail = FailReason.EGRESS_BLOCKED
-                elif not transport.is_mock:
+                elif not is_mock:
                     # Live send: enforce the inventory/DPA attestation (finding C03).
                     personal = personal_kinds_present(qset.schema)
                     attest = config.attestation or load_attestation(config.attestation_path)
@@ -402,20 +421,25 @@ def _decide(
             whole_fail = FailReason.INTERNAL
 
     if whole_fail is None:
-        result = _send_with_retries(
-            transport, serialized, deadline, budget, est_tokens or 1, config.max_retries
-        )
-        sent_digest = hashlib.sha256(serialized).hexdigest()  # something was sent this attempt
-        if isinstance(result, TransportFailure):
-            whole_fail = result.reason
-        elif not 200 <= result.status < 300:
-            # A non-2xx raw response is a failure, never a body to validate (finding C09).
-            whole_fail = fail_reason_for_status(result.status)
-        elif deadline.expired():
-            # Evidence that arrived after the deadline is discarded (finding C02).
-            whole_fail = FailReason.TIMEOUT
-        else:
-            try:
+        try:
+            result, sends = _send_with_retries(
+                transport, serialized, deadline, budget, est_tokens or 1, config.max_retries
+            )
+            if sends > 0:
+                # Only record a sent digest when a send actually left (finding GATE-06).
+                sent_digest = hashlib.sha256(serialized).hexdigest()
+            if isinstance(result, TransportFailure):
+                whole_fail = result.reason
+            elif not 200 <= result.status < 300:
+                # A non-2xx raw response is a failure, never a body to validate (finding C09).
+                whole_fail = fail_reason_for_status(result.status)
+            elif deadline.expired():
+                # Evidence that arrived after the deadline is discarded (finding C02).
+                whole_fail = FailReason.TIMEOUT
+            else:
+                server_request_id = validate_metadata_id(
+                    result.headers.get("x-typesafe-request-id", ""), "server_request_id"
+                )
                 body = _parse_response_body(result.body)
                 served_model = body.get("model") if isinstance(body, dict) else None
                 usage = body.get("usage") if isinstance(body, dict) else None
@@ -425,8 +449,11 @@ def _decide(
                     whole_fail = FailReason.MODEL_MISMATCH
                 else:
                     answers = validate_answer_set(qset.questions, body.get("answers"))
-            except ValidationError as exc:
-                whole_fail = exc.reason
+        except ValidationError as exc:
+            whole_fail = exc.reason
+        except Exception:
+            # A transport (or any) exception still yields per-question records (finding GATE-08).
+            whole_fail = FailReason.INTERNAL
 
     # Route every question.
     records: list[dict[str, Any]] = []
@@ -458,7 +485,7 @@ def _decide(
             candidate=candidate,
             failed=failed,
             fail_reason=reason,
-            is_mock=transport.is_mock,
+            is_mock=is_mock,
         )
         records.append(
             _record(
@@ -470,7 +497,7 @@ def _decide(
                 would=resolution.would_route,
                 reason=resolution.reason,
                 mode=mode,
-                is_mock=transport.is_mock,
+                is_mock=is_mock,
                 candidate=candidate,
                 fingerprint=fp,
                 served_model=served_model,
@@ -480,7 +507,7 @@ def _decide(
 
     _write_receipts(
         writer, records, call_id, set_digest, qset, served_model, sent_digest, action_id,
-        est_tokens, reported_tokens,
+        est_tokens, reported_tokens, server_request_id, transforms,
     )
     return {"schema_version": SCHEMA_VERSION, "status": "ok", "records": records}
 
@@ -523,6 +550,8 @@ def _write_receipts(
     action_id: str | None,
     est_tokens: int | None,
     reported_tokens: int | None,
+    server_request_id: str | None,
+    transforms: dict[str, str],
 ) -> None:
     lines = [
         {
@@ -541,6 +570,11 @@ def _write_receipts(
             "sent_digest": sent_digest,
             "estimated_tokens": est_tokens,
             "reported_tokens": reported_tokens,
+            "server_request_id": server_request_id,
+            "confidence": rec["confidence"],
+            "margin": rec["margin"],
+            "egress_transforms": transforms,
+            "egress_transform_count": len(transforms),
             "distribution": rec["distribution"],
             "label": rec["label"],
             "value": rec["value"],

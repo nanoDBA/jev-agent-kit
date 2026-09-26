@@ -194,6 +194,68 @@ def test_mask_contacts_masks_ipv6() -> None:
     assert "<contact>" in out["l"]
 
 
+# --- GATE-02: _reduce_command must not leak env, paths, or short-flag values -----
+
+
+def test_reduce_command_drops_leading_env_assignment() -> None:
+    schema = {"c": FieldSpec(ContentKind.COMMAND)}
+    out = transform_state({"c": "REVIEW_TOKEN=PRIVATE_VALUE tool"}, schema, ctx())
+    assert "PRIVATE_VALUE" not in out["c"]
+    assert "REVIEW_TOKEN" not in out["c"]
+    assert out["c"] == "tool"
+
+
+def test_reduce_command_strips_leading_path() -> None:
+    schema = {"c": FieldSpec(ContentKind.COMMAND)}
+    out = transform_state({"c": "/home/alice/bin/tool --flag"}, schema, ctx())
+    assert "/home/alice/bin" not in out["c"]
+    assert "alice" not in out["c"]
+    assert out["c"] == "tool --flag"
+
+
+def test_reduce_command_strips_short_flag_attached_value() -> None:
+    schema = {"c": FieldSpec(ContentKind.COMMAND)}
+    out = transform_state({"c": "tool -pPRIVATE_VALUE"}, schema, ctx())
+    assert "PRIVATE_VALUE" not in out["c"]
+    assert out["c"] == "tool -p"
+
+
+def test_reduce_command_combined_leak_vectors() -> None:
+    schema = {"c": FieldSpec(ContentKind.COMMAND)}
+    out = transform_state(
+        {"c": "REVIEW_TOKEN=PRIVATE_VALUE /home/alice/bin/tool -pPRIVATE_VALUE extra"},
+        schema,
+        ctx(),
+    )
+    assert "PRIVATE_VALUE" not in out["c"]
+    assert "/home/alice/bin" not in out["c"]
+    assert "alice" not in out["c"]
+    assert out["c"] == "tool -p"
+
+
+# --- GATE-03: bare identifiers and compressed IPv6 must not leak ----------------
+
+
+def test_reduce_log_masks_bare_identifier_without_key() -> None:
+    schema = {"l": FieldSpec(ContentKind.LOG)}
+    out = transform_state({"l": "connecting to internal-db failed"}, schema, ctx())
+    assert "internal-db" not in out["l"]
+
+
+def test_mask_contacts_masks_compressed_ipv6() -> None:
+    schema = {"l": FieldSpec(ContentKind.LOG)}
+    out = transform_state({"l": "connect to 2001:db8::1234 now"}, schema, ctx())
+    assert "2001:db8::1234" not in out["l"]
+    assert "<contact>" in out["l"]
+
+
+def test_mask_contacts_masks_loopback_ipv6() -> None:
+    schema = {"l": FieldSpec(ContentKind.LOG)}
+    out = transform_state({"l": "bound to ::1 on startup"}, schema, ctx())
+    assert "::1" not in out["l"]
+    assert "<contact>" in out["l"]
+
+
 def test_transcript_blocked_when_disabled() -> None:
     schema = {"t": FieldSpec(ContentKind.TRANSCRIPT, {"source_type": "chat"})}
     with pytest.raises(ValidationError) as exc:
@@ -348,3 +410,37 @@ def test_card_track_data_detected() -> None:
 def test_card_track_data_near_miss_passes() -> None:
     # Too few PAN digits to be track data, and no other rule should fire either.
     assert scan_text("%B123^SHORT^") is None
+
+
+# --- GATE-04: auth credential split across a JSON key and value -------------
+
+
+def test_bearer_value_detected_without_authorization_prefix() -> None:
+    body = json.dumps({"h": "Authorization", "v": "Bearer aZ9xQ7mK2pL8vN3tR5wJ1cH6"}).encode()
+    assert scan_request(body, json.loads(body)) == "authorization_header"
+
+
+def test_basic_value_detected_without_authorization_prefix() -> None:
+    body = json.dumps({"authorization": "Basic aGVsbG8td29ybGQtc2VjcmV0"}).encode()
+    assert scan_request(body, json.loads(body)) == "authorization_header"
+
+
+def test_bearer_word_alone_with_no_token_stays_clean() -> None:
+    assert scan_text("Bearer") is None
+    assert scan_text("please present your Bearer token at the gate") is None
+
+
+def test_high_entropy_token_next_to_auth_indicator_key_detected() -> None:
+    body = json.dumps({"authorization": "aZ9xQ7mK2pL8vN3tR5wJ1cH6"}).encode()
+    assert scan_request(body, json.loads(body)) == "auth_credential"
+
+
+def test_high_entropy_token_split_across_header_name_value_keys_detected() -> None:
+    body = json.dumps({"h": "Authorization", "v": "aZ9xQ7mK2pL8vN3tR5wJ1cH6"}).encode()
+    assert scan_request(body, json.loads(body)) == "auth_credential"
+
+
+def test_auth_indicator_with_short_or_placeholder_value_stays_clean() -> None:
+    for value in ("none", "***", "<redacted>", "abc"):
+        body = json.dumps({"authorization": value}).encode()
+        assert scan_request(body, json.loads(body)) is None

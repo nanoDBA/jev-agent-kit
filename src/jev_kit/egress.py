@@ -96,8 +96,22 @@ _CONTACT_PATTERNS = [
     re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+"),  # email
     re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b"),  # IPv4
     re.compile(r"\+?\d[\d ()-]{7,}\d"),  # phone
-    # IPv6: groups of hex separated by ':' with at least two colons (finding C05).
-    re.compile(r"\b(?:[0-9A-Fa-f]{1,4}:){2,7}[0-9A-Fa-f]{1,4}\b"),
+    # IPv6, full and "::"-compressed forms alike (finding C05, extended by GATE-03 to cover
+    # compressed addresses such as "2001:db8::1234" and "::1", which the previous pattern
+    # missed because it required every group to be written out).
+    re.compile(
+        r"(?<![\w:])(?:"
+        r"(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}"
+        r"|(?:[0-9A-Fa-f]{1,4}:){1,7}:"
+        r"|(?:[0-9A-Fa-f]{1,4}:){1,6}:[0-9A-Fa-f]{1,4}"
+        r"|(?:[0-9A-Fa-f]{1,4}:){1,5}(?::[0-9A-Fa-f]{1,4}){1,2}"
+        r"|(?:[0-9A-Fa-f]{1,4}:){1,4}(?::[0-9A-Fa-f]{1,4}){1,3}"
+        r"|(?:[0-9A-Fa-f]{1,4}:){1,3}(?::[0-9A-Fa-f]{1,4}){1,4}"
+        r"|(?:[0-9A-Fa-f]{1,4}:){1,2}(?::[0-9A-Fa-f]{1,4}){1,5}"
+        r"|[0-9A-Fa-f]{1,4}:(?:(?::[0-9A-Fa-f]{1,4}){1,6})"
+        r"|:(?:(?::[0-9A-Fa-f]{1,4}){1,7}|:)"
+        r")(?![\w:])"
+    ),
 ]
 
 
@@ -108,26 +122,50 @@ def _mask_contacts(text: str) -> str:
 
 
 # Unquoted key=value pairs, e.g. "tenant=acme host=db01" (finding C05). Quoted spans are
-# already reduced to <v> above, so this only needs to catch what quoting missed.
+# already reduced to <v> above, so this only needs to catch what quoting missed. The value
+# side is an identifier token, never a literal 'v', so it is always masked (GATE-03).
 _KV_PATTERN = re.compile(r"(?<![\w.-])([A-Za-z_][\w.-]*)=(\S+)")
+
+# A bare identifier with no key= prefix and no quoting, e.g. the hostname in "connect to
+# internal-db failed" (finding GATE-03). Logs are reduced to codes and templates, so any
+# hyphen-joined slug of two or more alphanumeric segments is masked even when nothing marks
+# it as a value.
+_BARE_IDENTIFIER = re.compile(r"\b[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+\b")
 
 
 def _reduce_log(text: str) -> str:
     text = re.sub(r"'[^']*'", "<v>", text)
     text = re.sub(r'"[^"]*"', "<v>", text)
     text = _KV_PATTERN.sub(r"\1=<v>", text)
+    text = _BARE_IDENTIFIER.sub("<v>", text)
     return _mask_contacts(text)
 
 
+# A leading environment assignment before the command word, e.g. "REVIEW_TOKEN=PRIVATE tool"
+# (finding GATE-02). One or more of these are dropped in full, name and value alike.
+_ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
 def _reduce_command(text: str) -> str:
-    # Keep the command word and bare flag names only. A value attached with '=' is stripped
-    # (finding C05: "--tenant=PRIVATE" becomes "--tenant"); non-flag argument tokens are
-    # dropped entirely rather than kept as-is.
+    # Keep the command NAME and bare flag names only; nothing else survives (finding GATE-02):
+    # - leading "NAME=VALUE" environment assignments are dropped entirely, not just their value
+    # - the command word itself is reduced to its basename, dropping any directory path
+    # - a long flag ("--tenant=PRIVATE") keeps only its name, the '=value' is stripped
+    # - a short flag with an attached value ("-pPRIVATE") keeps only the flag letter
+    # - every positional argument token is dropped entirely rather than kept as-is
     tokens = text.split()
-    kept = [tokens[0]] if tokens else []
-    for tok in tokens[1:]:
-        if tok.startswith("-"):
+    idx = 0
+    while idx < len(tokens) and _ENV_ASSIGNMENT.match(tokens[idx]):
+        idx += 1
+    if idx >= len(tokens):
+        return ""
+    name = tokens[idx].replace("\\", "/").rsplit("/", 1)[-1]
+    kept = [name]
+    for tok in tokens[idx + 1 :]:
+        if tok.startswith("--"):
             kept.append(tok.split("=", 1)[0])
+        elif tok.startswith("-") and len(tok) > 1:
+            kept.append(tok[:2])
     return " ".join(kept)
 
 
@@ -285,6 +323,16 @@ _DETECTORS: list[tuple[str, re.Pattern[str]]] = [
     # Purview / gitleaks: bearer and basic HTTP Authorization headers (finding C06 extends
     # this from bearer-only to also match Basic).
     ("authorization_header", re.compile(r"(?i)authorization\s*[:=]\s*(?:bearer|basic)\s+\S+")),
+    # GATE-04: the same bearer/basic credential shape, but without requiring the literal word
+    # "authorization" nearby. JSON serialization puts a quote between the key and its value
+    # (e.g. {"authorization": "Basic <b64>"}), which breaks the rule above; scanning each
+    # decoded string on its own (scan_request already does this) catches the value directly.
+    # The token itself must look substantial (16+ credential-shaped characters) so an ordinary
+    # sentence like "Bearer of bad news" or "present your Bearer token" is not flagged.
+    (
+        "authorization_header",
+        re.compile(r"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9\-_.+/]{16,}=*\b"),
+    ),
     ("us_ssn", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),  # NIST SP 800-122 2.1
     # Credentialed connection URIs, e.g. postgres://user:pass@host (finding C06; Purview
     # "connection string" family extended to URI-style DSNs for postgres/mysql/mongodb).
@@ -342,11 +390,79 @@ def _walk_strings(obj: Any) -> list[str]:
     return found
 
 
+# GATE-04: a credential split across a JSON key and value evades every regex above, because no
+# single string contains both the auth indicator and the token. These names mark either side of
+# that split: a dict key equal to one of them, or a sibling string value equal to one of them
+# (e.g. {"h": "Authorization", "v": "<token>"}, where "h"'s value names the header generically).
+_AUTH_INDICATOR_NAMES = frozenset(
+    {
+        "authorization",
+        "auth",
+        "bearer",
+        "basic",
+        "token",
+        "access_token",
+        "id_token",
+        "refresh_token",
+        "api_key",
+        "apikey",
+        "x-api-key",
+        "credential",
+        "credentials",
+    }
+)
+
+# A plausible opaque credential: long enough, base64/JWT/URL-safe charset, and not all-lowercase
+# alphabetic (so an ordinary word or slug used as a field value does not, by shape alone, read
+# as a token) unless it carries a separator character typical of encoded tokens.
+_TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9._+/-]{16,}=*$")
+
+
+def _looks_like_credential(value: str) -> bool:
+    if value.strip().lower() in _AUTH_INDICATOR_NAMES or _is_placeholder(value):
+        return False
+    if not _TOKEN_SHAPE.match(value):
+        return False
+    has_digit = any(ch.isdigit() for ch in value)
+    has_mixed_case = any(ch.isupper() for ch in value) and any(ch.islower() for ch in value)
+    has_symbol = any(ch in "._+/-" for ch in value)
+    return has_digit or has_mixed_case or has_symbol
+
+
+def _scan_auth_pairs(obj: Any) -> str | None:
+    """Find a high-entropy token adjacent to an auth indicator key (finding GATE-04)."""
+    if isinstance(obj, dict):
+        has_indicator_key = any(
+            isinstance(key, str) and key.strip().lower() in _AUTH_INDICATOR_NAMES
+            for key in obj
+        )
+        has_indicator_value = any(
+            isinstance(v, str) and v.strip().lower() in _AUTH_INDICATOR_NAMES
+            for v in obj.values()
+        )
+        if has_indicator_key or has_indicator_value:
+            for value in obj.values():
+                if isinstance(value, str) and _looks_like_credential(value):
+                    return "auth_credential"
+        for value in obj.values():
+            hit = _scan_auth_pairs(value)
+            if hit is not None:
+                return hit
+    elif isinstance(obj, list):
+        for item in obj:
+            hit = _scan_auth_pairs(item)
+            if hit is not None:
+                return hit
+    return None
+
+
 def scan_request(serialized: bytes, decoded: Any) -> str | None:
     """Scan the exact serialized bytes and every decoded key and string value.
 
     Scanning the raw text catches secrets that JSON escaping split across lines; scanning
-    decoded values catches secrets that escaping would otherwise obscure.
+    decoded values catches secrets that escaping would otherwise obscure. A final structural
+    pass catches a credential split across a JSON key and its value, which no string-only scan
+    can see (finding GATE-04).
     """
     text_hit = scan_text(serialized.decode("utf-8", errors="replace"))
     if text_hit is not None:
@@ -355,4 +471,4 @@ def scan_request(serialized: bytes, decoded: Any) -> str | None:
         hit = scan_text(value)
         if hit is not None:
             return hit
-    return None
+    return _scan_auth_pairs(decoded)

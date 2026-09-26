@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -179,21 +180,55 @@ def _profile_content_digest(profile: Callable[[str], str]) -> str:
     """A digest of a language profile's actual transformation rules, so two profiles that behave
     differently never share a fingerprint even under the same version tag (finding H3).
 
-    For a Python callable this hashes its code object (bytecode plus constants and referenced
-    names), which captures a rules change that a manually bumped version tag might miss. A
-    callable with no inspectable code (an opaque C or builtin callable) has no content we can
-    bind, so it fails closed rather than pretend to have a stable identity. A file-backed
-    profile that reads external rule artifacts must additionally fold those files' digests in;
-    that is a separate, later capability tracked with the profile registry work.
+    For a plain Python function this hashes its code object (bytecode, constants, referenced
+    names) AND its captured behavior dependencies: the values in its closure cells and its
+    argument defaults. Two closures from one factory that captured different rules (for example
+    ``SELECT ?`` versus ``DELETE ?``) therefore get different digests, closing the reported gap.
+
+    A dependency we cannot bind to a stable digest fails closed:
+    - a callable with no inspectable code (an opaque C/builtin callable, or a callable object);
+    - a closure cell or default whose value is not a bounded, deterministically representable
+      primitive (a captured object, function, or anything whose ``repr`` embeds an address).
+    Global mutable state a function reads by name is not fully bound here; a file-backed profile
+    that reads external rule artifacts must fold those files' digests in, tracked as later work.
     """
     code = getattr(profile, "__code__", None)
     if code is None:
         raise ValidationError(FailReason.CONFIG, "profile_content_unhashable")
     digest = hashlib.sha256()
     digest.update(code.co_code)
-    digest.update(repr(code.co_consts).encode("utf-8"))
+    digest.update(_stable_repr(code.co_consts).encode("utf-8"))
     digest.update(repr(code.co_names).encode("utf-8"))
+    captured: list[object] = []
+    for cell in getattr(profile, "__closure__", None) or ():
+        try:
+            captured.append(cell.cell_contents)
+        except ValueError:  # an empty cell (recursive/forward reference)
+            raise ValidationError(FailReason.CONFIG, "profile_content_unhashable") from None
+    captured.extend(getattr(profile, "__defaults__", None) or ())
+    captured.extend((getattr(profile, "__kwdefaults__", None) or {}).values())
+    digest.update(_stable_repr(tuple(captured)).encode("utf-8"))
     return digest.hexdigest()[:32]
+
+
+# Value types whose repr is stable across runs (no embedded object address) and captures the
+# whole value, so binding them into a profile's identity is deterministic (finding H3).
+_STABLE_TYPES = (str, bytes, bool, int, float, type(None))
+
+
+def _stable_repr(value: object) -> str:
+    if isinstance(value, _STABLE_TYPES):
+        return repr(value)
+    if isinstance(value, (tuple, list, frozenset, set)):
+        items = sorted(value, key=repr) if isinstance(value, (frozenset, set)) else value
+        return "[" + ",".join(_stable_repr(item) for item in items) + "]"
+    if isinstance(value, dict):
+        return "{" + ",".join(
+            f"{_stable_repr(k)}:{_stable_repr(v)}" for k, v in sorted(value.items(), key=repr)
+        ) + "}"
+    # Anything else (a captured object, function, code, or a value whose repr embeds an address)
+    # cannot be bound deterministically, so the profile fails closed (finding H3).
+    raise ValidationError(FailReason.CONFIG, "profile_content_unhashable")
 
 
 def _error_envelope(reason: FailReason) -> dict[str, Any]:
@@ -386,10 +421,9 @@ def _decide(
     is_mock = type(transport).is_mock
     if not isinstance(request, Mapping):
         return _error_envelope(FailReason.CONFIG)
-    # schema_version must be exactly the integer 1. A bare `!= 1` would accept True, because
-    # bool is an int subclass and True == 1 in Python (finding H18); reject bool explicitly.
-    schema_version = request.get("schema_version")
-    if isinstance(schema_version, bool) or schema_version != 1:
+    # schema_version must be exactly the integer 1. A bare `!= 1` would accept True and 1.0,
+    # because True == 1 and 1.0 == 1 in Python (finding H18); require the int type exactly.
+    if not _is_schema_version_one(request.get("schema_version")):
         return _error_envelope(FailReason.CONFIG)
     # Reject any field the request contract does not define, so a typo or an injected field
     # cannot ride along unnoticed into a call that then accepts (finding H18).
@@ -442,8 +476,11 @@ def _decide(
     reported_tokens: int | None = None
     transforms = {name: spec.kind.value for name, spec in qset.schema.items()}
 
-    if qset.model in ("jev-latest", "jev-preview"):
-        whole_fail = FailReason.CONFIG  # aliases are refused (spec story 28)
+    if not _PINNED_MODEL_RE.match(qset.model):
+        # A pinned, immutable, fully versioned model id is required. This refuses the moving
+        # aliases jev-latest/jev-preview AND a bare or partially versioned id like "jev" or
+        # "jev-1" that could resolve to different models over time (finding H22, spec story 28).
+        whole_fail = FailReason.CONFIG
 
     registry: dict[str, RegistryEntry] = {}
     if whole_fail is None:
@@ -627,7 +664,7 @@ def _decide(
                 is_gate = rec["consequence"] == ConsequenceClass.GATE.value
                 rec["route"] = Route.ASK.value if is_gate else Route.NO_ADVICE.value
                 rec["fail_reason"] = FailReason.TIMEOUT.value
-                writer.append_correction(
+                corrected = writer.append_correction(
                     {
                         "kind": "route_correction",
                         "schema_version": RECEIPT_SCHEMA_VERSION,
@@ -639,6 +676,11 @@ def _decide(
                         "reason_detail": "deadline_expired_during_receipt_write",
                     }
                 )
+                if not corrected:
+                    # The correction could not be persisted, so the durable record still shows
+                    # the original accept while we return a downgraded route. Report the receipt
+                    # as not written rather than claim a truthful record exists (finding H8).
+                    rec["receipt_written"] = False
     return {"schema_version": SCHEMA_VERSION, "status": "ok", "records": records}
 
 
@@ -743,9 +785,17 @@ def run_json(request: dict[str, Any], *, transport: Transport | None = None) -> 
     """
     try:
         config = _config_from_env()
-        op = request.get("op", "decide") if isinstance(request, dict) else None
+        if not isinstance(request, dict):
+            return _error_envelope(FailReason.CONFIG)
+        op = request.get("op", "decide")
         if op == "record_outcome":
-            # An outcome operation needs no transport (finding C21).
+            # An outcome operation needs no transport (finding C21). Its envelope is validated
+            # on the same strict terms as a decide request (finding H18): exact integer version,
+            # allowed fields only, before anything is recorded.
+            if not _is_schema_version_one(request.get("schema_version")):
+                return _error_envelope(FailReason.CONFIG)
+            if not set(request.keys()) <= _OUTCOME_ALLOWED_FIELDS:
+                return _error_envelope(FailReason.CONFIG)
             ok = record_outcome(
                 str(request.get("decision_id", "")),
                 str(request.get("outcome", "")),
@@ -753,19 +803,33 @@ def run_json(request: dict[str, Any], *, transport: Transport | None = None) -> 
             )
             return {"schema_version": SCHEMA_VERSION, "status": "ok" if ok else "error",
                     "recorded": ok, "records": []}
+        if op == "decide_batch":
+            # Validate the batch envelope before dispatch, so a bad version or an unknown field
+            # cannot ride along and still send (finding H18). Each inner request is then
+            # validated by _decide on its own terms.
+            if not _is_schema_version_one(request.get("schema_version")):
+                return _error_envelope(FailReason.CONFIG)
+            if not set(request.keys()) <= _BATCH_ALLOWED_FIELDS:
+                return _error_envelope(FailReason.CONFIG)
+            reqs = request.get("requests")
+            if not isinstance(reqs, list):
+                return _error_envelope(FailReason.CONFIG)
+            if transport is None:
+                api_key = config.api_key or secrets.resolve_api_key(
+                    timeout=config.deadline_seconds
+                )
+                if api_key is None:
+                    return _error_envelope(FailReason.CONFIG)
+                transport = LiveTransport(api_key)
+            results = decide_batch(reqs, transport=transport, config=config)
+            return {"schema_version": SCHEMA_VERSION, "status": "ok", "results": results}
+        if op != "decide":
+            return _error_envelope(FailReason.CONFIG)
         if transport is None:
             api_key = config.api_key or secrets.resolve_api_key(timeout=config.deadline_seconds)
             if api_key is None:
                 return _error_envelope(FailReason.CONFIG)
             transport = LiveTransport(api_key)
-        if op == "decide_batch":
-            reqs = request.get("requests")
-            if not isinstance(reqs, list):
-                return _error_envelope(FailReason.CONFIG)
-            results = decide_batch(reqs, transport=transport, config=config)
-            return {"schema_version": SCHEMA_VERSION, "status": "ok", "results": results}
-        if op != "decide":
-            return _error_envelope(FailReason.CONFIG)
         return _decide(request, transport, config)
     except ValidationError as exc:
         return _error_envelope(exc.reason)
@@ -848,6 +912,21 @@ _OUTCOME_CODES = frozenset({"applied", "not_applied", "overridden_by_host", "ove
 _DECIDE_ALLOWED_FIELDS = frozenset(
     {"schema_version", "op", "question_set", "question_set_path", "state", "mode", "action_id"}
 )
+_BATCH_ALLOWED_FIELDS = frozenset({"schema_version", "op", "requests"})
+_OUTCOME_ALLOWED_FIELDS = frozenset(
+    {"schema_version", "op", "decision_id", "outcome", "action_id"}
+)
+
+
+def _is_schema_version_one(value: Any) -> bool:
+    """True only for the exact integer 1. bool and float 1.0 are rejected (finding H18)."""
+    return type(value) is int and value == 1
+
+
+# A pinned, immutable, fully versioned Jev model id, e.g. "jev-1.13.0". A moving alias
+# (jev-latest/jev-preview) or a partial id (jev, jev-1) is refused so a threshold can never be
+# bound to a model that changes under it (finding H22, spec story 28).
+_PINNED_MODEL_RE = re.compile(r"^jev-\d+\.\d+\.\d+$")
 
 
 def _decision_committed_on_disk(decision_id: str) -> bool:

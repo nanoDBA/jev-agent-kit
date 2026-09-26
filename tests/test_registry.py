@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -505,3 +506,21 @@ def test_resolve_registry_path_none_when_neither(monkeypatch: pytest.MonkeyPatch
 def test_resolve_registry_path_ignores_empty_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("JEV_KIT_REGISTRY", "")
     assert resolve_registry_path(None) is None
+
+
+def test_score_interval_label_secret_shaped_rejected_h6() -> None:
+    # A charset-valid but secret-shaped Score interval label (an AWS key) is copied verbatim into
+    # records and receipts, so it is refused at load rather than persisted (finding H6/C08).
+    registry: Any = _valid_registry()
+    registry["entries"][FP_SCORE]["threshold"]["intervals"][1]["label"] = "AKIA" + "Z" * 16
+    with pytest.raises(ValidationError) as exc:
+        loads_registry(json.dumps(registry))
+    assert exc.value.reason is FailReason.CONFIG
+
+
+def test_escalation_target_secret_shaped_rejected_h6() -> None:
+    registry: Any = _valid_registry()
+    registry["entries"][FP_NOUL]["escalation_target"] = "ghp_" + "a" * 36
+    with pytest.raises(ValidationError) as exc:
+        loads_registry(json.dumps(registry))
+    assert exc.value.reason is FailReason.CONFIG

@@ -135,12 +135,14 @@ _LOG_LEVELS = frozenset(
 
 
 def _is_log_safe_token(token: str) -> bool:
-    # Already-inserted placeholders survive; so do recognized level keywords and pure integers
-    # (status codes, counts), which are codes rather than identifiers.
+    # Only already-inserted placeholders and recognized level keywords survive. A bare number is
+    # NOT presumed a safe code or count: a free-form log has no declared template telling a
+    # status code from a numeric password or account id, so numbers are masked too (finding
+    # H17). Numbers survive only through a future explicitly-safe structured/template contract.
     if token in ("<v>", "<contact>"):
         return True
     core = token.strip(":=[](){}.,;\"'")
-    return core.lower() in _LOG_LEVELS or core.isdigit()
+    return core.lower() in _LOG_LEVELS
 
 
 def _reduce_log(text: str) -> str:
@@ -183,6 +185,13 @@ def _reduce_command(text: str) -> str:
     # than one command.
     if _CMD_CONTROL.search(text):
         raise ValidationError(FailReason.EGRESS_BLOCKED, "command_compound_unsupported")
+    # Quoting makes whitespace tokenization ambiguous: a quoted value can split so a fragment
+    # ("PRIVATE ALICE" -> ALICE) reads as the command word, or a flag-shaped word inside a
+    # quoted argument ("hello --SECRET world") reads as a flag name. We do not carry a real
+    # shell parser, so a quoted command is rejected outright rather than mis-tokenized (finding
+    # H16). A quote-free command splits unambiguously into whole-word tokens.
+    if '"' in text or "'" in text:
+        raise ValidationError(FailReason.EGRESS_BLOCKED, "command_quoting_unsupported")
     tokens = text.split()
     idx = 0
     while idx < len(tokens) and _ENV_ASSIGNMENT.match(tokens[idx]):
@@ -383,7 +392,9 @@ _DETECTORS: list[tuple[str, re.Pattern[str]]] = [
     ("azure_sas", re.compile(r"[?&]sig=[A-Za-z0-9%/+]{20,}")),  # Purview: Azure SAS/storage key
     # Purview / gitleaks: bearer and basic HTTP Authorization headers (finding C06 extends
     # this from bearer-only to also match Basic).
-    ("authorization_header", re.compile(r"(?i)authorization\s*[:=]\s*(?:bearer|basic)\s+\S+")),
+    # The separator class tolerates the quotes/colon of JSON-embedded auth, e.g. a free-text
+    # value containing {"Authorization":"Basic dTpw"} (finding H15), as well as a plain header.
+    ("authorization_header", re.compile(r"(?i)authorization[\"'\s:=]{1,6}(?:bearer|basic)\s+\S+")),
     # GATE-04: the same bearer/basic credential shape, but without requiring the literal word
     # "authorization" nearby. JSON serialization puts a quote between the key and its value
     # (e.g. {"authorization": "Basic <b64>"}), which breaks the rule above; scanning each
@@ -419,13 +430,13 @@ _CONNSTR = re.compile(
 )
 _PAN_CANDIDATE = re.compile(r"\b(?:\d[ -]?){13,19}\b")  # PCI DSS v4.0.1 3.3.1: Luhn-valid PANs
 
-# A whole value that is an HTTP auth scheme plus a single credential token, e.g. "Basic dTpw" or
-# "Bearer <jwt>". Matched as the ENTIRE string so an ordinary sentence ("Bearer of bad news",
-# with spaces after the scheme) does not trip it, but a short Basic credential that evades the
-# 16-character length heuristic still does (finding H15). scan_request scans each decoded value
-# on its own, so {"Authorization": "Basic dTpw"} is caught even though the key and value are
-# separate JSON strings.
-_AUTH_SCHEME_VALUE = re.compile(r"(?i)^(?:basic|bearer)\s+[A-Za-z0-9+/=._-]{2,}$")
+# A whole value that is an HTTP auth scheme plus a single credential token, e.g. "Basic dTpw",
+# "Bearer x" or "Bearer a~b". Matched as the ENTIRE string (scheme then exactly one non-space
+# token) so an ordinary sentence ("Bearer of bad news", several words) does not trip it, but any
+# single-token credential does, with no minimum length or charset loophole (finding H15).
+# scan_request scans each decoded value on its own, so {"Authorization": "Basic dTpw"} is caught
+# even when the key and value are separate JSON strings.
+_AUTH_SCHEME_VALUE = re.compile(r"(?i)^(?:basic|bearer)\s+\S+$")
 
 
 def scan_text(text: str) -> str | None:

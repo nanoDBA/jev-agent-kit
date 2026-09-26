@@ -493,16 +493,30 @@ def test_command_compound_syntax_blocked_h16() -> None:
         assert exc.value.reason is FailReason.EGRESS_BLOCKED
 
 
-def test_command_value_never_leaks_regardless_of_quoting_h16() -> None:
-    # The reduction emits only the command basename and flag-name prefixes, so a value cannot
-    # spill however the line is quoted, even with an unbalanced quote (finding H16).
+def test_command_quoting_is_rejected_h16() -> None:
+    # Quoting makes whitespace tokenization ambiguous (a fragment of a quoted value can read as
+    # the command word, or a flag-shaped word inside a quoted argument as a flag name). Without a
+    # real shell parser, a quoted command is rejected outright rather than mis-tokenized (H16).
     schema = {"cmd": FieldSpec(ContentKind.COMMAND)}
-    out = transform_state({"cmd": "pg_dump --password='s3 cret value' mydb"}, schema, ctx())
-    assert "s3 cret value" not in out["cmd"] and "mydb" not in out["cmd"]
-    assert out["cmd"] == "pg_dump --password"
-    unbalanced = transform_state({"cmd": "tool --tenant='unterminated"}, schema, ctx())
-    assert "unterminated" not in unbalanced["cmd"]
-    assert unbalanced["cmd"] == "tool --tenant"
+    for leaky in (
+        'TOKEN="PRIVATE ALICE" tool --flag',            # would emit ALICE --flag
+        'tool --message "hello --PRIVATE_CUSTOMER world"',  # would emit --PRIVATE_CUSTOMER
+        "pg_dump --password='s3 cret value' mydb",
+        "tool --tenant='unterminated",
+    ):
+        with pytest.raises(ValidationError) as exc:
+            transform_state({"cmd": leaky}, schema, ctx())
+        assert exc.value.reason is FailReason.EGRESS_BLOCKED
+
+
+def test_command_quote_free_reduces_to_name_and_flags_h16() -> None:
+    # A quote-free command tokenizes unambiguously; only basename and flag-name prefixes survive.
+    schema = {"cmd": FieldSpec(ContentKind.COMMAND)}
+    out = transform_state(
+        {"cmd": "TOKEN=secret /home/alice/bin/tool --tenant=PRIVATE -pSECRET extra"}, schema, ctx()
+    )
+    assert out["cmd"] == "tool --tenant -p"
+    assert "secret" not in out["cmd"] and "PRIVATE" not in out["cmd"] and "alice" not in out["cmd"]
 
 
 def test_command_positional_after_double_dash_dropped_h16() -> None:

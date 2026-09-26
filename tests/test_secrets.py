@@ -88,3 +88,20 @@ def test_key_command_total_deadline_not_doubled_h20(monkeypatch: pytest.MonkeyPa
     # If read and wait each got the full 0.6 s budget the call could run ~1.2 s+; one shared
     # deadline keeps it well under that.
     assert time.monotonic() - start < 1.1
+
+
+def test_key_command_late_completion_rejected_h20(monkeypatch: pytest.MonkeyPatch) -> None:
+    # H20: even when the read and the exit wait each COMPLETE, if they completed only after the
+    # absolute deadline (a slow process start / late scheduling), the produced key must not be
+    # returned as a success. A controlled monotonic clock makes the final check see a time past
+    # the deadline while the child itself runs fast. (threading.join binds its own time
+    # reference at import, so patching time.monotonic here does not disturb the reader join.)
+    ticks = iter([1000.0, 1000.01, 1000.02, 1000.5])  # end-calc, join, wait, final check
+    monkeypatch.setattr("jev_kit.secrets.time.monotonic", lambda: next(ticks))
+    argv = json.dumps([sys.executable, "-c", "print('k')"])  # fast, clean success
+    monkeypatch.setenv("JEV_KIT_HMAC_KEY_COMMAND", argv)
+    monkeypatch.delenv("JEV_KIT_HMAC_KEY", raising=False)
+    with pytest.raises(ValidationError) as exc:
+        resolve_secret("JEV_KIT_HMAC_KEY", "JEV_KIT_HMAC_KEY_COMMAND", timeout=0.1)
+    assert exc.value.reason is FailReason.CONFIG
+    assert exc.value.check == "key_command_failed"

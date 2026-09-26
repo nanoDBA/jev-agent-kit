@@ -296,3 +296,29 @@ def test_main_prints_json_summary_and_exits_zero(
     output = json.loads(capsys.readouterr().out)
     assert output["total"] == 1
     assert output["read_stats"]["committed_calls"] == 1
+
+
+def test_route_correction_supersedes_decision_route_h8(tmp_path: Any) -> None:
+    # A route_correction downgrades an already-committed accept (a late accept the engine
+    # reversed after a slow receipt write); the reader and summary must report the corrected
+    # route, not the stale accept (finding H8).
+    import json as _json
+
+    from tools.receipts_report import read_receipts, summarize
+
+    path = tmp_path / "r.jsonl"
+    lines = [
+        {"kind": "decision", "call_id": "c1", "decision_id": "d1", "route": "accept",
+         "fail_reason": None},
+        {"kind": "commit", "call_id": "c1", "lines": 1},
+        {"kind": "route_correction", "call_id": "c1", "decision_id": "d1", "route": "ask",
+         "fail_reason": "timeout"},
+    ]
+    path.write_text("\n".join(_json.dumps(x) for x in lines) + "\n", encoding="utf-8")
+    stats: dict[str, int] = {}
+    decisions = read_receipts(path, stats=stats)
+    assert decisions[0]["route"] == "ask"
+    assert decisions[0]["fail_reason"] == "timeout"
+    assert decisions[0]["route_before_correction"] == "accept"
+    assert stats["malformed_lines"] == 0  # the correction line is a recognized kind
+    assert summarize(decisions)["by_route"] == {"ask": 1}

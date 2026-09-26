@@ -35,7 +35,7 @@ from typing import Any
 
 __all__ = ["main", "read_receipts", "summarize", "to_duckdb"]
 
-_VALID_KINDS = frozenset({"decision", "commit", "outcome"})
+_VALID_KINDS = frozenset({"decision", "commit", "outcome", "route_correction"})
 
 
 def read_receipts(
@@ -73,6 +73,7 @@ def read_receipts(
 
     committed: list[dict[str, Any]] = []
     outcomes: list[dict[str, Any]] = []
+    corrections: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
     pending_call_id: Any = None
 
@@ -99,6 +100,8 @@ def read_receipts(
             pending.append(payload)
         elif kind == "outcome":
             outcomes.append(payload)
+        elif kind == "route_correction":
+            corrections.append(payload)
         else:  # kind == "commit"
             if payload.get("call_id") == pending_call_id and payload.get("lines") == len(pending):
                 committed.extend(pending)
@@ -124,6 +127,21 @@ def read_receipts(
         decision_id = outcome.get("decision_id")
         if isinstance(decision_id, str) and decision_id in by_decision_id:
             by_decision_id[decision_id]["outcomes"].append(outcome)
+
+    # Apply route corrections to their committed decision (finding H8): a correction supersedes
+    # the decision's original route (a late accept downgraded to ask/no_advice after the write
+    # overran the deadline), so summaries and exports report the corrected route, not the stale
+    # accept. The pre-correction route is preserved under "route_before_correction".
+    for correction in corrections:
+        decision_id = correction.get("decision_id")
+        if isinstance(decision_id, str) and decision_id in by_decision_id:
+            decision = by_decision_id[decision_id]
+            corrected_route = correction.get("route")
+            if isinstance(corrected_route, str):
+                decision.setdefault("route_before_correction", decision.get("route"))
+                decision["route"] = corrected_route
+                if "fail_reason" in correction:
+                    decision["fail_reason"] = correction.get("fail_reason")
 
     if stats is not None:
         for key, value in local_stats.items():

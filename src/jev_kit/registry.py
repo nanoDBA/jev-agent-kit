@@ -30,6 +30,7 @@ import os
 import re
 from typing import Any
 
+from jev_kit.egress import scan_text
 from jev_kit.errors import FailReason, ValidationError
 from jev_kit.routing import (
     ChoiceThreshold,
@@ -111,9 +112,18 @@ def _require_number(value: Any, check: str) -> float:
     return number
 
 
+def _reject_secret_shaped(value: str, check: str) -> None:
+    # A charset-safe operator-supplied string (a label, escalation target, evidence ref) is
+    # still copied verbatim into records and durable receipts, so a secret shape in it (an AWS
+    # key, a JWT) is refused at load rather than persisted (finding H6/C08, story 79a).
+    if scan_text(value) is not None:
+        raise ValidationError(FailReason.CONFIG, check)
+
+
 def _require_safe_string(value: Any, check: str) -> str:
     if not isinstance(value, str) or not _SAFE_STRING_RE.fullmatch(value):
         raise ValidationError(FailReason.CONFIG, check)
+    _reject_secret_shaped(value, check)
     return value
 
 
@@ -161,6 +171,7 @@ def _build_score_interval(raw: Any) -> ScoreInterval:
     # pattern as escalation_target and evidence_ref (no newlines, no control characters).
     if not isinstance(label, str) or not _LABEL_RE.fullmatch(label):
         raise ValidationError(FailReason.CONFIG, "label_unsafe")
+    _reject_secret_shaped(label, "label_secret_shaped")
     return ScoreInterval(lower=lower, upper=upper, label=label)
 
 

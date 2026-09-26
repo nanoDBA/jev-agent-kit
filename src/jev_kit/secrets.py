@@ -71,6 +71,11 @@ def _run_key_command(spec: str, timeout: float) -> str:
             _terminate(proc)
             raise ValidationError(FailReason.CONFIG, "key_command_output_too_large")
         proc.wait(timeout=max(0.0, end - time.monotonic()))
+        # Even when the read and wait each completed, they may have completed only AFTER the
+        # absolute deadline (a slow process start, or the reader thread scheduled late). A
+        # secret produced past the deadline must not be returned as a success (finding H20).
+        if time.monotonic() > end:
+            raise subprocess.TimeoutExpired(argv[0], budget)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         _terminate(proc)
         # No `from` clause: nothing about the command or its output reaches the error.

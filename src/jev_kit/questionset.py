@@ -137,6 +137,11 @@ def _gate_allow_labels(
         raise ValidationError(FailReason.CONFIG, "gate_allow_labels_type")
     if valid is not None and not set(labels) <= valid:
         raise ValidationError(FailReason.CONFIG, "gate_allow_labels_unknown")
+    for label in labels:
+        # allow_labels are copied into records verbatim, so a secret-shaped label is refused at
+        # load rather than persisted (finding H6/C08).
+        if scan_text(label) is not None:
+            raise ValidationError(FailReason.CONFIG, "gate_allow_labels_secret_shaped")
     return frozenset(labels)
 
 
@@ -152,11 +157,25 @@ def _build_field(spec: Any) -> FieldSpec:
     return FieldSpec(ContentKind(kind), params)
 
 
+_QS_ALLOWED_FIELDS = frozenset(
+    {
+        "schema_version", "id", "version", "model", "escalation_target",
+        "questions", "state_schema", "transcripts", "excluded_classes",
+    }
+)
+
+
 def _parse(obj: Any) -> QuestionSet:
     if not isinstance(obj, dict):
         raise ValidationError(FailReason.CONFIG, "questionset_not_object")
-    if obj.get("schema_version") != 1:
+    # schema_version must be exactly the integer 1: True == 1 and 1.0 == 1 in Python, so a bare
+    # inequality would accept a boolean or float (finding H18).
+    if type(obj.get("schema_version")) is not int or obj.get("schema_version") != 1:
         raise ValidationError(FailReason.CONFIG, "questionset_schema_version")
+    # Reject any undeclared top-level field so a typo or injected key cannot ride along into a
+    # loaded set that then produces evidence (finding H18).
+    if not set(obj.keys()) <= _QS_ALLOWED_FIELDS:
+        raise ValidationError(FailReason.CONFIG, "questionset_unknown_field")
     raw_questions = _require(obj, "questions", "no_questions")
     if not isinstance(raw_questions, dict) or not raw_questions:
         raise ValidationError(FailReason.CONFIG, "questions_type")
@@ -193,8 +212,13 @@ def _parse(obj: Any) -> QuestionSet:
     model = _require(obj, "model", "no_model")
     escalation = _require(obj, "escalation_target", "no_escalation_target")
     set_id = _require(obj, "id", "no_id")
-    version = str(_require(obj, "version", "no_version"))
-    checks = ((model, "model_type"), (escalation, "escalation_type"), (set_id, "id_type"))
+    # version must be a real string, not coerced: str(True) or str(1.0) would silently accept a
+    # boolean or float and change the identity a fingerprint binds (finding H18).
+    version = _require(obj, "version", "no_version")
+    checks = (
+        (model, "model_type"), (escalation, "escalation_type"),
+        (set_id, "id_type"), (version, "version_type"),
+    )
     for value, check in checks:
         if not isinstance(value, str) or not value:
             raise ValidationError(FailReason.CONFIG, check)

@@ -634,3 +634,69 @@ def test_outcome_rejects_decision_in_truncated_batch(tmp_path: Any, monkeypatch:
     monkeypatch.setattr("jev_kit.receipts.receipts_dir", lambda: tmp_path)
     assert engine.record_outcome("act_truncated", "applied") is False  # own call not committed
     assert engine.record_outcome("act_other", "applied") is True  # own call committed
+
+
+def test_float_schema_version_rejected_h18(tmp_path: Any) -> None:
+    # H18: schema_version must be exactly int 1; 1.0 == 1 in Python, so a float must be rejected.
+    req = request("shadow")
+    req["schema_version"] = 1.0
+    resp = decide(req, transport=reply(0.1), config=config(tmp_path))
+    assert resp["status"] == "error" and resp["reason"] == "config"
+
+
+def test_batch_envelope_strict_h18() -> None:
+    # H18: a decide_batch envelope with a bad version or an unknown field must not dispatch.
+    from jev_kit.engine import run_json
+    from jev_kit.transport import MockTransport
+
+    bad_version = run_json(
+        {"op": "decide_batch", "schema_version": 999, "requests": []},
+        transport=MockTransport.replying(200, b"{}"),
+    )
+    assert bad_version["status"] == "error" and bad_version["reason"] == "config"
+    unknown_field = run_json(
+        {"op": "decide_batch", "schema_version": 1, "requests": [], "junk": 1},
+        transport=MockTransport.replying(200, b"{}"),
+    )
+    assert unknown_field["status"] == "error" and unknown_field["reason"] == "config"
+
+
+def test_unversioned_model_rejected_h22(tmp_path: Any) -> None:
+    # H22: only a pinned, fully versioned model id is allowed; a bare or partial id is refused,
+    # so a threshold can never bind to a model that changes under it.
+    for bad_model in ("jev", "jev-1", "jev-1.13", "gpt", "jev-latest"):
+        req = request("enforce")
+        req["question_set"]["model"] = bad_model
+        rec = only(decide(req, transport=reply(0.01), config=config(tmp_path)))
+        # A gate under a config failure asks; the point is it never proceeds on an unpinned model.
+        assert rec["route"] == "ask"
+        assert rec["fail_reason"] in ("config", None) or rec["is_mock"]
+
+
+def test_fingerprint_differs_for_closures_capturing_different_rules_h3() -> None:
+    # H3: two closures from one factory that captured different replacement rules must not share
+    # a fingerprint even under the same version tag; captured behavior is bound in.
+    from jev_kit.engine import EngineConfig, effective_contract
+    from jev_kit.fingerprint import question_fingerprint
+    from jev_kit.questionset import load_question_set
+
+    qset = load_question_set(question_set())
+
+    def make(rule: str) -> Any:
+        def normalize(text: str) -> str:
+            return text.replace("X", rule)
+        return normalize
+
+    def fp(cfg: EngineConfig) -> str:
+        return question_fingerprint(
+            instructions="x", criteria=None, question_type="noul", option_or_level_set=[],
+            model="jev-1.13.0", egress_contract=effective_contract(qset, cfg),
+        )
+
+    select = EngineConfig(
+        language_profiles={"sql": make("SELECT")}, language_profile_versions={"sql": "1"}
+    )
+    delete = EngineConfig(
+        language_profiles={"sql": make("DELETE")}, language_profile_versions={"sql": "1"}
+    )
+    assert fp(select) != fp(delete)

@@ -109,3 +109,34 @@ def test_secret_shaped_question_id_rejected() -> None:
                                           "kit": {"consequence": "advisory"}}})
         )
     assert exc.value.reason is FailReason.CONFIG
+
+
+def _noul_q() -> dict[str, Any]:
+    return {"d": {"type": "noul", "instructions": "x", "kit": {"consequence": "advisory"}}}
+
+
+def test_boolean_version_rejected_h18() -> None:
+    # H18: version must be a real string, not coerced; str(True) would silently accept a boolean.
+    obj = base(_noul_q())
+    obj["version"] = True
+    with pytest.raises(ValidationError) as exc:
+        load_question_set(obj)
+    assert exc.value.reason is FailReason.CONFIG
+
+
+def test_float_schema_version_rejected_h18() -> None:
+    # H18: schema_version must be exactly int 1; 1.0 == 1 in Python but is not the integer type.
+    obj = base(_noul_q())
+    obj["schema_version"] = 1.0
+    with pytest.raises(ValidationError) as exc:
+        load_question_set(obj)
+    assert exc.value.reason is FailReason.CONFIG
+
+
+def test_unknown_top_level_field_rejected_h18() -> None:
+    # H18: an undeclared top-level field must not ride along into a loaded set.
+    obj = base(_noul_q())
+    obj["surprise"] = "ride-along"
+    with pytest.raises(ValidationError) as exc:
+        load_question_set(obj)
+    assert exc.value.reason is FailReason.CONFIG

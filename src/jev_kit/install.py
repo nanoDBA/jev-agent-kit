@@ -161,7 +161,9 @@ def _apply_one(action: Action, source: Path) -> Action:
         _remove_existing(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
-        os.symlink(source, target, target_is_directory=True)
+        # Resolve the source to an absolute path: a relative link is resolved against the
+        # link's own directory, not the cwd, so it would dangle (finding Phase2 MAJOR-1).
+        os.symlink(source.resolve(), target, target_is_directory=True)
         return Action(target, "link", "linked the skill tree")
     except OSError:
         _copy_tree(source, target)

@@ -193,3 +193,22 @@ def test_action_is_frozen(tmp_path: Path) -> None:
     action = Action(target=tmp_path, op="skip_same", reason="test")
     with pytest.raises(AttributeError):
         action.op = "conflict"  # type: ignore[misc]
+
+
+def test_apply_symlink_resolves_relative_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Phase2 MAJOR-1: a relative source must be resolved so the installed link is not dangling.
+    src = tmp_path / "skills" / "jev-runtime"
+    (src / "questions").mkdir(parents=True)
+    (src / "SKILL.md").write_text("---\nname: jev-runtime\n---\n", encoding="utf-8")
+    (src / "questions" / "x.json").write_text("{}", encoding="utf-8")
+    target_root = tmp_path / "dest"
+    target = target_root / "jev-runtime"
+    monkeypatch.chdir(tmp_path)  # so a relative source path is realistic
+    from jev_kit import install as install_mod
+
+    actions = install_mod.install([target], Path("skills/jev-runtime"), apply=True)
+    assert actions[0].op in ("link", "copy")
+    # The installed skill must be reachable through the target, however it was placed.
+    assert (target / "SKILL.md").is_file()

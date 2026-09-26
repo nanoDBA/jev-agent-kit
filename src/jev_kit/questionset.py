@@ -51,30 +51,50 @@ def _consequence(value: Any) -> ConsequenceClass:
     return ConsequenceClass(value)
 
 
+# The reviewed question-set shape (spec, finding C12): each question holds the API fields
+# (type, instructions, criteria) plus a separate kit object carrying the consequence class.
+# Legacy top-level shortcut fields are rejected so meaning cannot silently change.
+_LEGACY_FIELDS = ("consequence", "options", "levels")
+
+
 def _build_question(qid: str, spec: dict[str, Any]) -> Question:
     if not isinstance(spec, dict):
         raise ValidationError(FailReason.CONFIG, "question_not_object")
+    for legacy in _LEGACY_FIELDS:
+        if legacy in spec:
+            raise ValidationError(FailReason.CONFIG, "question_legacy_field")
     qtype = _require(spec, "type", "question_no_type")
     instructions = _require(spec, "instructions", "question_no_instructions")
     if not isinstance(instructions, str) or not instructions:
         raise ValidationError(FailReason.CONFIG, "question_instructions")
-    consequence = _consequence(_require(spec, "consequence", "question_no_consequence"))
+    kit = _require(spec, "kit", "question_no_kit")
+    if not isinstance(kit, dict):
+        raise ValidationError(FailReason.CONFIG, "question_kit_type")
+    consequence = _consequence(_require(kit, "consequence", "question_no_consequence"))
+    criteria = spec.get("criteria")
+
     if qtype == "noul":
-        return NoulQuestion(qid, instructions, consequence)
+        # Noul criteria, when present, is a {true, false} description object.
+        if criteria is not None and not isinstance(criteria, dict):
+            raise ValidationError(FailReason.CONFIG, "noul_criteria_type")
+        return NoulQuestion(qid, instructions, consequence, criteria=criteria)
     if qtype == "choice":
-        options = _require(spec, "options", "choice_no_options")
-        if not isinstance(options, list) or not all(isinstance(o, str) for o in options):
-            raise ValidationError(FailReason.CONFIG, "choice_options_type")
-        if not 2 <= len(options) <= 255 or len(set(options)) != len(options):
+        # Choice criteria is the option map: option key -> description (or null).
+        if not isinstance(criteria, dict) or not criteria:
+            raise ValidationError(FailReason.CONFIG, "choice_criteria_type")
+        options = tuple(criteria.keys())
+        if not all(isinstance(o, str) for o in options):
+            raise ValidationError(FailReason.CONFIG, "choice_option_key_type")
+        if not 2 <= len(options) <= 255:
             raise ValidationError(FailReason.CONFIG, "choice_options_count")
-        return ChoiceQuestion(qid, instructions, tuple(options), consequence)
+        return ChoiceQuestion(qid, instructions, options, consequence, criteria=dict(criteria))
     if qtype == "score":
-        levels = _require(spec, "levels", "score_no_levels")
-        if not isinstance(levels, list) or not all(isinstance(x, str) for x in levels):
-            raise ValidationError(FailReason.CONFIG, "score_levels_type")
-        if not 2 <= len(levels) <= 10:
+        # Score criteria is the ordered array of level descriptions.
+        if not isinstance(criteria, list) or not all(isinstance(x, str) for x in criteria):
+            raise ValidationError(FailReason.CONFIG, "score_criteria_type")
+        if not 2 <= len(criteria) <= 10:
             raise ValidationError(FailReason.CONFIG, "score_levels_count")
-        return ScoreQuestion(qid, instructions, tuple(levels), consequence)
+        return ScoreQuestion(qid, instructions, tuple(criteria), consequence)
     raise ValidationError(FailReason.CONFIG, "unknown_question_type")
 
 

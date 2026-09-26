@@ -7,8 +7,10 @@ the API fields; the kit fields here are never sent (spec story 39, Implementatio
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
 
 class QuestionType(StrEnum):
@@ -45,6 +47,7 @@ class ChoiceQuestion:
     instructions: str
     options: tuple[str, ...]  # option keys, in file order; 2..255 (spec story 38)
     consequence: ConsequenceClass
+    criteria: Mapping[str, Any] | None = None  # option key -> description, sent as-is
     question_type: QuestionType = QuestionType.CHOICE
 
 
@@ -64,6 +67,7 @@ class NoulQuestion:
     question_id: str
     instructions: str
     consequence: ConsequenceClass
+    criteria: Mapping[str, Any] | None = None  # optional {true, false} descriptions, sent as-is
     question_type: QuestionType = QuestionType.NOUL
 
 

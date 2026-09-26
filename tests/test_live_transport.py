@@ -141,7 +141,10 @@ def test_accept_path_through_fake_server(server: HTTPServer, tmp_path: Any) -> N
         "model": "jev-1.13.0",
         "escalation_target": "gpt-6",
         "questions": {
-            "destructive": {"type": "noul", "instructions": "Destructive?", "consequence": "gate"}
+            "destructive": {
+                "type": "noul", "instructions": "Destructive?",
+                "kit": {"consequence": "gate"},
+            }
         },
         "state_schema": {"cmd": {"kind": "command"}},
     }
@@ -191,7 +194,12 @@ def test_late_response_is_rejected(server: HTTPServer, tmp_path: Any) -> None:
     qset_obj = {
         "schema_version": 1, "id": "t", "version": "1", "model": "jev-1.13.0",
         "escalation_target": "gpt-6",
-        "questions": {"d": {"type": "noul", "instructions": "Destructive?", "consequence": "gate"}},
+        "questions": {
+            "d": {
+                "type": "noul", "instructions": "Destructive?",
+                "kit": {"consequence": "gate"},
+            }
+        },
         "state_schema": {"cmd": {"kind": "command"}},
     }
 
@@ -249,7 +257,12 @@ def test_live_send_without_attestation_is_refused(server: HTTPServer, tmp_path: 
     qset_obj = {
         "schema_version": 1, "id": "t", "version": "1", "model": "jev-1.13.0",
         "escalation_target": "gpt-6",
-        "questions": {"d": {"type": "noul", "instructions": "Destructive?", "consequence": "gate"}},
+        "questions": {
+            "d": {
+                "type": "noul", "instructions": "Destructive?",
+                "kit": {"consequence": "gate"},
+            }
+        },
         "state_schema": {"cmd": {"kind": "command"}},
     }
     qset = load_question_set(qset_obj)

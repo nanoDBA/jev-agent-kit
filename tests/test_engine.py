@@ -31,7 +31,7 @@ def question_set() -> dict[str, Any]:
             "destructive": {
                 "type": "noul",
                 "instructions": "Is the command destructive?",
-                "consequence": "gate",
+                "kit": {"consequence": "gate"},
             }
         },
         "state_schema": {"cmd": {"kind": "command"}},
@@ -89,7 +89,7 @@ def test_shadow_gate_over_mock_is_ask(tmp_path: Any) -> None:
 
 def test_mock_advisory_is_no_advice(tmp_path: Any) -> None:
     req = request("enforce")
-    req["question_set"]["questions"]["destructive"]["consequence"] = "advisory"
+    req["question_set"]["questions"]["destructive"]["kit"]["consequence"] = "advisory"
     rec = only(decide(req, transport=reply(0.99), config=config(tmp_path)))
     assert rec["route"] == "no_advice"
 

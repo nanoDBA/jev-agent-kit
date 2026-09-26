@@ -77,6 +77,7 @@ from jev_kit.types import (
     ConsequenceClass,
     Mode,
     NoulAnswer,
+    NoulQuestion,
     Question,
     Route,
     ScoreAnswer,
@@ -139,9 +140,15 @@ def _wire_question(question: Question) -> dict[str, Any]:
         "instructions": question.instructions,
     }
     if isinstance(question, ChoiceQuestion):
-        wire["criteria"] = {opt: None for opt in question.options}
+        # Choice criteria is the option map (option key -> description or null).
+        wire["criteria"] = dict(question.criteria) if question.criteria else {
+            opt: None for opt in question.options
+        }
     elif isinstance(question, ScoreQuestion):
-        wire["criteria"] = {str(i): level for i, level in enumerate(question.levels)}
+        # Score criteria is the ordered array of level descriptions (finding C12).
+        wire["criteria"] = list(question.levels)
+    elif isinstance(question, NoulQuestion) and question.criteria is not None:
+        wire["criteria"] = dict(question.criteria)
     return wire
 
 

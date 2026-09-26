@@ -24,7 +24,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import re
-import shlex
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -122,72 +121,88 @@ def _mask_contacts(text: str) -> str:
     return text
 
 
-# Unquoted key=value pairs, e.g. "tenant=acme host=db01" (finding C05). Quoted spans are
-# already reduced to <v> above, so this only needs to catch what quoting missed. The value
-# side is an identifier token, never a literal 'v', so it is always masked (GATE-03).
-_KV_PATTERN = re.compile(r"(?<![\w.-])([A-Za-z_][\w.-]*)=(\S+)")
-
-# A bare identifier with no key= prefix and no quoting, e.g. the hostname in "connect to
-# internal-db failed" (finding GATE-03). Logs are reduced to codes and templates, so any
-# hyphen-joined slug of two or more alphanumeric segments is masked even when nothing marks
-# it as a value.
-_BARE_IDENTIFIER = re.compile(r"\b[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+\b")
-
-# A standalone high-entropy run (16+ chars of a token/base64/hex charset that is not a plain
-# word): a reduced log is codes and templates only, so an opaque token that no named detector
-# recognizes is still masked rather than shipped verbatim (finding H17). A run that is only
-# letters is left alone here; the bare-identifier and word rules already cover ordinary words.
-_LOG_ENTROPY_TOKEN = re.compile(r"(?<![\w/+=])[A-Za-z0-9+/_=-]{16,}(?![\w/+=])")
+# The only log tokens kept verbatim: recognized severity/level keywords. Everything else in a
+# free-form log line is a potential identifier (a hostname like db01, a username like JaneDoe, a
+# tenant, a path), and without a declared template we cannot tell a template word from data, so
+# it is masked rather than guessed at (finding H17; ADR 0002 Tier 2 / story 44). Richer log
+# support (declared safe templates / structured fields) is a separate, later capability.
+_LOG_LEVELS = frozenset(
+    {
+        "error", "err", "warn", "warning", "info", "information", "debug", "trace", "fatal",
+        "critical", "crit", "notice", "alert", "emerg", "emergency", "verbose", "log",
+    }
+)
 
 
-def _mask_entropy(match: re.Match[str]) -> str:
-    token = match.group(0)
-    if token.isalpha():
-        return token
-    return "<v>"
+def _is_log_safe_token(token: str) -> bool:
+    # Already-inserted placeholders survive; so do recognized level keywords and pure integers
+    # (status codes, counts), which are codes rather than identifiers.
+    if token in ("<v>", "<contact>"):
+        return True
+    core = token.strip(":=[](){}.,;\"'")
+    return core.lower() in _LOG_LEVELS or core.isdigit()
 
 
 def _reduce_log(text: str) -> str:
+    # First reduce the structured parts (quoted spans and contacts) to placeholders, then keep
+    # only safe tokens and mask every other token; runs of masked tokens collapse to one <v>.
     text = re.sub(r"'[^']*'", "<v>", text)
     text = re.sub(r'"[^"]*"', "<v>", text)
-    text = _KV_PATTERN.sub(r"\1=<v>", text)
-    text = _BARE_IDENTIFIER.sub("<v>", text)
-    text = _LOG_ENTROPY_TOKEN.sub(_mask_entropy, text)
-    return _mask_contacts(text)
+    text = _mask_contacts(text)
+    out: list[str] = []
+    for token in text.split():
+        masked = token if _is_log_safe_token(token) else "<v>"
+        if masked == "<v>" and out and out[-1] == "<v>":
+            continue  # collapse consecutive masked tokens
+        out.append(masked)
+    return " ".join(out)
 
 
-# A leading environment assignment before the command word, e.g. "REVIEW_TOKEN=PRIVATE tool"
-# (finding GATE-02). One or more of these are dropped in full, name and value alike.
-_ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# A leading variable assignment before the command word: a POSIX "REVIEW_TOKEN=PRIVATE tool"
+# (finding GATE-02) or a shell variable form ("$env:TOKEN=..." in PowerShell, "$TOKEN=..."). One
+# or more of these are dropped in full, name and value alike.
+_ENV_ASSIGNMENT = re.compile(r"^(?:\$env:|\$)?[A-Za-z_][A-Za-z0-9_]*=")
+
+# Compound, redirecting or substituting shell syntax: a semicolon, pipe, background/and/or,
+# redirect, backtick or "$(" substitution. Such a line names more than one command or a data
+# sink, so it cannot be reduced to a single safe command word and is blocked (finding H16). This
+# is dialect-neutral: it holds for POSIX shells, cmd.exe and PowerShell alike.
+_CMD_CONTROL = re.compile(r"[;&|<>`\n]|\$\(")
+
+# A long-flag NAME at the start of a token: everything up to the first character that is not part
+# of a flag name (so "--tenant=PRIVATE" and '--password="s3' both yield only "--tenant"/
+# "--password"). The attached "=value" or a spilled quoted fragment never survives (finding H16).
+_LONG_FLAG_NAME = re.compile(r"^--[A-Za-z][A-Za-z0-9._-]*")
 
 
 def _reduce_command(text: str) -> str:
-    # Keep the command NAME and bare flag names only; nothing else survives (finding GATE-02):
-    # - leading "NAME=VALUE" environment assignments are dropped entirely, not just their value
-    # - the command word itself is reduced to its basename, dropping any directory path
-    # - a long flag ("--tenant=PRIVATE") keeps only its name, the '=value' is stripped
-    # - a short flag with an attached value ("-pPRIVATE") keeps only the flag letter
-    # - every positional argument token is dropped entirely rather than kept as-is
-    #
-    # The text is tokenized with shell rules so a quoted secret ("--tenant='a b'") is one token
-    # and cannot spill an inner word into the kept output. Unbalanced quotes or other syntax
-    # shlex cannot parse are a fail-closed block, never a naive whitespace split (finding H16).
-    try:
-        tokens = shlex.split(text, posix=True)
-    except ValueError as exc:
-        raise ValidationError(FailReason.EGRESS_BLOCKED, "command_unparseable") from exc
+    # Keep the command NAME and bare flag names only; nothing else survives (finding GATE-02).
+    # The reduction never depends on correct shell parsing to avoid a leak: it emits only the
+    # command basename and flag-name prefixes, so a value can never spill however the line is
+    # quoted (finding H16). A compound/redirecting line is blocked outright, since it is more
+    # than one command.
+    if _CMD_CONTROL.search(text):
+        raise ValidationError(FailReason.EGRESS_BLOCKED, "command_compound_unsupported")
+    tokens = text.split()
     idx = 0
     while idx < len(tokens) and _ENV_ASSIGNMENT.match(tokens[idx]):
         idx += 1
     if idx >= len(tokens):
         return ""
-    name = tokens[idx].replace("\\", "/").rsplit("/", 1)[-1]
+    # Command word: basename only, dropping any POSIX or Windows directory path and surrounding
+    # quotes. If anything odd survives (a quote, an '='), emit a placeholder rather than a guess.
+    name = tokens[idx].strip("'\"").replace("\\", "/").rsplit("/", 1)[-1]
+    if not name or any(ch in name for ch in "'\"="):
+        name = "<command>"
     kept = [name]
     for tok in tokens[idx + 1 :]:
-        if tok.startswith("--"):
-            kept.append(tok.split("=", 1)[0])
+        if tok == "--":
+            break  # end-of-options marker: everything after is a positional argument, dropped
+        long_flag = _LONG_FLAG_NAME.match(tok)
+        if long_flag:
+            kept.append(long_flag.group(0))  # the flag NAME only, never its =value
         elif tok.startswith("-") and len(tok) > 1:
-            kept.append(tok[:2])
+            kept.append(tok[:2])  # short flag: keep only the flag letter, drop any attached value
     return " ".join(kept)
 
 
@@ -275,6 +290,12 @@ def _transform_value(value: Any, spec: FieldSpec, ctx: EgressContext, depth: int
     if isinstance(value, dict):
         if spec.kind is ContentKind.METRIC:
             raise ValidationError(FailReason.EGRESS_BLOCKED, "metric_value")
+        # Only an IDENTIFIER field authorizes a keyed collection, because only there are the keys
+        # themselves transformed (tokenized). For any other kind the keys are undeclared
+        # descendants that no schema covers and would ship verbatim, so a keyed object is refused
+        # rather than best-effort masked (finding H4, story 40).
+        if spec.kind is not ContentKind.IDENTIFIER:
+            raise ValidationError(FailReason.EGRESS_BLOCKED, "undeclared_child_object")
         if len(value) > MAX_LIST:
             raise ValidationError(FailReason.EGRESS_BLOCKED, "object_too_large")
         out: dict[str, Any] = {}
@@ -398,12 +419,22 @@ _CONNSTR = re.compile(
 )
 _PAN_CANDIDATE = re.compile(r"\b(?:\d[ -]?){13,19}\b")  # PCI DSS v4.0.1 3.3.1: Luhn-valid PANs
 
+# A whole value that is an HTTP auth scheme plus a single credential token, e.g. "Basic dTpw" or
+# "Bearer <jwt>". Matched as the ENTIRE string so an ordinary sentence ("Bearer of bad news",
+# with spaces after the scheme) does not trip it, but a short Basic credential that evades the
+# 16-character length heuristic still does (finding H15). scan_request scans each decoded value
+# on its own, so {"Authorization": "Basic dTpw"} is caught even though the key and value are
+# separate JSON strings.
+_AUTH_SCHEME_VALUE = re.compile(r"(?i)^(?:basic|bearer)\s+[A-Za-z0-9+/=._-]{2,}$")
+
 
 def scan_text(text: str) -> str | None:
     """Return the id of the first Tier 1 rule that matches, or None."""
     for rule_id, pattern in _DETECTORS:
         if pattern.search(text):
             return rule_id
+    if _AUTH_SCHEME_VALUE.match(text.strip()):
+        return "authorization_scheme_value"
     for match in _CONNSTR.finditer(text):
         value = next((g for g in match.groups() if g is not None), "")
         if not _is_placeholder(value):

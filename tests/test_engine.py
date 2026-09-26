@@ -478,6 +478,36 @@ def test_fingerprint_changes_with_profile_version() -> None:
     assert fp(v1) != fp(v2)
 
 
+def test_fingerprint_differs_for_different_profiles_same_version_h3() -> None:
+    # H3: two profiles that behave differently must not share a fingerprint just because they
+    # carry the same version tag; the profile's actual code content is bound in.
+    from jev_kit.engine import EngineConfig, effective_contract
+    from jev_kit.fingerprint import question_fingerprint
+    from jev_kit.questionset import load_question_set
+
+    qset = load_question_set(question_set())
+
+    def fp(cfg: EngineConfig) -> str:
+        return question_fingerprint(
+            instructions="x", criteria=None, question_type="noul", option_or_level_set=[],
+            model="jev-1.13.0", egress_contract=effective_contract(qset, cfg),
+        )
+
+    def normalizer_a(s: str) -> str:
+        return s.upper()
+
+    def normalizer_b(s: str) -> str:
+        return s.lower()
+
+    cfg_a = EngineConfig(
+        language_profiles={"sql": normalizer_a}, language_profile_versions={"sql": "1"}
+    )
+    cfg_b = EngineConfig(
+        language_profiles={"sql": normalizer_b}, language_profile_versions={"sql": "1"}
+    )
+    assert fp(cfg_a) != fp(cfg_b)
+
+
 def test_profile_without_version_is_rejected_h3() -> None:
     # H3: a profile in use with no declared version could change behavior without changing the
     # fingerprint, so it fails closed rather than defaulting to an "unversioned" marker.
@@ -538,6 +568,41 @@ def test_commit_marker_with_wrong_line_count_does_not_vouch_h11(
     monkeypatch.setattr(engine, "_committed_decisions", set())
     monkeypatch.setattr("jev_kit.receipts.receipts_dir", lambda: tmp_path)
     assert engine.record_outcome(did, "applied") is False
+
+
+def test_unknown_field_and_bool_schema_version_rejected_h18(tmp_path: Any) -> None:
+    # H18: the engine boundary rejects an unknown request field and a schema_version that is not
+    # exactly the integer 1 (True == 1 in Python, so a bare != check would let it through).
+    unknown = request("shadow")
+    unknown["surprise"] = "ride-along"
+    resp = decide(unknown, transport=reply(0.1), config=config(tmp_path))
+    assert resp["status"] == "error" and resp["reason"] == "config"
+
+    boolv = request("shadow")
+    boolv["schema_version"] = True
+    resp2 = decide(boolv, transport=reply(0.1), config=config(tmp_path))
+    assert resp2["status"] == "error" and resp2["reason"] == "config"
+
+
+def test_raw_non_2xx_status_retries_like_typed_failure_h19() -> None:
+    # H19: a raw TransportResponse(429) must enter the same retry path as a typed rate-limit
+    # failure, so the following 200 response is used instead of stopping after one send.
+    from jev_kit.deadline import Deadline
+    from jev_kit.engine import _send_with_retries
+    from jev_kit.transport import MockTransport, TransportResponse
+
+    ok_body = json.dumps({"model": "jev-1.13.0", "answers": {}}).encode()
+    transport = MockTransport(
+        outcomes=[
+            TransportResponse(429, {"retry-after-ms": "0"}, b""),
+            TransportResponse(200, {}, ok_body),
+        ]
+    )
+    result, sends = _send_with_retries(
+        transport, b"{}", Deadline(10.0), RateBudget(), 1, 2
+    )
+    assert isinstance(result, TransportResponse) and result.status == 200
+    assert sends == 2  # the raw 429 was retried, not returned as a terminal failure
 
 
 def test_config_from_env_reads_source_allowlist(monkeypatch: Any) -> None:

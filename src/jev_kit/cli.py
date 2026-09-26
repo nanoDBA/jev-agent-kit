@@ -177,11 +177,14 @@ def main(argv: list[str] | None = None) -> int:
         text = sys.stdin.read()
 
     # Strict parse: reject duplicate keys and NaN/Infinity, matching the fingerprint parser so
-    # the CLI cannot accept a request the engine would treat differently (finding H18).
+    # the CLI cannot accept a request the engine would treat differently (finding H18). The
+    # exception text is discarded: a strict-parse error names the offending key or value (for
+    # example a duplicate key that could be secret-shaped), so only a fixed, closed-vocabulary
+    # message reaches stderr, never the raw input (finding H21).
     try:
         parsed = parse_canonical(text)
-    except ValueError as exc:
-        return _fail_invocation(f"invalid JSON on input: {exc}")
+    except ValueError:
+        return _fail_invocation("invalid JSON on input")
 
     if not isinstance(parsed, dict):
         return _fail_invocation("request must be a JSON object")

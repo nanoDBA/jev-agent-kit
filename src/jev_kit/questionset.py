@@ -198,6 +198,11 @@ def _parse(obj: Any) -> QuestionSet:
     for value, check in checks:
         if not isinstance(value, str) or not value:
             raise ValidationError(FailReason.CONFIG, check)
+    # The id, version, model and escalation target all land verbatim in durable receipts, so a
+    # secret-shaped value in any of them is refused at load rather than persisted (finding H6).
+    for value in (set_id, version, model, escalation):
+        if scan_text(value) is not None:
+            raise ValidationError(FailReason.CONFIG, "questionset_metadata_secret_shaped")
 
     return QuestionSet(
         set_id=set_id,

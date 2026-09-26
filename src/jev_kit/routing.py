@@ -151,7 +151,9 @@ def _score_candidate(answer: ScoreAnswer, t: ScoreThreshold) -> Candidate:
     rubric_max = float(len(answer.probabilities) - 1)
     ordered = sorted(t.intervals, key=lambda i: i.lower)
     for interval in ordered:
-        if interval.upper > rubric_max + TIE_TOLERANCE or interval.lower < -TIE_TOLERANCE:
+        if interval.upper > rubric_max or interval.lower < 0.0:
+            # Exact bounds: an interval even slightly beyond [0, n-1] is a configuration error,
+            # never tolerated by a fuzzy margin that would let 2.0000000005 clear (finding H9).
             raise ValidationError(FailReason.CONFIG, "score_interval_out_of_domain")
     for interval in ordered:
         at_top = interval.upper >= rubric_max  # inclusive only when it reaches the rubric max (H9)

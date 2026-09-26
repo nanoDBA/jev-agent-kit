@@ -119,6 +119,7 @@ def _registry_file(tmp_path: Any, fingerprint: str) -> str:
                 "evidence_ref": "ev-1",
                 "type": "noul",
                 "threshold": {"yes_bound": 0.9, "no_bound": 0.1},
+                "date": "2026-09-25",
             }
         },
     }
@@ -129,8 +130,9 @@ def _registry_file(tmp_path: Any, fingerprint: str) -> str:
 
 def test_accept_path_through_fake_server(server: HTTPServer, tmp_path: Any) -> None:
     # The one accept path: a non-mock transport, calibrated threshold, enforce, clear answer.
+    from jev_kit.engine import effective_contract
     from jev_kit.fingerprint import question_fingerprint
-    from jev_kit.questionset import egress_contract, load_question_set
+    from jev_kit.questionset import load_question_set
 
     qset_obj = {
         "schema_version": 1,
@@ -150,7 +152,7 @@ def test_accept_path_through_fake_server(server: HTTPServer, tmp_path: Any) -> N
         question_type="noul",
         option_or_level_set=[],
         model="jev-1.13.0",
-        egress_contract=egress_contract(qset),
+        egress_contract=effective_contract(qset, EngineConfig()),
     )
     _Handler.behavior = "ok"
     _Handler.payload = json.dumps(
@@ -162,6 +164,7 @@ def test_accept_path_through_fake_server(server: HTTPServer, tmp_path: Any) -> N
         writer=ReceiptWriter(directory=tmp_path),
         rate_budget=RateBudget(),
         registry_path=_registry_file(tmp_path, fp),
+        attestation={"inventory": True, "inventory_date": "2026-09-25", "dpa": True},
     )
     request = {
         "schema_version": 1,
@@ -181,8 +184,9 @@ def test_late_response_is_rejected(server: HTTPServer, tmp_path: Any) -> None:
     # Finding C02: evidence arriving after the deadline is discarded, not accepted.
     import time as _time
 
+    from jev_kit.engine import effective_contract
     from jev_kit.fingerprint import question_fingerprint
-    from jev_kit.questionset import egress_contract, load_question_set
+    from jev_kit.questionset import load_question_set
 
     qset_obj = {
         "schema_version": 1, "id": "t", "version": "1", "model": "jev-1.13.0",
@@ -203,11 +207,13 @@ def test_late_response_is_rejected(server: HTTPServer, tmp_path: Any) -> None:
     qset = load_question_set(qset_obj)
     fp = question_fingerprint(
         instructions="Destructive?", criteria=None, question_type="noul",
-        option_or_level_set=[], model="jev-1.13.0", egress_contract=egress_contract(qset),
+        option_or_level_set=[], model="jev-1.13.0",
+        egress_contract=effective_contract(qset, EngineConfig()),
     )
     cfg = EngineConfig(
         hmac_key=HMAC_KEY, writer=ReceiptWriter(directory=tmp_path), rate_budget=RateBudget(),
         registry_path=_registry_file(tmp_path, fp), deadline_seconds=0.01, receipt_reserve=0.0,
+        attestation={"inventory": True, "inventory_date": "2026-09-25", "dpa": True},
     )
     req = {"schema_version": 1, "question_set": qset_obj, "state": {"cmd": "ls"}, "mode": "enforce"}
     resp = decide(req, transport=_SlowTransport("K", endpoint(server)), config=cfg)
@@ -232,3 +238,37 @@ def test_live_transport_endpoint_is_fixed() -> None:
     assert t._endpoint == DEFAULT_ENDPOINT
     with pytest.raises(TypeError):
         LiveTransport("K", endpoint="https://evil.example")  # type: ignore[call-arg]
+
+
+def test_live_send_without_attestation_is_refused(server: HTTPServer, tmp_path: Any) -> None:
+    # Finding C03: a non-mock send with a personal-kind field and no attestation is refused.
+    from jev_kit.engine import effective_contract
+    from jev_kit.fingerprint import question_fingerprint
+    from jev_kit.questionset import load_question_set
+
+    qset_obj = {
+        "schema_version": 1, "id": "t", "version": "1", "model": "jev-1.13.0",
+        "escalation_target": "gpt-6",
+        "questions": {"d": {"type": "noul", "instructions": "Destructive?", "consequence": "gate"}},
+        "state_schema": {"cmd": {"kind": "command"}},
+    }
+    qset = load_question_set(qset_obj)
+    fp = question_fingerprint(
+        instructions="Destructive?", criteria=None, question_type="noul",
+        option_or_level_set=[], model="jev-1.13.0",
+        egress_contract=effective_contract(qset, EngineConfig()),
+    )
+    _Handler.behavior = "ok"
+    _Handler.payload = json.dumps(
+        {"model": "jev-1.13.0", "answers": {"d": {"noul": 0.02}}}
+    ).encode()
+    cfg = EngineConfig(
+        hmac_key=HMAC_KEY, writer=ReceiptWriter(directory=tmp_path), rate_budget=RateBudget(),
+        registry_path=_registry_file(tmp_path, fp),
+        attestation={"inventory": True, "inventory_date": "2026-09-25", "dpa": False},
+    )
+    req = {"schema_version": 1, "question_set": qset_obj, "state": {"cmd": "ls"}, "mode": "enforce"}
+    resp = decide(req, transport=_HttpLiveTransport("K", endpoint(server)), config=cfg)
+    rec = resp["records"][0]
+    assert rec["route"] == "ask"  # dpa=false but a personal (command) field is present
+    assert rec["fail_reason"] == "attestation"

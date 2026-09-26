@@ -255,3 +255,45 @@ def test_receipt_failure_routes_failure_first(tmp_path: Any, monkeypatch: Any) -
     assert rec["route"] == "ask"
     assert rec["fail_reason"] == "receipt"
     assert rec["receipt_written"] is False
+
+
+# --- C07 fingerprint includes effective egress config -----------------------
+
+
+def test_fingerprint_changes_with_allowlist() -> None:
+    from jev_kit.engine import EngineConfig, effective_contract
+    from jev_kit.fingerprint import question_fingerprint
+    from jev_kit.questionset import load_question_set
+
+    qset = load_question_set(question_set())
+
+    def fp(cfg: EngineConfig) -> str:
+        return question_fingerprint(
+            instructions="x", criteria=None, question_type="noul", option_or_level_set=[],
+            model="jev-1.13.0", egress_contract=effective_contract(qset, cfg),
+        )
+
+    assert fp(EngineConfig()) != fp(EngineConfig(public_names=frozenset({"db01"})))
+    assert fp(EngineConfig()) != fp(EngineConfig(source_allowlist=frozenset({"web"})))
+
+
+# --- C13 budgets ------------------------------------------------------------
+
+
+def test_request_over_byte_budget_blocked(tmp_path: Any) -> None:
+    cfg = EngineConfig(
+        hmac_key=HMAC_KEY, writer=ReceiptWriter(directory=tmp_path), rate_budget=RateBudget(),
+        max_request_bytes=10,
+    )
+    rec = only(decide(request("enforce"), transport=reply(0.1), config=cfg))
+    assert rec["route"] == "ask"
+    assert rec["fail_reason"] == "budget_exceeded"
+
+
+def test_positional_array_over_cap_blocked(tmp_path: Any) -> None:
+    req = request("enforce")
+    req["question_set"]["state_schema"] = {"ids": {"kind": "identifier"}}
+    req["state"] = {"ids": [f"h{i}" for i in range(21)]}
+    rec = only(decide(req, transport=reply(0.1), config=config(tmp_path)))
+    assert rec["route"] == "ask"
+    assert rec["fail_reason"] == "egress_blocked"

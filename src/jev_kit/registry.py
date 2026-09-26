@@ -15,6 +15,11 @@ Every failure raises ``jev_kit.errors.ValidationError(FailReason.CONFIG, <check>
 a short static check name; the offending value is never echoed. Threshold-shape checks
 (bound ranges, ordering, non-overlapping score intervals) are left to the routing
 dataclasses' own ``__post_init__``, which already raises the same error type.
+
+A calibrated entry must also carry a ``date`` field, an ISO calendar date (story 72);
+uncalibrated and never-auto-accept entries do not require one. Score interval labels are
+checked against a safe pattern at load time, alongside escalation target and evidence
+reference (story 79a, finding C08).
 """
 
 from __future__ import annotations
@@ -45,10 +50,18 @@ _FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
 # (spec story 79a).
 _SAFE_STRING_RE = re.compile(r"^[A-Za-z0-9 ._:-]{1,200}$")
 
+# Score interval labels: same idea, a bit shorter and allowing "+" and "/" for things like
+# "pass/fail" or "A+" (spec story 79a, finding C08). No control characters, no newlines.
+_LABEL_RE = re.compile(r"^[A-Za-z0-9 ._:+/-]{1,64}$")
+
+# Calibration date (spec story 72): a plain ISO calendar date, not validated as a real
+# calendar day (that is not this loader's job, just shape).
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
 _STATUS_BY_VALUE = {status.value: status for status in ThresholdStatus}
 
 _ENTRY_REQUIRED_KEYS = {"status", "escalation_target", "evidence_ref"}
-_ENTRY_OPTIONAL_KEYS = {"type", "threshold"}
+_ENTRY_OPTIONAL_KEYS = {"type", "threshold", "date"}
 _ENTRY_ALLOWED_KEYS = _ENTRY_REQUIRED_KEYS | _ENTRY_OPTIONAL_KEYS
 
 
@@ -143,8 +156,11 @@ def _build_score_interval(raw: Any) -> ScoreInterval:
     lower = _require_number(obj["lower"], "registry_score_interval_lower")
     upper = _require_number(obj["upper"], "registry_score_interval_upper")
     label = obj["label"]
-    if not isinstance(label, str) or not label:
-        raise ValidationError(FailReason.CONFIG, "registry_score_interval_label")
+    # Finding C08: a score interval label is free text an operator writes into the
+    # registry, but it is copied into records and receipts, so it gets the same safe
+    # pattern as escalation_target and evidence_ref (no newlines, no control characters).
+    if not isinstance(label, str) or not _LABEL_RE.fullmatch(label):
+        raise ValidationError(FailReason.CONFIG, "label_unsafe")
     return ScoreInterval(lower=lower, upper=upper, label=label)
 
 
@@ -172,6 +188,21 @@ def _build_threshold(question_type: Any, raw: Any) -> Threshold:
     raise ValidationError(FailReason.CONFIG, "registry_type_invalid")
 
 
+def _require_calibration_date(obj: dict[str, Any]) -> None:
+    """Validate the calibration date on a calibrated entry (spec story 72).
+
+    ``routing.RegistryEntry`` has no ``date`` field of its own (that dataclass belongs to
+    another part of the kit), so there is nothing to store the parsed value on here. This
+    only checks that the date is present and well-formed; a future ``RegistryEntry`` field
+    would be populated from ``date`` right where this function is called.
+    """
+    date = obj.get("date")
+    if date is None:
+        raise ValidationError(FailReason.CONFIG, "entry_no_date")
+    if not isinstance(date, str) or not _DATE_RE.fullmatch(date):
+        raise ValidationError(FailReason.CONFIG, "entry_bad_date")
+
+
 def _build_entry(raw: Any) -> RegistryEntry:
     obj = _require_object(raw, "registry_entry_not_object")
     unknown = set(obj.keys()) - _ENTRY_ALLOWED_KEYS
@@ -192,6 +223,13 @@ def _build_entry(raw: Any) -> RegistryEntry:
         if "type" not in obj or "threshold" not in obj:
             raise ValidationError(FailReason.CONFIG, "registry_calibrated_missing_threshold")
         threshold = _build_threshold(obj["type"], obj["threshold"])
+        # Uncalibrated and never_auto_accept entries do not require a date (story 72).
+        _require_calibration_date(obj)
+    elif "date" in obj and (
+        not isinstance(obj["date"], str) or not _DATE_RE.fullmatch(obj["date"])
+    ):
+        # A date is optional here, but if one was written, keep it honest.
+        raise ValidationError(FailReason.CONFIG, "entry_bad_date")
 
     return RegistryEntry(
         status=status,
@@ -244,3 +282,22 @@ def load_registry(path: str | os.PathLike[str]) -> dict[str, RegistryEntry]:
     except OSError as exc:
         raise ValidationError(FailReason.CONFIG, "registry_unreadable") from exc
     return loads_registry(text)
+
+
+def resolve_registry_path(
+    explicit: str | os.PathLike[str] | None,
+) -> str | os.PathLike[str] | None:
+    """Resolve which registry path to load (spec story 72, finding C19).
+
+    An explicit path always wins. Otherwise, ``JEV_KIT_REGISTRY`` is used when it is set to
+    a non-empty string. Otherwise ``None``: the caller should treat that as "no registry"
+    and get an empty mapping from ``load_registry`` (or skip calling it), so every question
+    is uncalibrated. The engine's config building should call this before deciding whether
+    to call ``load_registry`` at all.
+    """
+    if explicit is not None:
+        return explicit
+    from_env = os.environ.get("JEV_KIT_REGISTRY")
+    if isinstance(from_env, str) and from_env:
+        return from_env
+    return None

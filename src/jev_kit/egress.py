@@ -32,7 +32,8 @@ from typing import Any
 from jev_kit.errors import FailReason, ValidationError
 
 MAX_DEPTH = 16
-MAX_LIST = 200
+MAX_LIST = 200  # keyed collections
+MAX_POSITIONAL_LIST = 20  # positional arrays (finding C13; spec story 33)
 _SAFE_KEY = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 
 # Tier 3 metric strings are product/version tokens only (spec story 39 to 40; finding C04):
@@ -204,8 +205,9 @@ def _transform_value(value: Any, spec: FieldSpec, ctx: EgressContext, depth: int
         if spec.kind is ContentKind.METRIC:
             # A nested container is not a metric value, whatever its leaves hold (finding C04).
             raise ValidationError(FailReason.EGRESS_BLOCKED, "metric_value")
-        if len(value) > MAX_LIST:
-            raise ValidationError(FailReason.EGRESS_BLOCKED, "list_too_long")
+        if len(value) > MAX_POSITIONAL_LIST:
+            # Positional arrays are capped tighter than keyed collections (finding C13).
+            raise ValidationError(FailReason.EGRESS_BLOCKED, "positional_list_too_long")
         return [_transform_value(item, spec, ctx, depth + 1) for item in value]
     if isinstance(value, dict):
         if spec.kind is ContentKind.METRIC:

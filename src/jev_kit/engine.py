@@ -30,6 +30,7 @@ from typing import Any
 
 from jev_kit import registry as registry_mod
 from jev_kit import secrets
+from jev_kit.attestation import check_attestation, load_attestation
 from jev_kit.deadline import Deadline
 from jev_kit.egress import EgressContext, personal_kinds_present, scan_request, transform_state
 from jev_kit.errors import FailReason, ValidationError, fail_reason_for_status
@@ -85,7 +86,23 @@ class EngineConfig:
     language_profiles: Mapping[str, Callable[[str], str]] = field(default_factory=dict)
     rate_budget: RateBudget | None = None
     writer: ReceiptWriter | None = None
-    require_dpa_attested: bool = False  # set by the live path; mock never requires it
+    attestation_path: str | None = None
+    attestation: dict[str, Any] | None = None  # injected for tests; else loaded from path/env
+    max_request_bytes: int = 49_152  # 48 KiB serialized ceiling (finding C13)
+    max_request_tokens: int = 16_000  # whole-request token budget (finding C13)
+    max_state_question_tokens: int = 12_000  # state plus the longest question (finding C13)
+
+
+def effective_contract(qset: QuestionSet, config: EngineConfig) -> dict[str, Any]:
+    """The full egress contract hashed into question fingerprints: the question set's declared
+    schema plus the local effective allowlists and profile identities (finding C07)."""
+    contract = egress_contract(qset)
+    contract["effective"] = {
+        "public_names": sorted(config.public_names),
+        "source_allowlist": sorted(config.source_allowlist),
+        "language_profiles": sorted(config.language_profiles),
+    }
+    return contract
 
 
 def _error_envelope(reason: FailReason) -> dict[str, Any]:
@@ -257,7 +274,9 @@ def _decide(
     writer = config.writer or get_writer()
     call_id = new_action_id()
     set_digest = question_set_digest(qset.raw)
-    contract = egress_contract(qset)
+    # The fingerprint contract includes the local effective egress configuration and profile
+    # identities, so changing an allowlist or profile invalidates a prior calibration (C07).
+    contract = effective_contract(qset, config)
 
     # A whole-request failure (alias, registry, egress, transport, validation) sets these.
     whole_fail: FailReason | None = None
@@ -271,9 +290,8 @@ def _decide(
     registry: dict[str, RegistryEntry] = {}
     if whole_fail is None:
         try:
-            registry = (
-                registry_mod.load_registry(config.registry_path) if config.registry_path else {}
-            )
+            registry_path = registry_mod.resolve_registry_path(config.registry_path)
+            registry = registry_mod.load_registry(registry_path) if registry_path else {}
         except ValidationError:
             whole_fail = FailReason.CONFIG
 
@@ -291,15 +309,38 @@ def _decide(
                 transcript_cap=qset.transcripts_cap,
             )
             outgoing_state = transform_state(state, qset.schema, ctx)
-            wire = {
+            wire_questions: dict[str, Any] = {
+                qid: _wire_question(q) for qid, q in qset.questions.items()
+            }
+            wire: dict[str, Any] = {
                 "model": qset.model,
                 "state": outgoing_state,
-                "questions": {qid: _wire_question(q) for qid, q in qset.questions.items()},
+                "questions": wire_questions,
             }
             serialized = canonical_bytes(wire)
-            hit = scan_request(serialized, wire)
-            if hit is not None:
-                whole_fail = FailReason.EGRESS_BLOCKED
+            # Size and token budgets before scan or send (finding C13). ceil(bytes/3).
+            est_tokens = -(-len(serialized) // 3)
+            state_bytes = len(canonical_bytes(outgoing_state))
+            longest_q = max(
+                (len(canonical_bytes(v)) for v in wire_questions.values()), default=0
+            )
+            state_plus_longest = -(-(state_bytes + longest_q) // 3)
+            over_budget = (
+                len(serialized) > config.max_request_bytes
+                or est_tokens > config.max_request_tokens
+                or state_plus_longest > config.max_state_question_tokens
+            )
+            if over_budget:
+                whole_fail = FailReason.BUDGET_EXCEEDED
+            else:
+                hit = scan_request(serialized, wire)
+                if hit is not None:
+                    whole_fail = FailReason.EGRESS_BLOCKED
+                elif not transport.is_mock:
+                    # Live send: enforce the inventory/DPA attestation (finding C03).
+                    personal = personal_kinds_present(qset.schema)
+                    attest = config.attestation or load_attestation(config.attestation_path)
+                    check_attestation(attest, personal_present=personal)
         except ValidationError as exc:
             whole_fail = exc.reason
         except Exception:

@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from jev_kit.errors import FailReason, ValidationError
-from jev_kit.registry import load_registry, loads_registry
+from jev_kit.registry import load_registry, loads_registry, resolve_registry_path
 from jev_kit.routing import ChoiceThreshold, NoulThreshold, ScoreThreshold, ThresholdStatus
 
 FP_NOUL = "a" * 64
@@ -33,6 +33,7 @@ def _valid_registry() -> dict[str, object]:
                 "status": "calibrated",
                 "escalation_target": "human-review",
                 "evidence_ref": "ev-2026-09-01",
+                "date": "2026-09-01",
                 "type": "noul",
                 "threshold": {"yes_bound": 0.9, "no_bound": 0.1},
             },
@@ -40,6 +41,7 @@ def _valid_registry() -> dict[str, object]:
                 "status": "calibrated",
                 "escalation_target": "human-review",
                 "evidence_ref": "ev-2026-09-02",
+                "date": "2026-09-02",
                 "type": "choice",
                 "threshold": {"min_confidence": 0.7, "min_margin": 0.2},
             },
@@ -47,6 +49,7 @@ def _valid_registry() -> dict[str, object]:
                 "status": "calibrated",
                 "escalation_target": "human-review",
                 "evidence_ref": "ev-2026-09-03",
+                "date": "2026-09-03",
                 "type": "score",
                 "threshold": {
                     "min_confidence": 0.6,
@@ -369,3 +372,136 @@ def test_unknown_threshold_type_rejected() -> None:
     with pytest.raises(ValidationError) as exc_info:
         loads_registry(json.dumps(registry))
     assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_calibrated_entry_without_date_rejected() -> None:
+    registry = {
+        "schema_version": 1,
+        "entries": {
+            FP_NOUL: {
+                "status": "calibrated",
+                "escalation_target": "human-review",
+                "evidence_ref": "ev",
+                "type": "noul",
+                "threshold": {"yes_bound": 0.9, "no_bound": 0.1},
+                # date omitted
+            }
+        },
+    }
+    with pytest.raises(ValidationError) as exc_info:
+        loads_registry(json.dumps(registry))
+    assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_calibrated_entry_with_valid_date_accepted() -> None:
+    registry = {
+        "schema_version": 1,
+        "entries": {
+            FP_NOUL: {
+                "status": "calibrated",
+                "escalation_target": "human-review",
+                "evidence_ref": "ev",
+                "date": "2026-09-25",
+                "type": "noul",
+                "threshold": {"yes_bound": 0.9, "no_bound": 0.1},
+            }
+        },
+    }
+    entries = loads_registry(json.dumps(registry))
+    assert entries[FP_NOUL].status is ThresholdStatus.CALIBRATED
+
+
+def test_calibrated_entry_bad_date_format_rejected() -> None:
+    registry = {
+        "schema_version": 1,
+        "entries": {
+            FP_NOUL: {
+                "status": "calibrated",
+                "escalation_target": "human-review",
+                "evidence_ref": "ev",
+                "date": "09/25/2026",
+                "type": "noul",
+                "threshold": {"yes_bound": 0.9, "no_bound": 0.1},
+            }
+        },
+    }
+    with pytest.raises(ValidationError) as exc_info:
+        loads_registry(json.dumps(registry))
+    assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_uncalibrated_entry_without_date_accepted() -> None:
+    registry = {
+        "schema_version": 1,
+        "entries": {
+            FP_UNCAL: {
+                "status": "uncalibrated",
+                "escalation_target": "human-review",
+                "evidence_ref": "ev",
+                # no date: not required for an uncalibrated entry
+            }
+        },
+    }
+    entries = loads_registry(json.dumps(registry))
+    assert entries[FP_UNCAL].status is ThresholdStatus.UNCALIBRATED
+
+
+def test_never_auto_accept_entry_without_date_accepted() -> None:
+    registry = {
+        "schema_version": 1,
+        "entries": {
+            FP_NEVER: {
+                "status": "never_auto_accept",
+                "escalation_target": "human-review",
+                "evidence_ref": "ev",
+            }
+        },
+    }
+    entries = loads_registry(json.dumps(registry))
+    assert entries[FP_NEVER].status is ThresholdStatus.NEVER_AUTO_ACCEPT
+
+
+def test_score_interval_label_with_newline_rejected() -> None:
+    registry = {
+        "schema_version": 1,
+        "entries": {
+            FP_SCORE: {
+                "status": "calibrated",
+                "escalation_target": "human-review",
+                "evidence_ref": "ev",
+                "date": "2026-09-25",
+                "type": "score",
+                "threshold": {
+                    "min_confidence": 0.6,
+                    "intervals": [
+                        {"lower": 0.0, "upper": 1.0, "label": "safe\nunsafe"},
+                    ],
+                },
+            }
+        },
+    }
+    with pytest.raises(ValidationError) as exc_info:
+        loads_registry(json.dumps(registry))
+    assert exc_info.value.reason is FailReason.CONFIG
+
+
+def test_resolve_registry_path_explicit_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JEV_KIT_REGISTRY", "/env/registry.json")
+    assert resolve_registry_path("/explicit/registry.json") == "/explicit/registry.json"
+
+
+def test_resolve_registry_path_uses_env_when_no_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JEV_KIT_REGISTRY", "/env/registry.json")
+    assert resolve_registry_path(None) == "/env/registry.json"
+
+
+def test_resolve_registry_path_none_when_neither(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("JEV_KIT_REGISTRY", raising=False)
+    assert resolve_registry_path(None) is None
+
+
+def test_resolve_registry_path_ignores_empty_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JEV_KIT_REGISTRY", "")
+    assert resolve_registry_path(None) is None

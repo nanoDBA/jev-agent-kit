@@ -636,3 +636,15 @@ def test_free_text_signed_password_blocked_on_outgoing_bytes_h15() -> None:
     )
     body = json.dumps({"state": out}).encode()
     assert scan_request(body, json.loads(body)) is not None
+
+
+def test_container_and_duplicate_key_credentials_detected_h15() -> None:
+    # Batch-11 H15: a container under a strong-secret key keeps its secret context, and a
+    # duplicate (padded/case-folded) key in embedded JSON fails closed instead of json.loads
+    # silently keeping only the last member. Empty containers and placeholders stay clean.
+    assert scan_text('{"password":["opensesame"]}') is not None
+    assert scan_text('{"password":{"value":"opensesame"}}') is not None
+    assert scan_request(b"{}", {"password": ["x"]}) is not None
+    assert scan_text('{" password ":"opensesame"," password ":"<redacted>"}') is not None
+    assert scan_text('{"password":[]}') is None
+    assert scan_text('{"password":"<redacted>"}') is None

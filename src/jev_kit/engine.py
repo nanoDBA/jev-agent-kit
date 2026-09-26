@@ -226,13 +226,18 @@ def _global_dependencies_repr(profile: Callable[[str], str], code: Any) -> str:
     import dis
     import types
 
-    referenced = sorted(
-        {
-            instr.argval
-            for instr in dis.get_instructions(code)
-            if instr.opname == "LOAD_GLOBAL" and isinstance(instr.argval, str)
-        }
-    )
+    # Walk the outer code AND every nested code object (generator expressions, lambdas, inner
+    # functions): a global read only inside a nested generator is still a behavior dependency,
+    # and inspecting just the outer instructions let a mutable rule dict slip through (H3).
+    names: set[str] = set()
+    pending = [code]
+    while pending:
+        current = pending.pop()
+        for instr in dis.get_instructions(current):
+            if instr.opname == "LOAD_GLOBAL" and isinstance(instr.argval, str):
+                names.add(instr.argval)
+        pending.extend(const for const in current.co_consts if hasattr(const, "co_code"))
+    referenced = sorted(names)
     module_globals = getattr(profile, "__globals__", {})
     parts: list[str] = []
     for name in referenced:

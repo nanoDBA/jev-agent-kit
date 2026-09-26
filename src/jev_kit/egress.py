@@ -515,13 +515,32 @@ def _scan_embedded_json(text: str) -> str | None:
     if not stripped or stripped[0] not in "{[" or len(stripped) > _MAX_EMBEDDED_JSON:
         return None
     try:
-        parsed = json.loads(stripped)
+        parsed = json.loads(stripped, object_pairs_hook=_pairs_rejecting_duplicates)
+    except _DuplicateEmbeddedKey:
+        # Ordinary json.loads keeps only the LAST duplicate member, so an earlier credential
+        # hidden behind a padded duplicate key would be scanned away while the outgoing string
+        # still carries it. A duplicate (after trimming/case-folding) fails closed (H15).
+        return "embedded_json_duplicate_key"
     except (ValueError, RecursionError):
         return None
     try:
         return _scan_auth_pairs(parsed)
     except RecursionError:
         return "embedded_json_too_deep"  # fail closed on pathological nesting
+
+
+class _DuplicateEmbeddedKey(Exception):
+    pass
+
+
+def _pairs_rejecting_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    seen: set[str] = set()
+    for key, _ in pairs:
+        normalized = key.strip().lower()
+        if normalized in seen:
+            raise _DuplicateEmbeddedKey
+        seen.add(normalized)
+    return dict(pairs)
 
 
 def _scan_text_once(text: str) -> str | None:
@@ -614,6 +633,11 @@ def _is_nonempty_secret_scalar(value: Any) -> bool:
         return True
     if isinstance(value, str):
         return value.strip() != "" and not _is_placeholder(value)
+    if isinstance(value, (list, tuple, dict)):
+        # A container under a strong-secret key ({"password": ["x"]} or {"password": {"v": "x"}})
+        # carries the secret one level down; recursion alone would lose the parent's secret
+        # context, so any non-empty container here is a leak (finding H15).
+        return len(value) > 0
     return False
 
 

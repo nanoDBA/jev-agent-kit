@@ -168,3 +168,15 @@ def test_signed_password_in_question_set_id_rejected_h15() -> None:
     with pytest.raises(ValidationError) as exc:
         load_question_set(obj)
     assert exc.value.reason is FailReason.CONFIG
+
+
+@pytest.mark.parametrize(
+    "bad_id", ['{"password":["x"]}', '{" password ":"x"," password ":"<redacted>"}']
+)
+def test_container_or_duplicate_credential_in_id_rejected_h15(bad_id: str) -> None:
+    # Batch-11 H15: these shapes must not persist as question-set metadata in any receipt.
+    obj = base(_noul_q())
+    obj["id"] = bad_id
+    with pytest.raises(ValidationError) as exc:
+        load_question_set(obj)
+    assert exc.value.reason is FailReason.CONFIG

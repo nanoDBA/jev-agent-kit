@@ -864,3 +864,34 @@ def test_fingerprint_stable_across_fresh_processes_h3() -> None:
         for _ in range(3)
     }
     assert len(outputs) == 1 and len(next(iter(outputs))) == 64
+
+
+_NESTED_RULES = {"replacement": "SELECT ?"}
+
+
+def _nested_global_normalizer(text: str) -> str:
+    return next(_NESTED_RULES["replacement"] for _ in [0])
+
+
+def test_nested_code_global_dependency_fails_closed_h3() -> None:
+    # Batch-11 H3: a mutable global read only inside a nested generator is still a behavior
+    # dependency; every nested code object is walked, so this profile fails closed. A benign
+    # generator with no global dependency is still accepted.
+    from jev_kit.engine import EngineConfig, effective_contract
+    from jev_kit.errors import FailReason, ValidationError
+    from jev_kit.questionset import load_question_set
+
+    qset = load_question_set(question_set())
+    bad = EngineConfig(
+        language_profiles={"sql": _nested_global_normalizer},
+        language_profile_versions={"sql": "1"},
+    )
+    with pytest.raises(ValidationError) as exc:
+        effective_contract(qset, bad)
+    assert exc.value.reason is FailReason.CONFIG
+
+    def benign(text: str) -> str:
+        return "".join(c for c in text if c.isalnum())
+
+    ok = EngineConfig(language_profiles={"sql": benign}, language_profile_versions={"sql": "1"})
+    assert "transform_digest" in effective_contract(qset, ok)

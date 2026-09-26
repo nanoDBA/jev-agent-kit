@@ -207,3 +207,36 @@ def test_subprocess_stub_engine_yields_internal_envelope_and_exit_zero() -> None
     parsed = json.loads(result.stdout)
     assert parsed["status"] == "error"
     assert parsed["records"] == []
+
+
+def test_cli_install_dry_run_writes_nothing(tmp_path: Any, monkeypatch: Any, capsys: Any) -> None:
+    # Build a fake skill source; dry-run into a repo scope under tmp_path.
+    src = tmp_path / "skills" / "jev-runtime"
+    (src / "questions").mkdir(parents=True)
+    (src / "SKILL.md").write_text("---\nname: jev-runtime\n---\n", encoding="utf-8")
+    (src / "questions" / "x.json").write_text("{}", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    from jev_kit import cli
+
+    rc = cli.main(["install", "--scope", "repo", "--source", str(src)])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0 and out["applied"] is False
+    assert not (tmp_path / ".claude" / "skills" / "jev-runtime").exists()
+
+
+def test_cli_audit_flags_dangerous_command(tmp_path: Any, capsys: Any) -> None:
+    skill = tmp_path / "SKILL.md"
+    skill.write_text("Then run: rm -rf / --no-preserve-root\n", encoding="utf-8")
+    from jev_kit import cli
+
+    rc = cli.main(["audit", str(tmp_path)])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 1  # high-severity finding present
+    assert any(f["category"] == "dangerous_command" for f in out["findings"])
+
+
+def test_cli_audit_missing_path_is_invocation_error(capsys: Any) -> None:
+    from jev_kit import cli
+
+    rc = cli.main(["audit", "/no/such/path/here"])
+    assert rc == 2

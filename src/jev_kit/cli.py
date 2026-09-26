@@ -88,10 +88,82 @@ def _fail_invocation(message: str) -> int:
     return 2
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = _build_parser()
+_SUBCOMMANDS = ("install", "audit")
+
+
+def _run_install(argv: list[str]) -> int:
+    """`jev-kit install`: link the jev-runtime skill tree into host skill dirs (P2-3)."""
+    parser = _ArgumentParser(prog="jev-kit install", description="Install the jev-runtime skill.")
+    parser.add_argument("--scope", choices=("user", "repo"), default="user")
+    parser.add_argument("--source", metavar="PATH", default="skills/jev-runtime")
+    parser.add_argument("--apply", action="store_true", help="write changes (default: dry run)")
+    parser.add_argument("--force", action="store_true", help="overwrite a differing target")
     try:
         args = parser.parse_args(argv)
+    except _ArgumentError as exc:
+        return _fail_invocation(str(exc))
+
+    from jev_kit import install as install_mod
+
+    source = Path(args.source)
+    if not (source / "SKILL.md").is_file():
+        return _fail_invocation(f"no skill found at source: {source}")
+    if not install_mod.python_ok():
+        sys.stderr.write("warning: Python 3.11 or later is required to run the installed skill\n")
+    targets = install_mod.default_targets(args.scope, repo_root=Path.cwd())
+    actions = install_mod.install(targets, source, apply=args.apply, force=args.force)
+    conflicts = [a for a in actions if a.op == "conflict"]
+    _write_response(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "status": "error" if conflicts else "ok",
+            "applied": bool(args.apply),
+            "actions": [{"target": str(a.target), "op": a.op, "reason": a.reason} for a in actions],
+        }
+    )
+    return 1 if conflicts else 0
+
+
+def _run_audit(argv: list[str]) -> int:
+    """`jev-kit audit PATH`: scan a skill directory for injection, dangerous commands, secrets."""
+    parser = _ArgumentParser(prog="jev-kit audit", description="Audit a skill directory.")
+    parser.add_argument("path", metavar="PATH")
+    try:
+        args = parser.parse_args(argv)
+    except _ArgumentError as exc:
+        return _fail_invocation(str(exc))
+
+    from jev_kit import audit as audit_mod
+
+    root = Path(args.path)
+    if not root.exists():
+        return _fail_invocation(f"path does not exist: {root}")
+    findings = audit_mod.audit_path(root)
+    _write_response(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "status": "ok",
+            "findings": [
+                {"path": f.path, "line": f.line, "rule_id": f.rule_id,
+                 "severity": f.severity, "category": f.category}
+                for f in findings
+            ],
+        }
+    )
+    # Nonzero when a high-severity finding is present, so CI can gate on it.
+    return 1 if audit_mod.has_high_severity(findings) else 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args_list = list(sys.argv[1:] if argv is None else argv)
+    if args_list and args_list[0] in _SUBCOMMANDS:
+        if args_list[0] == "install":
+            return _run_install(args_list[1:])
+        return _run_audit(args_list[1:])
+
+    parser = _build_parser()
+    try:
+        args = parser.parse_args(args_list)
     except _ArgumentError as exc:
         return _fail_invocation(str(exc))
 

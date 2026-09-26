@@ -51,3 +51,43 @@ egress, receipts. Governed by ADR 0001-0003.
 
 Host hooks that call the engine (Phase 3), calibration corpus and thresholds (Phase 4),
 mixture-of-agents (Phase 5), resilience and the vendor adapter (Phase 6).
+
+## Decisions settled jointly with Codex (2026-09-26)
+
+- **D1 AGREE.** Ship all four core question sets, uncalibrated. Safe by construction: with no
+  registry entry, gates route to `ask` in enforce and everything is `no_advice` in shadow,
+  while still emitting the shadow receipts Phase 4 calibration needs. Each set pins
+  `jev-1.13.0`.
+- **D2 AMEND -> DEFER the SQL pack.** The "egress profile that tightens" mechanism does not
+  exist yet: Tier 1 detectors are hardcoded, and a question-set file cannot add a detector.
+  Only `language_profiles` (injected via EngineConfig) and declarative `excluded_classes` are
+  wired. So Phase 2 stays core-only and domain-neutral; the SQL pack and a small
+  detector-loading seam are deferred to a later increment (new backlog node). This matches the
+  owner's domain-neutral preference.
+- **D3 AGREE + clarify.** One host-neutral `SKILL.md` with YAML frontmatter; `questions/` files
+  are strict JSON (loaded via `load_question_set_file`, kit.consequence shape, legacy fields
+  rejected). `escalation_target` must name a human or deterministic check, never a model.
+- **D4 AGREE + Windows.** Dry-run default, `--apply`, symlink-else-copy-with-hash where the
+  copy fallback triggers on `OSError` (Windows symlink needs Developer Mode), refuse to clobber
+  a differing file without `--force`, detect and report missing Python, no network.
+- **D5 AMEND.** The audit's prompt-injection and dangerous-command patterns are NEW, authored
+  fresh (aleksvega is readme-only, nothing to copy; any borrowed line needs review, MIT
+  attribution and a `sources.lock.json` entry). Reuse `egress.scan_text` only to report
+  embedded secrets, as a distinct finding class. Findings are data, never executed; regexes are
+  ReDoS-bounded over bounded input.
+- **D6 AGREE + strengthen.** Beyond shape, tests assert each set pins `jev-1.13.0`, declares a
+  non-model `escalation_target`, and gate questions are `consequence: gate`.
+
+### Host skill paths (corrected against docs/research/06)
+
+Install the whole `jev-runtime/` tree (SKILL.md + questions/) into: Claude Code
+`~/.claude/skills/jev-runtime/` (and repo `.claude/skills/`); Codex `~/.agents/skills/` (user)
+and repo `.agents/skills/` and `/etc/codex/skills`; Hermes `~/.hermes/skills/` and
+`<root>/.hermes/skills/` and `<root>/.agents/skills/`. The repo-level `.agents/skills` serves
+both Codex and Hermes; a per-user install writes `~/.agents/skills` and `~/.hermes/skills`.
+
+### Build order
+
+P2-1 SKILL.md first (it fixes the contract). Then P2-2 (four disjoint JSON sets, parallel),
+and P2-3 installer + P2-4 audit as independent modules in parallel. `src/jev_kit/cli.py` is the
+one serialization point: each new command is its own module, wired into the CLI last.

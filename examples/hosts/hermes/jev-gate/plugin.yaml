@@ -1,0 +1,3 @@
+name: jev-gate
+description: Ask Jev whether a tool call looks destructive, exfiltrating, or permission-widening
+version: 0.1.0

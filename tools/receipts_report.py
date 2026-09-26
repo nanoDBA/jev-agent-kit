@@ -37,6 +37,12 @@ __all__ = ["main", "read_receipts", "summarize", "to_duckdb"]
 
 _VALID_KINDS = frozenset({"decision", "commit", "outcome", "route_correction"})
 
+# A route_correction is only honored when well-formed and permitted (finding H8): the receipt
+# schema version, the closed set of downgrade routes, and the closed set of reasons.
+_CORRECTION_SCHEMA_VERSION = 1
+_CORRECTION_ROUTES = frozenset({"ask", "no_advice"})
+_CORRECTION_REASONS = frozenset({"timeout"})
+
 
 def read_receipts(
     path: Path,
@@ -69,7 +75,9 @@ def read_receipts(
     - ``"dropped_batches"``: call batches dropped for a missing or mismatched commit marker.
     - ``"committed_calls"``: call batches whose commit marker matched and were included.
     """
-    local_stats = {"malformed_lines": 0, "dropped_batches": 0, "committed_calls": 0}
+    local_stats = {
+        "malformed_lines": 0, "dropped_batches": 0, "committed_calls": 0, "dropped_corrections": 0
+    }
 
     committed: list[dict[str, Any]] = []
     outcomes: list[dict[str, Any]] = []
@@ -132,16 +140,31 @@ def read_receipts(
     # the decision's original route (a late accept downgraded to ask/no_advice after the write
     # overran the deadline), so summaries and exports report the corrected route, not the stale
     # accept. The pre-correction route is preserved under "route_before_correction".
+    #
+    # A correction is applied only when it is well-formed and permitted (finding H8, minor): its
+    # schema_version and call_id must match the committed decision, its route/reason must be from
+    # the closed downgrade vocabulary, and it may only downgrade an accept, never reverse a
+    # decision in some other direction. A malformed or disallowed correction is counted as a
+    # dropped correction and does NOT change the recorded route.
     for correction in corrections:
         decision_id = correction.get("decision_id")
-        if isinstance(decision_id, str) and decision_id in by_decision_id:
-            decision = by_decision_id[decision_id]
-            corrected_route = correction.get("route")
-            if isinstance(corrected_route, str):
-                decision.setdefault("route_before_correction", decision.get("route"))
-                decision["route"] = corrected_route
-                if "fail_reason" in correction:
-                    decision["fail_reason"] = correction.get("fail_reason")
+        if not isinstance(decision_id, str) or decision_id not in by_decision_id:
+            local_stats["dropped_corrections"] = local_stats.get("dropped_corrections", 0) + 1
+            continue
+        decision = by_decision_id[decision_id]
+        corrected_route = correction.get("route")
+        if (
+            correction.get("schema_version") == _CORRECTION_SCHEMA_VERSION
+            and correction.get("call_id") == decision.get("call_id")
+            and corrected_route in _CORRECTION_ROUTES
+            and correction.get("fail_reason") in _CORRECTION_REASONS
+            and decision.get("route") == "accept"  # only a late accept may be downgraded
+        ):
+            decision.setdefault("route_before_correction", decision.get("route"))
+            decision["route"] = corrected_route
+            decision["fail_reason"] = correction.get("fail_reason")
+        else:
+            local_stats["dropped_corrections"] = local_stats.get("dropped_corrections", 0) + 1
 
     if stats is not None:
         for key, value in local_stats.items():

@@ -65,6 +65,10 @@ def _build_question(qid: str, spec: dict[str, Any]) -> Question:
     for legacy in _LEGACY_FIELDS:
         if legacy in spec:
             raise ValidationError(FailReason.CONFIG, "question_legacy_field")
+    # Reject unknown fields at every nested level so an injected key cannot ride along into a
+    # loaded question that then produces evidence (finding H18).
+    if not set(spec) <= {"type", "instructions", "criteria", "kit"}:
+        raise ValidationError(FailReason.CONFIG, "question_unknown_field")
     qtype = _require(spec, "type", "question_no_type")
     instructions = _require(spec, "instructions", "question_no_instructions")
     if not isinstance(instructions, str) or not instructions:
@@ -72,6 +76,8 @@ def _build_question(qid: str, spec: dict[str, Any]) -> Question:
     kit = _require(spec, "kit", "question_no_kit")
     if not isinstance(kit, dict):
         raise ValidationError(FailReason.CONFIG, "question_kit_type")
+    if not set(kit) <= {"consequence", "gate"}:
+        raise ValidationError(FailReason.CONFIG, "kit_unknown_field")
     consequence = _consequence(_require(kit, "consequence", "question_no_consequence"))
     criteria = spec.get("criteria")
     is_gate = consequence is ConsequenceClass.GATE
@@ -132,6 +138,8 @@ def _gate_allow_labels(
         return None
     if not isinstance(gate, dict):
         raise ValidationError(FailReason.CONFIG, "gate_no_allow_labels")
+    if not set(gate) <= {"allow_labels"}:
+        raise ValidationError(FailReason.CONFIG, "gate_unknown_field")
     labels = gate.get("allow_labels")
     if not isinstance(labels, list) or not labels or not all(isinstance(x, str) for x in labels):
         raise ValidationError(FailReason.CONFIG, "gate_allow_labels_type")
@@ -145,15 +153,28 @@ def _gate_allow_labels(
     return frozenset(labels)
 
 
+# The parameter keys each content kind recognizes; a kind not listed takes no params. An
+# undeclared params key is rejected rather than silently ignored (finding H18).
+_ALLOWED_FIELD_PARAMS: dict[str, frozenset[str]] = {
+    ContentKind.CODE.value: frozenset({"language"}),
+    ContentKind.FREE_TEXT.value: frozenset({"source_type"}),
+    ContentKind.TRANSCRIPT.value: frozenset({"source_type"}),
+}
+
+
 def _build_field(spec: Any) -> FieldSpec:
     if not isinstance(spec, dict):
         raise ValidationError(FailReason.CONFIG, "field_not_object")
+    if not set(spec) <= {"kind", "params"}:
+        raise ValidationError(FailReason.CONFIG, "field_unknown_field")
     kind = _require(spec, "kind", "field_no_kind")
     if kind not in {k.value for k in ContentKind}:
         raise ValidationError(FailReason.CONFIG, "field_unknown_kind")
     params = spec.get("params", {})
     if not isinstance(params, dict):
         raise ValidationError(FailReason.CONFIG, "field_params_type")
+    if not set(params) <= _ALLOWED_FIELD_PARAMS.get(kind, frozenset()):
+        raise ValidationError(FailReason.CONFIG, "field_params_unknown")
     return FieldSpec(ContentKind(kind), params)
 
 
@@ -198,6 +219,8 @@ def _parse(obj: Any) -> QuestionSet:
     transcripts = obj.get("transcripts", {})
     if not isinstance(transcripts, dict):
         raise ValidationError(FailReason.CONFIG, "transcripts_type")
+    if not set(transcripts) <= {"enabled", "cap"}:
+        raise ValidationError(FailReason.CONFIG, "transcripts_unknown_field")
     enabled = transcripts.get("enabled", False)
     # A real boolean only: the string "false" is truthy and would silently enable (finding H5).
     if not isinstance(enabled, bool):

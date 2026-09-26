@@ -700,3 +700,64 @@ def test_fingerprint_differs_for_closures_capturing_different_rules_h3() -> None
         language_profiles={"sql": make("DELETE")}, language_profile_versions={"sql": "1"}
     )
     assert fp(select) != fp(delete)
+
+
+def test_fingerprint_type_sensitive_captured_values_h3() -> None:
+    # Batch-7 H3: a list ['r'] and a tuple ('r',) captured by a type-sensitive normalizer must
+    # not share a fingerprint; the captured type is part of the identity.
+    from jev_kit.engine import EngineConfig, effective_contract
+    from jev_kit.fingerprint import question_fingerprint
+    from jev_kit.questionset import load_question_set
+
+    qset = load_question_set(question_set())
+
+    def make(rule: Any) -> Any:
+        def normalize(text: str) -> str:
+            return "SELECT" if isinstance(rule, list) else "DELETE"
+        return normalize
+
+    def fp(cfg: EngineConfig) -> str:
+        return question_fingerprint(
+            instructions="x", criteria=None, question_type="noul", option_or_level_set=[],
+            model="jev-1.13.0", egress_contract=effective_contract(qset, cfg),
+        )
+
+    as_list = EngineConfig(
+        language_profiles={"sql": make(["r"])}, language_profile_versions={"sql": "1"}
+    )
+    as_tuple = EngineConfig(
+        language_profiles={"sql": make(("r",))}, language_profile_versions={"sql": "1"}
+    )
+    assert fp(as_list) != fp(as_tuple)
+
+
+def test_profile_referencing_mutable_global_fails_closed_h3() -> None:
+    # Batch-7 H3: a profile that reads a mutable module global (a rule dict that could change
+    # without a version bump) is not bound by the fingerprint, so it fails closed.
+    from jev_kit.engine import EngineConfig, effective_contract
+    from jev_kit.errors import FailReason, ValidationError
+    from jev_kit.questionset import load_question_set
+
+    qset = load_question_set(question_set())
+    cfg = EngineConfig(
+        language_profiles={"sql": _GLOBAL_RULE_NORMALIZER},
+        language_profile_versions={"sql": "1"},
+    )
+    with pytest.raises(ValidationError) as exc:
+        effective_contract(qset, cfg)
+    assert exc.value.reason is FailReason.CONFIG
+
+
+_MUTABLE_RULES = {"x": "SELECT"}
+
+
+def _GLOBAL_RULE_NORMALIZER(text: str) -> str:
+    return _MUTABLE_RULES["x"]
+
+
+def test_pinned_model_rejects_trailing_newline_h22(tmp_path: Any) -> None:
+    # Batch-7 H22: a versioned id with a trailing newline must not pass the pin.
+    req = request("enforce")
+    req["question_set"]["model"] = "jev-1.13.0\n"
+    rec = only(decide(req, transport=reply(0.01), config=config(tmp_path)))
+    assert rec["route"] == "ask"

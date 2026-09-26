@@ -171,6 +171,11 @@ _ENV_ASSIGNMENT = re.compile(r"^(?:\$env:|\$)?[A-Za-z_][A-Za-z0-9_]*=")
 # is dialect-neutral: it holds for POSIX shells, cmd.exe and PowerShell alike.
 _CMD_CONTROL = re.compile(r"[;&|<>`\n]|\$\(")
 
+# A backslash that escapes whitespace, or a trailing backslash (line continuation): both join
+# tokens across a whitespace split and are rejected (finding H16). A backslash followed by a
+# non-whitespace path character (a Windows path) does not match.
+_CMD_ESCAPE = re.compile(r"\\(\s|$)")
+
 # A long-flag NAME at the start of a token: everything up to the first character that is not part
 # of a flag name (so "--tenant=PRIVATE" and '--password="s3' both yield only "--tenant"/
 # "--password"). The attached "=value" or a spilled quoted fragment never survives (finding H16).
@@ -192,6 +197,13 @@ def _reduce_command(text: str) -> str:
     # H16). A quote-free command splits unambiguously into whole-word tokens.
     if '"' in text or "'" in text:
         raise ValidationError(FailReason.EGRESS_BLOCKED, "command_quoting_unsupported")
+    # A backslash before whitespace (an escaped space) or at end of a token (line continuation)
+    # joins tokens the whitespace split would otherwise separate, so a value fragment or a
+    # flag-shaped word can survive ("PRIVATE\ ALICE", "hello\ --SECRET"). We do not interpret
+    # escapes, so such input is rejected (finding H16). A Windows path backslash (followed by a
+    # path character, not whitespace) is unaffected.
+    if _CMD_ESCAPE.search(text):
+        raise ValidationError(FailReason.EGRESS_BLOCKED, "command_escape_unsupported")
     tokens = text.split()
     idx = 0
     while idx < len(tokens) and _ENV_ASSIGNMENT.match(tokens[idx]):
@@ -392,9 +404,10 @@ _DETECTORS: list[tuple[str, re.Pattern[str]]] = [
     ("azure_sas", re.compile(r"[?&]sig=[A-Za-z0-9%/+]{20,}")),  # Purview: Azure SAS/storage key
     # Purview / gitleaks: bearer and basic HTTP Authorization headers (finding C06 extends
     # this from bearer-only to also match Basic).
-    # The separator class tolerates the quotes/colon of JSON-embedded auth, e.g. a free-text
-    # value containing {"Authorization":"Basic dTpw"} (finding H15), as well as a plain header.
-    ("authorization_header", re.compile(r"(?i)authorization[\"'\s:=]{1,6}(?:bearer|basic)\s+\S+")),
+    # The separator class tolerates the quotes/colon and any run of whitespace of JSON-embedded
+    # auth, e.g. {"Authorization":        "Basic dTpw"} (finding H15), as well as a plain header.
+    # The class is a linear character run, so an unbounded count cannot cause backtracking.
+    ("authorization_header", re.compile(r"(?i)authorization[\"'\s:=]{1,80}(?:bearer|basic)\s+\S+")),
     # GATE-04: the same bearer/basic credential shape, but without requiring the literal word
     # "authorization" nearby. JSON serialization puts a quote between the key and its value
     # (e.g. {"authorization": "Basic <b64>"}), which breaks the rule above; scanning each
@@ -428,6 +441,22 @@ _DETECTORS: list[tuple[str, re.Pattern[str]]] = [
 _CONNSTR = re.compile(
     r"(?i)(?:password|pwd)\s*=\s*(?:'([^']*)'|\"([^\"]*)\"|([^;\"'\s]+))"
 )
+
+# A structured (JSON-style) STRONG-secret key mapped to a string value, e.g. {"password":"x"}
+# or {"api_key":"..."} embedded in a free-text string that the structural pair scan (which only
+# sees real decoded dicts) cannot look inside (finding H15). Only strong-secret keys are here,
+# where any non-placeholder value is a leak; weak indicators (authorization, token) still need a
+# credential shape and are handled by _scan_auth_pairs on real decoded dicts, so they are not
+# listed to avoid flagging a benign value like {"authorization":"none"}. The value is captured
+# so a documented redaction placeholder is not flagged.
+_JSON_SECRET_KV = re.compile(
+    r'(?i)"(?:password|passwd|pwd|secret|client_secret|secret_key|api[_-]?key|apikey'
+    r'|access_token|refresh_token|id_token)"\s*:\s*"([^"]*)"'
+)
+
+# A JSON \uXXXX unicode escape. A credential key/scheme can be obfuscated as escapes inside a
+# free-text string (e.g. "Authorization"); scanning a de-escaped copy catches it (H15).
+_UNICODE_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
 _PAN_CANDIDATE = re.compile(r"\b(?:\d[ -]?){13,19}\b")  # PCI DSS v4.0.1 3.3.1: Luhn-valid PANs
 
 # A whole value that is an HTTP auth scheme plus a single credential token, e.g. "Basic dTpw",
@@ -440,12 +469,30 @@ _AUTH_SCHEME_VALUE = re.compile(r"(?i)^(?:basic|bearer)\s+\S+$")
 
 
 def scan_text(text: str) -> str | None:
-    """Return the id of the first Tier 1 rule that matches, or None."""
+    """Return the id of the first Tier 1 rule that matches, or None.
+
+    The text is scanned as given and, when it contains JSON unicode escapes, also in a
+    de-escaped form so an obfuscated credential key or scheme cannot slip past (finding H15).
+    """
+    hit = _scan_text_once(text)
+    if hit is not None:
+        return hit
+    if "\\u" in text:
+        deescaped = _UNICODE_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), text)
+        if deescaped != text:
+            return _scan_text_once(deescaped)
+    return None
+
+
+def _scan_text_once(text: str) -> str | None:
     for rule_id, pattern in _DETECTORS:
         if pattern.search(text):
             return rule_id
     if _AUTH_SCHEME_VALUE.match(text.strip()):
         return "authorization_scheme_value"
+    for match in _JSON_SECRET_KV.finditer(text):
+        if not _is_placeholder(match.group(1)):
+            return "structured_credential"
     for match in _CONNSTR.finditer(text):
         value = next((g for g in match.groups() if g is not None), "")
         if not _is_placeholder(value):

@@ -547,3 +547,30 @@ def test_log_free_form_identifiers_masked_h17() -> None:
     assert "JaneDoe" not in b["line"] and b["line"].startswith("ERROR")
     c = transform_state({"line": "session xG9fT2ab7Qz1LmNpV4kd started ok"}, schema, ctx())
     assert "xG9fT2ab7Qz1LmNpV4kd" not in c["line"]
+
+
+def test_formatted_and_escaped_credentials_detected_h15() -> None:
+    # Batch-7 H15: extra whitespace after the colon, a JSON-embedded strong-secret key, and a
+    # unicode-escaped Authorization key must all be caught; a placeholder value stays clean.
+    assert scan_text('{"Authorization":        "Basic dTpw"}') is not None
+    assert scan_text('{"password":"hunter2"}') is not None
+    assert scan_text('{"api_key":"anything"}') is not None
+    escaped = '{"Authoriz' + chr(92) + 'u0061tion":"Basic dTpw"}'
+    assert scan_text(escaped) is not None
+    assert scan_text('{"password":"<redacted>"}') is None
+
+
+def test_command_escaped_whitespace_rejected_h16() -> None:
+    # Batch-7 H16: a backslash-escaped space joins tokens across a whitespace split and could
+    # leak a value fragment or a flag-shaped word, so escaped whitespace is rejected. A Windows
+    # path (backslash before a path character, not whitespace) still reduces.
+    schema = {"cmd": FieldSpec(ContentKind.COMMAND)}
+    for leaky in (
+        "TOKEN=PRIVATE" + chr(92) + " ALICE tool --flag",
+        "tool --message hello" + chr(92) + " --PRIVATE_CUSTOMER",
+    ):
+        with pytest.raises(ValidationError) as exc:
+            transform_state({"cmd": leaky}, schema, ctx())
+        assert exc.value.reason is FailReason.EGRESS_BLOCKED
+    out = transform_state({"cmd": r"C:\Users\Alice\tool.exe --flag"}, schema, ctx())
+    assert out["cmd"] == "tool.exe --flag"

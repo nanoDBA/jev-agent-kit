@@ -208,7 +208,44 @@ def _profile_content_digest(profile: Callable[[str], str]) -> str:
     captured.extend(getattr(profile, "__defaults__", None) or ())
     captured.extend((getattr(profile, "__kwdefaults__", None) or {}).values())
     digest.update(_stable_repr(tuple(captured)).encode("utf-8"))
+    digest.update(_global_dependencies_repr(profile, code).encode("utf-8"))
     return digest.hexdigest()[:32]
+
+
+def _global_dependencies_repr(profile: Callable[[str], str], code: Any) -> str:
+    """Bind the profile's referenced module globals, or fail closed on an unbound one (H3).
+
+    A profile that reads a mutable module global (a rule dict that can change without a version
+    bump) or calls a module-level helper is not fully described by its own code and captured
+    values. We inspect its LOAD_GLOBAL references: a referenced module is bound by name (a
+    stable dependency, its own code is a deploy-time concern), a bounded primitive by value, and
+    anything else (a mutable container, a function, an object) fails closed.
+    """
+    import dis
+    import types
+
+    referenced = sorted(
+        {
+            instr.argval
+            for instr in dis.get_instructions(code)
+            if instr.opname == "LOAD_GLOBAL" and isinstance(instr.argval, str)
+        }
+    )
+    module_globals = getattr(profile, "__globals__", {})
+    parts: list[str] = []
+    for name in referenced:
+        if name not in module_globals:
+            continue  # a builtin (len, isinstance, ...): stable, nothing to bind
+        value = module_globals[name]
+        if isinstance(value, types.ModuleType):
+            parts.append(f"module:{name}={value.__name__}")
+        elif isinstance(value, _STABLE_TYPES):
+            parts.append(f"const:{name}={_stable_repr(value)}")
+        else:
+            # A mutable container, a helper function, or any other object: its behavior is not
+            # bound by the fingerprint, so the profile cannot be trusted to a stable identity.
+            raise ValidationError(FailReason.CONFIG, "profile_content_unhashable")
+    return "|".join(parts)
 
 
 # Value types whose repr is stable across runs (no embedded object address) and captures the
@@ -217,13 +254,20 @@ _STABLE_TYPES = (str, bytes, bool, int, float, type(None))
 
 
 def _stable_repr(value: object) -> str:
+    # The type name is part of the representation so behaviorally distinct types that share a
+    # value repr (a list ['r'] versus a tuple ('r',), which a type-sensitive normalizer treats
+    # differently) do not collide (finding H3). bool is checked before int since it subclasses it.
+    if isinstance(value, bool):
+        return f"bool:{value!r}"
     if isinstance(value, _STABLE_TYPES):
-        return repr(value)
-    if isinstance(value, (tuple, list, frozenset, set)):
-        items = sorted(value, key=repr) if isinstance(value, (frozenset, set)) else value
-        return "[" + ",".join(_stable_repr(item) for item in items) + "]"
+        return f"{type(value).__name__}:{value!r}"
+    if isinstance(value, (tuple, list)):
+        return f"{type(value).__name__}[" + ",".join(_stable_repr(v) for v in value) + "]"
+    if isinstance(value, (frozenset, set)):
+        items = sorted(value, key=repr)
+        return f"{type(value).__name__}[" + ",".join(_stable_repr(v) for v in items) + "]"
     if isinstance(value, dict):
-        return "{" + ",".join(
+        return "dict{" + ",".join(
             f"{_stable_repr(k)}:{_stable_repr(v)}" for k, v in sorted(value.items(), key=repr)
         ) + "}"
     # Anything else (a captured object, function, code, or a value whose repr embeds an address)
@@ -476,7 +520,7 @@ def _decide(
     reported_tokens: int | None = None
     transforms = {name: spec.kind.value for name, spec in qset.schema.items()}
 
-    if not _PINNED_MODEL_RE.match(qset.model):
+    if not _is_pinned_model(qset.model):
         # A pinned, immutable, fully versioned model id is required. This refuses the moving
         # aliases jev-latest/jev-preview AND a bare or partially versioned id like "jev" or
         # "jev-1" that could resolve to different models over time (finding H22, spec story 28).
@@ -923,10 +967,15 @@ def _is_schema_version_one(value: Any) -> bool:
     return type(value) is int and value == 1
 
 
-# A pinned, immutable, fully versioned Jev model id, e.g. "jev-1.13.0". A moving alias
-# (jev-latest/jev-preview) or a partial id (jev, jev-1) is refused so a threshold can never be
-# bound to a model that changes under it (finding H22, spec story 28).
-_PINNED_MODEL_RE = re.compile(r"^jev-\d+\.\d+\.\d+$")
+# A pinned, immutable, fully versioned Jev model id, e.g. "jev-1.13.0". Matched with fullmatch
+# over an ASCII-only grammar: `$` would accept a trailing newline and `\d` would admit non-ASCII
+# digits, either of which could smuggle a distinct id past the pin (finding H22, spec story 28).
+# A moving alias (jev-latest/jev-preview) or a partial id (jev, jev-1) is refused too.
+_PINNED_MODEL_RE = re.compile(r"jev-[0-9]+\.[0-9]+\.[0-9]+")
+
+
+def _is_pinned_model(model: str) -> bool:
+    return _PINNED_MODEL_RE.fullmatch(model) is not None
 
 
 def _decision_committed_on_disk(decision_id: str) -> bool:

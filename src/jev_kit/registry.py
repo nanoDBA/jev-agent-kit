@@ -264,7 +264,9 @@ def loads_registry(text: str) -> dict[str, RegistryEntry]:
         raise ValidationError(FailReason.CONFIG, "registry_unknown_field")
 
     schema_version = root.get("schema_version")
-    if isinstance(schema_version, bool) or schema_version != SCHEMA_VERSION:
+    # Exact integer only: 1.0 == 1 and True == 1 in Python, so a bare inequality would accept a
+    # float or boolean version and still yield an evaluable calibrated threshold (finding H18).
+    if type(schema_version) is not int or schema_version != SCHEMA_VERSION:
         raise ValidationError(FailReason.CONFIG, "registry_schema_version")
 
     entries_raw = root.get("entries")

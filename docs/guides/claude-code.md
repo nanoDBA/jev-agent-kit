@@ -5,14 +5,8 @@ It starts in shadow mode: evidence is recorded and nothing about your session ch
 
 ## 1. Install the package
 
-```sh
-git clone https://github.com/nanoDBA/jev_agent_kit.git
-cd jev_agent_kit
-python -m pip install -e .
-```
-
-Use the same Python that Claude Code will find on your `PATH`. Check that the hook module
-loads:
+Follow [Get the code](../../README.md#get-the-code) in the README. Use the same Python that
+Claude Code will find on your `PATH`, then check that the hook module loads:
 
 ```sh
 python -c "import jev_kit.hooks.claude; print('ok')"
@@ -32,7 +26,7 @@ project). Replace the path with the absolute path to your clone:
         "hooks": [
           {
             "type": "command",
-            "command": "python -m jev_kit.hooks.claude --mode shadow --question-set-path /ABSOLUTE/PATH/TO/jev_agent_kit/skills/jev-runtime/questions/tool-call-gate.json",
+            "command": "python -m jev_kit.hooks.claude --mode shadow --question-set-path \"/ABSOLUTE/PATH/TO/jev_agent_kit/skills/jev-runtime/questions/tool-call-gate.json\"",
             "timeout": 30
           }
         ]
@@ -43,6 +37,9 @@ project). Replace the path with the absolute path to your clone:
 ```
 
 The same snippet is in [`examples/hosts/claude-code/settings.json`](../../examples/hosts/claude-code/settings.json).
+
+Keep the escaped quotes (`\"`) around the path so a folder name with spaces stays one
+argument. If your Python path has spaces, quote it the same way.
 
 Always pass `--question-set-path` as an absolute path. Without it, the hook looks for
 `skills/jev-runtime/questions/tool-call-gate.json` relative to the directory Claude Code is
@@ -77,15 +74,19 @@ prompt you before running the command.
 | Enforce, a gate not cleared, or any failure | `permissionDecision: "ask"` | Claude Code asks you to confirm. |
 
 The hook reads the command from `tool_input.command`, `script`, or `code`, so Bash and
-PowerShell calls are both covered. It always exits 0 and answers within its own 8-second
-deadline.
+PowerShell calls are both covered. It always exits 0. The engine call is capped at 8 seconds
+(a worker timeout plus a watchdog that kills the engine's child process). Python startup and
+reading the event come on top of that, so keep the `timeout` in your settings well above 8
+seconds.
 
-## 4. Record real evidence
+## 4. Record real evidence (optional)
 
-Set the variables in [Recording real evidence](../../README.md#recording-real-evidence-shadow)
-in the environment Claude Code starts from, then keep using Claude Code as normal. Receipts
-accumulate in the receipts folder. Stay in shadow mode until you have measured thresholds on
-those receipts.
+Live calls send data to TypeSafe, so only do this with authorization to send it. Read
+[What leaves your machine](../../README.md#what-leaves-your-machine) first, then set the
+variables in [Recording real evidence](../../README.md#recording-real-evidence-shadow) in the
+environment Claude Code starts from. Receipts accumulate in the receipts folder. Stay in
+shadow mode: enforce needs thresholds measured on labeled, held-out data and approval from
+whoever owns the environment.
 
 ## Troubleshooting
 
@@ -93,5 +94,5 @@ those receipts.
   pipe the sample event through the hook as in step 3.
 - **Every command prompts in enforce.** Expected with the shipped, uncalibrated question sets.
   Switch back to `--mode shadow`.
-- **`No module named jev_kit`.** Claude Code is running a different Python. Put the full path
-  to the interpreter you installed into at the start of the `command` string.
+- **`No module named jev_kit`.** Claude Code is running a different Python. Put the full,
+  quoted path to the interpreter you installed into at the start of the `command` string.

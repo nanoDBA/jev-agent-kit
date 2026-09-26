@@ -6,8 +6,10 @@ checks the output the docs show. If one of these fails, the docs are wrong.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +20,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 GATE = REPO / "skills" / "jev-runtime" / "questions" / "tool-call-gate.json"
 EXAMPLES = REPO / "examples"
+README = (REPO / "README.md").read_text(encoding="utf-8")
 
 
 def _env(**extra: str) -> dict[str, str]:
@@ -31,17 +34,35 @@ def _env(**extra: str) -> dict[str, str]:
     return env
 
 
-def test_first_decision_example_matches_readme() -> None:
+def _run_example(name: str) -> str:
     proc = subprocess.run(
-        [sys.executable, str(EXAMPLES / "first_decision.py")],
+        [sys.executable, str(EXAMPLES / name)],
         env=_env(), capture_output=True, text=True, timeout=60, check=True,
     )
-    lines = proc.stdout.splitlines()
-    assert lines[0] == "status: ok"
-    for qid in ("destructive", "exfiltrates", "widens_permission"):
-        row = next(line for line in lines if line.strip().startswith(qid))
-        assert "route=ask" in row and "threshold=uncalibrated" in row and "mock=True" in row
     assert proc.stderr == ""
+    return proc.stdout
+
+
+def test_gate_walkthrough_matches_readme() -> None:
+    out = _run_example("gate_walkthrough.py")
+    # The reduced request shown in the README is exactly what the example sends.
+    start = out.index("What is actually sent to Jev (state only):")
+    sent = json.loads(out[out.index("{", start): out.index("}", start) + 1])
+    assert sent["command"] == "rm"
+    assert sent["target"].startswith("id_")
+    assert json.dumps(sent, indent=2) in README
+    for qid in ("destructive", "exfiltrates", "widens_permission"):
+        row = next(line for line in out.splitlines() if line.strip().startswith(qid))
+        assert row.strip().endswith("-> ask")
+        assert " ".join(row.split()) in " ".join(README.split())
+
+
+def test_route_request_matches_readme() -> None:
+    out = _run_example("route_request.py")
+    assert "route:         no_advice  (mock=True)" in out
+    assert "handled by:    specialist_llm" in out
+    for line in out.splitlines():
+        assert line in README, line
 
 
 @pytest.mark.parametrize(
@@ -70,16 +91,26 @@ def test_hook_shim_on_sample_event(
         assert out["hookSpecificOutput"]["permissionDecision"] == decision
 
 
+def _load_hermes_plugin_as_package() -> Any:
+    # Hermes loads a directory plugin as a package from its __init__.py (not plugin.py).
+    folder = EXAMPLES / "hosts" / "hermes" / "jev-gate"
+    assert (folder / "plugin.yaml").is_file()
+    spec = importlib.util.spec_from_file_location(
+        "jev_gate_under_test", folder / "__init__.py", submodule_search_locations=[str(folder)]
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 @pytest.mark.parametrize("mode", ["shadow", "enforce"])
 def test_hermes_example_plugin(mode: str, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("JEV_KIT_HOOK_MODE", mode)
     monkeypatch.setenv("JEV_KIT_HOOK_QUESTION_SET_PATH", str(GATE))
     for key in ("TYPESAFE_API_KEY", "TYPESAFE_API_KEY_COMMAND"):
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.syspath_prepend(str(EXAMPLES / "hosts" / "hermes" / "jev-gate"))
-    import importlib
-
-    plugin = importlib.import_module("plugin")
+    plugin = _load_hermes_plugin_as_package()
     hooks: dict[str, Any] = {}
 
     class Ctx:
@@ -94,17 +125,26 @@ def test_hermes_example_plugin(mode: str, monkeypatch: pytest.MonkeyPatch) -> No
         assert result is None
     else:
         assert result["action"] == "block"
-    sys.modules.pop("plugin", None)
 
 
 @pytest.mark.parametrize(
-    "path",
-    ["hosts/claude-code/settings.json", "hosts/codex/hooks.json",
-     "events/claude-pretooluse.json", "events/codex-pretooluse.json"],
+    ("path", "module"),
+    [("hosts/claude-code/settings.json", "claude"), ("hosts/codex/hooks.json", "codex")],
 )
-def test_example_config_is_valid_json(path: str) -> None:
-    obj = json.loads((EXAMPLES / path).read_text(encoding="utf-8"))
-    assert isinstance(obj, dict)
+def test_example_hook_command_survives_a_path_with_spaces(path: str, module: str) -> None:
+    config = json.loads((EXAMPLES / path).read_text(encoding="utf-8"))
+    command = config["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    spaced = "/tmp/My Kit/jev_agent_kit"
+    argv = shlex.split(command.replace("/ABSOLUTE/PATH/TO/jev_agent_kit", spaced))
+    assert argv[:3] == ["python", "-m", f"jev_kit.hooks.{module}"]
+    assert argv[argv.index("--question-set-path") + 1] == (
+        f"{spaced}/skills/jev-runtime/questions/tool-call-gate.json"
+    )
+
+
+@pytest.mark.parametrize("path", ["events/claude-pretooluse.json", "events/codex-pretooluse.json"])
+def test_sample_event_is_valid_json(path: str) -> None:
+    assert isinstance(json.loads((EXAMPLES / path).read_text(encoding="utf-8")), dict)
 
 
 def test_docs_have_no_em_dashes() -> None:

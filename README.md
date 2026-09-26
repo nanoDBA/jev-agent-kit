@@ -4,66 +4,136 @@ Give your coding agent a second opinion on risky tool calls, from a model that a
 probabilities instead of prose.
 
 jev_agent_kit connects Claude Code, Codex, and Hermes Agent to
-[TypeSafe's Jev](https://typesafe.ai), a typed-decision model. Before your agent runs a shell
-command, the kit asks Jev three yes/no questions (is it destructive, does it send data out,
-does it widen permissions) and records the answers. Your code and your agent's normal
-permission rules still make the final call; a Jev answer never grants permission.
+[TypeSafe's Jev](https://typesafe.ai), a model that answers typed questions (yes/no, pick one,
+rate on a scale) with probability distributions. Before your agent runs a shell command, the
+kit asks Jev whether it is destructive, whether it sends data out, and whether it widens
+permissions. It records the answers. Your agent's own permission rules still decide; a Jev
+answer never grants permission.
 
-> **Status: early and unarmed.** The hooks run in shadow mode by default, where they record
-> evidence and change nothing. The shipped question sets are not calibrated yet, so no Jev
-> answer can approve anything on its own. Use it to collect and measure evidence, and do not
-> rely on it as a guard yet.
+> **Status: early and unarmed.** Hooks run in shadow mode by default: they record evidence
+> and change nothing. The shipped question sets are not calibrated, so no answer can approve
+> anything yet. Use it to collect and measure evidence, not as a guard.
 
-## What Jev is
+## See it work (offline)
 
-Most models answer questions in text. Jev answers typed questions with numbers:
+After [getting the code](#get-the-code), run:
 
-| Question type | You ask | Jev returns |
-| --- | --- | --- |
-| Noul | a yes/no question | the probability that the answer is yes |
-| Choice | pick one of a fixed set of options | a probability for each option |
-| Score | rate something on a defined scale | a distribution over the scale's levels |
+```sh
+python examples/gate_walkthrough.py
+```
 
-You send a small state (for example `{"command": "rm -rf ./build"}`) and a set of questions.
-Jev sends back distributions. To try Jev by hand, use the
-[console playground](https://console.typesafe.ai/playground); the API is documented at
-[docs.typesafe.ai](https://docs.typesafe.ai/api.md).
+Your agent wants to run `rm -rf ./build`. The hook turns the tool call into a small state:
 
-The kit turns each answer into one of three routes:
+```json
+{
+  "command": "rm -rf ./build",
+  "target": "/home/alice/private-repo/build",
+  "context": "tool=Bash; description=Clean the build folder; cwd=/home/alice/private-repo"
+}
+```
+
+Before anything leaves your machine, the kit reduces it. This is what Jev receives:
+
+```json
+{
+  "command": "rm",
+  "context": "tool=Bash; description=Clean the build folder; cwd=/home/alice/private-repo",
+  "target": "id_7dcb134b1ad03cd1"
+}
+```
+
+The command is cut to the program name and the path becomes a keyed hash. The `context` line
+is sent as written, including the folder name; see [What leaves your machine](#what-leaves-your-machine).
+
+Jev answers each question with the probability that the answer is yes, and the kit turns each
+answer into a route:
+
+```text
+destructive        p(yes)=0.97  -> ask
+exfiltrates        p(yes)=0.02  -> ask
+widens_permission  p(yes)=0.01  -> ask
+```
+
+The example uses a scripted mock instead of the real model, so every route is `ask`: a mock
+answer can never approve anything, and no threshold has been calibrated yet. Once thresholds
+are measured, a gate that clears would route to `accept`, and one that does not would stay at
+`ask`.
 
 | Route | Meaning |
 | --- | --- |
-| `accept` | The evidence cleared a threshold that was measured on real data. |
-| `ask` | A gate question was not cleared, or anything failed. A human or a deterministic check decides. |
+| `accept` | The evidence cleared a threshold measured on real, labeled data. |
+| `ask` | A gate was not cleared, or something failed. A human or a deterministic check decides. |
 | `no_advice` | An advisory question produced nothing usable. Carry on without it. |
 
-Even `accept` only means the evidence cleared a bar. The agent's own permission flow still
-applies, and a hook built on this kit never approves a tool call by itself.
+## What your agent sees
 
-## Quick start (offline, no API key)
+In shadow mode the hook returns no decision, so every host behaves exactly as before. In
+enforce mode, a gate that is not cleared looks like this:
 
-You need Python 3.11 or later. The runtime uses only the standard library.
+| Host | The hook returns | What happens |
+| --- | --- | --- |
+| Claude Code | `{"hookSpecificOutput": {"permissionDecision": "ask", ...}}` | Claude Code asks you to confirm the command. |
+| Codex | `{"hookSpecificOutput": {"permissionDecision": "deny", ...}}`, exit code 2 | Codex blocks the call and shows the reason. |
+| Hermes | `{"action": "block", "message": "..."}` | Hermes blocks the call. |
 
-```sh
-git clone https://github.com/nanoDBA/jev_agent_kit.git
-cd jev_agent_kit
-python -m pip install -e .
-python examples/first_decision.py
+When every gate clears, the hook still returns no decision (`{}` or `None`). It never approves
+a tool call by itself.
+
+## Ask Jev your own question
+
+The gate is one use. Any narrow, repeated decision in your agent loop can be a typed question.
+[`examples/route_request.py`](examples/route_request.py) asks which handler should take a
+request, using the shipped `preflight-route` set:
+
+```json
+"route": {
+  "type": "choice",
+  "instructions": "Which handler class should take `request`?",
+  "criteria": {
+    "deterministic": "a fixed rule or lookup can answer it",
+    "specialist_llm": "needs open-ended reasoning or generation",
+    "human": "high consequence or ambiguous, needs a person"
+  },
+  "kit": {"consequence": "advisory"}
+}
 ```
 
-The example runs the shipped tool-call gate against a scripted mock model:
+Your code gets a probability for every option and decides what to do with it:
+
+```python
+rec = decide(request, transport=transport)["records"][0]
+if rec["route"] == "accept":
+    handler = rec["label"]        # evidence cleared a calibrated threshold
+else:
+    handler = "specialist_llm"    # your normal path
+```
 
 ```text
-status: ok
-  destructive        route=ask  p(yes)=0.97  threshold=uncalibrated  mock=True
-  exfiltrates        route=ask  p(yes)=0.02  threshold=uncalibrated  mock=True
-  widens_permission  route=ask  p(yes)=0.01  threshold=uncalibrated  mock=True
-receipt: .../jev-receipts-xxxx/20260926T215655Z-34616.jsonl
+request:       "What is the HTTP status code for 'Not Found'?"
+distribution:  {'deterministic': 0.82, 'specialist_llm': 0.15, 'human': 0.03}
+route:         no_advice  (mock=True)
+handled by:    specialist_llm
 ```
 
-Every route is `ask`, even where the mock answered a confident "no": a mock answer is
-labelled `mock=True` and can never approve anything, and no threshold has been measured yet. The receipt file is a JSONL record of each decision, and it
-is what you would later use to calibrate.
+Jev has three question types. A Noul is a yes/no question and Jev returns p(yes). A Choice
+picks one of a fixed set and returns a probability per option. A Score rates on a defined
+scale and returns a distribution over its levels. To try Jev by hand, use the
+[console playground](https://console.typesafe.ai/playground); the API is documented at
+[docs.typesafe.ai](https://docs.typesafe.ai/api.md).
+
+## Get the code
+
+Before the first release, the package and these docs live on the development branch, not on
+`main`. The repository is currently private, so you need read access to clone it.
+
+```sh
+git clone --branch phase-0-hardening https://github.com/nanoDBA/jev_agent_kit.git
+cd jev_agent_kit
+python -m pip install -e .
+```
+
+You need Python 3.11 or later; the runtime uses only the standard library. Once the package
+reaches `main`, drop `--branch phase-0-hardening`.
 
 ## Add it to your agent
 
@@ -73,7 +143,7 @@ Each guide starts in shadow mode:
 - [Codex](docs/guides/codex.md): a `PreToolUse` hook in `hooks.json` or `config.toml`.
 - [Hermes Agent](docs/guides/hermes.md): a small plugin that registers `pre_tool_call`.
 
-The installer copies the `jev-runtime` skill into each host's skill folder. It shows what it
+The installer puts the `jev-runtime` skill into each host's skill folder. It shows what it
 would do unless you pass `--apply`:
 
 ```sh
@@ -81,26 +151,32 @@ jev-kit install --scope user            # dry run
 jev-kit install --scope user --apply    # ~/.claude/skills, ~/.agents/skills, ~/.hermes/skills
 ```
 
+Where the system allows it, the installer creates a symbolic link to `skills/jev-runtime` in
+your checkout and falls back to copying. A linked install breaks if you move or delete the
+checkout.
+
 ## Shadow and enforce
 
 | Mode | What the hook does | When to use it |
 | --- | --- | --- |
-| `shadow` (default) | Records evidence and returns no decision. Your agent behaves exactly as before. | Always, until you have calibrated thresholds. |
-| `enforce` | A gate that is not cleared becomes a human-approval step (Claude Code `ask`, Codex `deny`, Hermes `block`). | Only after measuring thresholds on your own traffic. |
+| `shadow` (default) | Records evidence and returns no decision. | The normal mode. |
+| `enforce` | A gate that is not cleared stops the call: Claude Code asks you to confirm, Codex denies it, Hermes blocks it. | Optional. Only with thresholds measured on labeled, held-out data, and with approval from whoever owns the agent's environment. |
 
-With the uncalibrated sets that ship today, `enforce` asks about every matched tool call. That
-is intended: nothing is trusted until it has been measured.
+With the uncalibrated sets that ship today, `enforce` asks about or stops every matched tool
+call. That is intended: nothing is trusted until it has been measured.
 
-## Recording real evidence (shadow)
+## Recording real evidence (optional)
 
-Without an API key the hooks still run, fail closed internally, and stay silent in shadow. To
-make real Jev calls and collect receipts, set:
+Without an API key the hooks still run, fail closed internally, and stay silent in shadow.
+
+Live calls send data to TypeSafe. Only set them up with authorization to send that data,
+after reading [What leaves your machine](#what-leaves-your-machine).
 
 | Variable | Purpose |
 | --- | --- |
 | `TYPESAFE_API_KEY` or `TYPESAFE_API_KEY_COMMAND` | Your Jev API key, or a command (a JSON argument list) that prints it, for example from a secret manager. |
-| `JEV_KIT_HMAC_KEY` | 32 random bytes, base64url. Identifiers such as file paths are sent as keyed hashes, never in plain text. |
-| `JEV_KIT_SOURCE_ALLOWLIST` | Set to `agent_context` so the gate may send a short tool-call context string. Free text is blocked unless its source is listed here. |
+| `JEV_KIT_HMAC_KEY` | 32 random bytes, base64url. The `target` field (a file path or URL) is sent as a keyed hash. |
+| `JEV_KIT_SOURCE_ALLOWLIST` | Set to `agent_context` to allow the gate's `context` field. This is an opt-in to sending plain text; see below. |
 | `JEV_KIT_ATTESTATION` | Path to a JSON file confirming TypeSafe is in your data-flow inventory, for example `{"inventory": true, "inventory_date": "2026-09-26", "dpa": true}`. Live calls are refused without it. |
 | `JEV_KIT_RECEIPTS_DIR` | Optional absolute path for receipts. The default is a per-user data folder. |
 
@@ -110,17 +186,31 @@ Generate an HMAC key with:
 python -c "import base64, secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
 ```
 
+Every decision is written to a JSONL receipt. Calibration needs real model outputs collected
+with authorization, independent labels, and validation on held-out data; mock receipts are
+for demonstration only.
+
 ## What leaves your machine
 
-Before any request is sent, the kit reduces it to declared fields only and scans the exact
-bytes for secrets:
+Only fields declared in the question set are sent, each transformed first. For the tool-call
+gate:
 
-- Commands are cut down to the program name (`rm -rf ./build` is sent as `rm`).
-- File paths and other identifiers become keyed hashes.
-- Anything that looks like a credential (keys, tokens, passwords, connection strings, card
-  numbers) blocks the whole request.
+| Field | What is sent |
+| --- | --- |
+| `command` | The program name only. `rm -rf ./build` is sent as `rm`. |
+| `target` | A keyed hash of the file path or URL, never the path itself. |
+| `context` | Plain text. Claude Code and Codex send the tool name and the agent's working directory (for example `tool=Bash; cwd=/home/alice/private-repo`), plus the tool's description (Claude Code) or turn id (Codex). Hermes sends its task id. Email addresses, IP addresses and phone numbers are masked; folder names are not. |
 
-The receipts never contain your API key or the raw state. The full policy is in
+The `context` field is sent only if you add `agent_context` to `JEV_KIT_SOURCE_ALLOWLIST`.
+The gate currently always includes it, so without that opt-in every live request is blocked
+before sending and you collect no evidence. Decide whether your directory names may leave the
+machine before you opt in.
+
+Before sending, the kit scans the exact request bytes and blocks the whole request if they
+match its credential detectors (API keys, tokens, passwords, connection strings, card
+numbers). Detection is pattern-based and cannot catch every secret.
+
+Receipts never contain your API key or the raw state. The full policy is in
 [ADR 0002](docs/adr/0002-egress-policy.md).
 
 ## Rules the kit follows
@@ -136,10 +226,10 @@ The receipts never contain your API key or the raw state. The full policy is in
 
 | Path | Contents |
 | --- | --- |
-| `src/jev_kit/` | The engine, egress checks, receipts, and host hook shims |
-| `skills/jev-runtime/` | The agent skill and its question sets |
-| `examples/` | Runnable offline example, sample hook events, host config snippets |
+| `examples/` | Runnable offline examples, sample hook events, host config snippets |
 | `docs/guides/` | Per-host setup guides |
+| `skills/jev-runtime/` | The agent skill and its question sets |
+| `src/jev_kit/` | The engine, egress checks, receipts, and host hook shims |
 | `docs/adr/`, `docs/specs/` | Design decisions and specifications |
 | `CLAUDE.md` | Rules for agents working on this repository |
 

@@ -5,19 +5,16 @@ starts in shadow mode: evidence is recorded and nothing about your session chang
 
 ## 1. Install the package
 
-```sh
-git clone https://github.com/nanoDBA/jev_agent_kit.git
-cd jev_agent_kit
-python -m pip install -e .
-```
-
-Use the same Python that Codex will find on your `PATH`.
+Follow [Get the code](../../README.md#get-the-code) in the README. Use the same Python that
+Codex will find on your `PATH`.
 
 ## 2. Register the hook
 
 Codex reads hooks from `~/.codex/hooks.json`, from `[hooks]` in `~/.codex/config.toml`, or
-from the same files under a repository's `.codex/` folder. In `hooks.json`, replacing the
-path with the absolute path to your clone:
+from the same files under a repository's `.codex/` folder. Pick one of the two formats for a
+given folder: if both define hooks, Codex merges them and warns at startup.
+
+`hooks.json`, with the path replaced by the absolute path to your clone:
 
 ```json
 {
@@ -28,7 +25,7 @@ path with the absolute path to your clone:
         "hooks": [
           {
             "type": "command",
-            "command": "python -m jev_kit.hooks.codex --mode shadow --question-set-path /ABSOLUTE/PATH/TO/jev_agent_kit/skills/jev-runtime/questions/tool-call-gate.json",
+            "command": "python -m jev_kit.hooks.codex --mode shadow --question-set-path \"/ABSOLUTE/PATH/TO/jev_agent_kit/skills/jev-runtime/questions/tool-call-gate.json\"",
             "statusMessage": "jev-kit: checking tool call",
             "timeout": 30
           }
@@ -40,7 +37,7 @@ path with the absolute path to your clone:
 ```
 
 The same snippet is in [`examples/hosts/codex/hooks.json`](../../examples/hosts/codex/hooks.json).
-The `config.toml` equivalent:
+Or the `config.toml` equivalent:
 
 ```toml
 [[hooks.PreToolUse]]
@@ -48,18 +45,28 @@ matcher = "^(shell|Bash)$"
 
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = 'python -m jev_kit.hooks.codex --mode shadow --question-set-path /ABSOLUTE/PATH/TO/jev_agent_kit/skills/jev-runtime/questions/tool-call-gate.json'
+command = 'python -m jev_kit.hooks.codex --mode shadow --question-set-path "/ABSOLUTE/PATH/TO/jev_agent_kit/skills/jev-runtime/questions/tool-call-gate.json"'
 statusMessage = "jev-kit: checking tool call"
 timeout = 30
 ```
 
-Always pass `--question-set-path` as an absolute path. Without it, the hook looks for the
-question set relative to the directory Codex is working in.
+Keep the quotes around the path so a folder name with spaces stays one argument, and always
+use an absolute path. Without `--question-set-path`, the hook looks for the question set
+relative to the directory Codex is working in.
 
 On Windows, Codex can run a different command through `commandWindows`. Point it at the
 same module with your Windows Python.
 
-## 3. Try it without Codex
+## 3. Trust the hook
+
+Codex skips a new or changed hook until you review and trust it. Start Codex, run `/hooks`,
+review the jev-kit hook, and trust it. Codex records trust against the hook's exact
+definition, so editing the command means trusting it again.
+
+A hook in a repository's `.codex/` folder also needs that project to be trusted. Trust the
+hook yourself; do not bypass the review.
+
+## 4. Try it without Codex
 
 ```sh
 python -m jev_kit.hooks.codex --mode shadow \
@@ -68,7 +75,7 @@ python -m jev_kit.hooks.codex --mode shadow \
 ```
 
 Shadow mode prints `{}` and exits 0. With `--mode enforce` and no API key it prints a
-`deny` and exits 2:
+`deny`, writes the reason to stderr, and exits 2:
 
 ```json
 {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "config"}}
@@ -85,19 +92,25 @@ Shadow mode prints `{}` and exits 0. With `--mode enforce` and no API key it pri
 Codex has no "ask" decision for hooks, so a gate that needs a human becomes `deny`. You can
 then run the command yourself or approve it another way.
 
-Codex skips a hook that exceeds its timeout and carries on, which would fail open. The hook
-does not rely on that: it gives itself an 8-second deadline and always answers first.
+Codex skips a hook that exceeds its timeout and carries on, so a slow hook fails open. The
+engine call inside this hook is capped at 8 seconds (a worker timeout plus a watchdog that
+kills the engine's child process). Python startup and reading the event come on top of that,
+so keep the hook `timeout` well above 8 seconds; 30 is a reasonable start.
 
-## 4. Record real evidence
+## 5. Record real evidence (optional)
 
-Set the variables in [Recording real evidence](../../README.md#recording-real-evidence-shadow)
-in the environment Codex starts from, and stay in shadow mode until you have measured
-thresholds on the receipts.
+Live calls send data to TypeSafe, so only do this with authorization to send it. Read
+[What leaves your machine](../../README.md#what-leaves-your-machine) first, then set the
+variables in [Recording real evidence](../../README.md#recording-real-evidence-shadow) in the
+environment Codex starts from. Stay in shadow mode: enforce needs thresholds measured on
+labeled, held-out data and approval from whoever owns the environment.
 
 ## Troubleshooting
 
-- **Nothing seems to happen.** That is shadow mode. Check the receipts folder or run step 3.
+- **The hook never runs.** Check `/hooks` first: an untrusted or changed hook is skipped. For
+  a repository-level hook, check that the project is trusted. Then check the `matcher`: Codex
+  tool names differ by version, so widen it and look at the tool name in the event.
+- **Nothing seems to happen.** In shadow mode that is expected. Check the receipts folder or
+  run step 4.
 - **Every shell command is denied in enforce.** Expected with the uncalibrated question sets.
   Switch back to shadow.
-- **The hook never fires.** Codex tool names differ by version. Widen or remove the
-  `matcher` and check which tool name appears in the event.

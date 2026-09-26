@@ -451,3 +451,55 @@ def test_decide_batch_shares_process_wide_cap(tmp_path: Any, monkeypatch: Any) -
     reasons = [r["records"][0]["fail_reason"] for r in results]
     # With a shared cap of 1, only one request can send; the others hit the rate budget.
     assert reasons.count("rate_budget") == 2
+
+
+# --- phase-0 hardening batch 2 (H3, H11, H12) -------------------------------
+
+
+def test_fingerprint_changes_with_profile_version() -> None:
+    # H3: bumping a profile's version invalidates the prior calibration fingerprint.
+    from jev_kit.engine import EngineConfig, effective_contract
+    from jev_kit.fingerprint import question_fingerprint
+    from jev_kit.questionset import load_question_set
+
+    qset = load_question_set(question_set())
+
+    def fp(cfg: EngineConfig) -> str:
+        return question_fingerprint(
+            instructions="x", criteria=None, question_type="noul", option_or_level_set=[],
+            model="jev-1.13.0", egress_contract=effective_contract(qset, cfg),
+        )
+
+    profiles = {"sql": (lambda s: s)}
+    v1 = EngineConfig(language_profiles=profiles, language_profile_versions={"sql": "1"})
+    v2 = EngineConfig(language_profiles=profiles, language_profile_versions={"sql": "2"})
+    assert fp(v1) != fp(v2)
+
+
+def test_record_outcome_survives_across_processes(tmp_path: Any, monkeypatch: Any) -> None:
+    # H11: an outcome may reference a decision committed by a PRIOR process, via the durable
+    # receipt on disk, not only the in-memory set.
+    from jev_kit import engine
+    from jev_kit.receipts import ReceiptWriter
+
+    writer = ReceiptWriter(directory=tmp_path)
+    monkeypatch.setattr(engine, "get_writer", lambda: writer)
+    rec = only(decide(request("shadow"), transport=reply(0.5), config=EngineConfig(
+        hmac_key=HMAC_KEY, writer=writer, rate_budget=RateBudget())))
+    did = rec["decision_id"]
+    # Simulate a fresh process: clear the in-memory set, point the disk scan at tmp_path.
+    monkeypatch.setattr(engine, "_committed_decisions", set())
+    monkeypatch.setattr("jev_kit.receipts.receipts_dir", lambda: tmp_path)
+    assert engine.record_outcome(did, "applied") is True
+    assert engine.record_outcome("act_" + "0" * 32, "applied") is False  # unknown id
+
+
+def test_config_from_env_reads_source_allowlist(monkeypatch: Any) -> None:
+    # H12: the CLI/hook path picks up the owner's source allowlist from the environment.
+    from jev_kit import engine
+
+    monkeypatch.setenv("JEV_KIT_SOURCE_ALLOWLIST", "web, agent_context ,")
+    monkeypatch.setenv("JEV_KIT_PUBLIC_NAMES", "sys.tables")
+    cfg = engine._config_from_env()
+    assert cfg.source_allowlist == frozenset({"web", "agent_context"})
+    assert cfg.public_names == frozenset({"sys.tables"})

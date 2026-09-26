@@ -159,7 +159,7 @@ def test_accept_path_through_fake_server(server: HTTPServer, tmp_path: Any) -> N
     )
     _Handler.behavior = "ok"
     _Handler.payload = json.dumps(
-        {"model": "jev-1.13.0", "answers": {"destructive": {"noul": 0.02}}}
+        {"model": "jev-1.13.0", "answers": {"destructive": {"type": "noul", "noul": 0.02}}}
     ).encode()
     transport = _HttpLiveTransport("SYNTHETIC_KEY", endpoint(server))
     config = EngineConfig(
@@ -209,7 +209,9 @@ def test_late_response_is_rejected(server: HTTPServer, tmp_path: Any) -> None:
             return TransportResponse(
                 200,
                 {},
-                json.dumps({"model": "jev-1.13.0", "answers": {"d": {"noul": 0.02}}}).encode(),
+                json.dumps(
+                    {"model": "jev-1.13.0", "answers": {"d": {"type": "noul", "noul": 0.02}}}
+                ).encode(),
             )
 
     qset = load_question_set(qset_obj)
@@ -273,7 +275,7 @@ def test_live_send_without_attestation_is_refused(server: HTTPServer, tmp_path: 
     )
     _Handler.behavior = "ok"
     _Handler.payload = json.dumps(
-        {"model": "jev-1.13.0", "answers": {"d": {"noul": 0.02}}}
+        {"model": "jev-1.13.0", "answers": {"d": {"type": "noul", "noul": 0.02}}}
     ).encode()
     cfg = EngineConfig(
         hmac_key=HMAC_KEY, writer=ReceiptWriter(directory=tmp_path), rate_budget=RateBudget(),

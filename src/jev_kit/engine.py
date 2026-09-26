@@ -21,6 +21,7 @@ JSON response (schema_version 1):
 from __future__ import annotations
 
 import hashlib
+import json
 import random
 import time
 from collections.abc import Callable, Mapping
@@ -108,6 +109,10 @@ class EngineConfig:
     source_allowlist: frozenset[str] = frozenset()
     public_names: frozenset[str] = frozenset()
     language_profiles: Mapping[str, Callable[[str], str]] = field(default_factory=dict)
+    # A stable version string per language profile. A profile's behavior cannot be content
+    # hashed (it is an injected callable), so calibration is bound to this version; changing a
+    # profile requires bumping its version, which changes the fingerprint (finding H3/C07).
+    language_profile_versions: Mapping[str, str] = field(default_factory=dict)
     rate_budget: RateBudget | None = None
     writer: ReceiptWriter | None = None
     attestation_path: str | None = None
@@ -117,14 +122,39 @@ class EngineConfig:
     max_state_question_tokens: int = 12_000  # state plus the longest question (finding C13)
 
 
+def _config_from_env() -> EngineConfig:
+    """Build the engine config for the CLI/hook path from the owner's environment (finding H12).
+
+    A shipped hook needs a way to declare its source allowlist and public names without editing
+    code; without this, run_json always used empty allowlists and any free-text field was
+    egress-blocked, so a hook produced no evidence. Comma-separated lists; blanks are ignored.
+    """
+    import os
+
+    def _set(name: str) -> frozenset[str]:
+        raw = os.environ.get(name, "")
+        return frozenset(item.strip() for item in raw.split(",") if item.strip())
+
+    return EngineConfig(
+        source_allowlist=_set("JEV_KIT_SOURCE_ALLOWLIST"),
+        public_names=_set("JEV_KIT_PUBLIC_NAMES"),
+    )
+
+
 def effective_contract(qset: QuestionSet, config: EngineConfig) -> dict[str, Any]:
     """The full egress contract hashed into question fingerprints: the question set's declared
     schema plus the local effective allowlists and profile identities (finding C07)."""
     contract = egress_contract(qset)
+    # Profile identity is (name, version), so changing a profile's rules (with a version bump)
+    # invalidates the prior calibration; the name alone would not (finding H3/C07).
+    profiles = {
+        name: config.language_profile_versions.get(name, "unversioned")
+        for name in sorted(config.language_profiles)
+    }
     contract["effective"] = {
         "public_names": sorted(config.public_names),
         "source_allowlist": sorted(config.source_allowlist),
-        "language_profiles": sorted(config.language_profiles),
+        "language_profiles": profiles,
     }
     return contract
 
@@ -624,7 +654,7 @@ def run_json(request: dict[str, Any], *, transport: Transport | None = None) -> 
     for runtime conditions; a caught exception becomes an internal error envelope.
     """
     try:
-        config = EngineConfig()
+        config = _config_from_env()
         op = request.get("op", "decide") if isinstance(request, dict) else None
         if op == "record_outcome":
             # An outcome operation needs no transport (finding C21).
@@ -709,8 +739,9 @@ def record_outcome(decision_id: str, outcome_code: str, action_id: str | None = 
         validate_action_id(decision_id)
     except ValidationError:
         return False
-    if decision_id not in _committed_decisions:
-        # An outcome must reference a decision committed in this process (finding C16).
+    if decision_id not in _committed_decisions and not _decision_committed_on_disk(decision_id):
+        # An outcome must reference a decision with a committed receipt, in this process or a
+        # prior one (finding H11): the in-memory set is a fast path, disk is the durable check.
         return False
     line = {
         "kind": "outcome",
@@ -724,3 +755,36 @@ def record_outcome(decision_id: str, outcome_code: str, action_id: str | None = 
 
 
 _OUTCOME_CODES = frozenset({"applied", "not_applied", "overridden_by_host", "overridden_by_human"})
+
+
+def _decision_committed_on_disk(decision_id: str) -> bool:
+    """True if a committed decision receipt with this id exists in the receipts directory.
+
+    Scans this process's and prior processes' receipt files, honoring the per-call commit
+    marker so a decision in a truncated (uncommitted) batch does not count (finding H11).
+    """
+    from jev_kit.receipts import receipts_dir
+
+    try:
+        files = sorted(receipts_dir().glob("*.jsonl"))
+    except OSError:
+        return False
+    for path in files:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        pending: set[str] = set()
+        for raw in lines:
+            try:
+                rec = json.loads(raw)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            kind = rec.get("kind")
+            if kind == "decision" and rec.get("decision_id") == decision_id:
+                pending.add(decision_id)
+            elif kind == "commit" and decision_id in pending:
+                return True  # the batch holding this decision was committed
+    return False

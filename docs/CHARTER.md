@@ -69,4 +69,4 @@ a hit round cap, or a decision the loop and Codex cannot resolve. Otherwise run 
 ## Status pointer
 
 Progress lives in the Beads graph (top-level goal `jak-goal`, phase epics beneath it) and the
-GitHub tracking issue. Phase 1 is complete and merged into `phase-0`.
+GitHub tracking issue. Status 2026-09-26: Phases 1-4 built and merged into `phase-0` (PRs #1, #24, #25); 360 tests, ruff and mypy --strict clean. The loop has reached the owner-gated boundary. Pending on the owner: a real labeled corpus (P4-1), one capped live smoke run (API key + attestation), enabling enforce per gate, and arming the hooks in live hosts. Phases 5-6 are gated behind a calibrated gate.

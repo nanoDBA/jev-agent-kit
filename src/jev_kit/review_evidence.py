@@ -29,7 +29,7 @@ from jev_kit.evidence_format import (
 def _artifact(value: object, root: Path) -> None:
     obj = record(value, {"path", "sha256"})
     name = obj["path"]
-    if not isinstance(name, str) or not name or len(name) > 256:
+    if not isinstance(name, str) or not name or len(name) > 256 or not name.isprintable():
         raise EvidenceError("artifact_path")
     path = PurePosixPath(name)
     # Portable paths only: reject Windows drives, streams, separators and traversal.
@@ -37,11 +37,19 @@ def _artifact(value: object, root: Path) -> None:
         raise EvidenceError("artifact_path")
     if any(char in name for char in "\\:\x00"):
         raise EvidenceError("artifact_path")
-    resolved_root = root.resolve(strict=True)
-    target = (resolved_root / path).resolve(strict=True)
-    if not target.is_relative_to(resolved_root):
-        raise EvidenceError("artifact_outside_root")
-    if hashlib.sha256(read_bytes(target)).hexdigest() != digest(obj["sha256"]):
+    try:
+        resolved_root = root.resolve(strict=True)
+        target = (resolved_root / path).resolve(strict=True)
+        if not target.is_relative_to(resolved_root):
+            raise EvidenceError("artifact_outside_root")
+        actual_digest = hashlib.sha256(read_bytes(target)).hexdigest()
+    except EvidenceError:
+        raise
+    except (OSError, ValueError, RuntimeError):
+        # Filesystem errors can contain private paths. Older pathlib versions also raise
+        # RuntimeError for symlink loops. Library callers need the same safe boundary as CLI.
+        raise EvidenceError("artifact_io") from None
+    if actual_digest != digest(obj["sha256"]):
         raise EvidenceError("artifact_digest")
 
 

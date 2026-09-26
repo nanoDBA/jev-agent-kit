@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import traceback
 from pathlib import Path
 
 import pytest
@@ -113,6 +114,68 @@ def test_artifact_paths_are_confined(tmp_path: Path, name: str) -> None:
     contract, evidence = fixture(tmp_path)
     with pytest.raises(EvidenceError):
         run(tmp_path, contract, rewrite(evidence, '"probe.txt"', json.dumps(name)))
+
+
+@pytest.mark.parametrize("control", ["\x00", "\x08", "\t", "\n", "\r", "\x7f", "\x85", "\u202e"])
+def test_library_rejects_nonprintable_artifact_paths(tmp_path: Path, control: str) -> None:
+    contract, evidence = fixture(tmp_path)
+    assert run(tmp_path, contract, evidence)["verdict"] == "record_consistent"
+    changed = rewrite(evidence, '"probe.txt"', json.dumps(f"PRIVATE_SENTINEL{control}.txt"))
+    with pytest.raises(EvidenceError, match=r"^artifact_path$") as caught:
+        run(tmp_path, contract, changed)
+    assert "PRIVATE_SENTINEL" not in "".join(traceback.format_exception(caught.value))
+
+
+@pytest.mark.parametrize("missing_root", [False, True])
+def test_library_missing_artifacts_have_safe_errors(tmp_path: Path, missing_root: bool) -> None:
+    contract, evidence = fixture(tmp_path)
+    assert run(tmp_path, contract, evidence)["verdict"] == "record_consistent"
+    root = tmp_path / "PRIVATE_SENTINEL" if missing_root else tmp_path
+    changed = evidence if missing_root else rewrite(evidence, '"probe.txt"', '"PRIVATE_SENTINEL"')
+    with pytest.raises(EvidenceError, match=r"^artifact_io$") as caught:
+        run(root, contract, changed)
+    assert "PRIVATE_SENTINEL" not in "".join(traceback.format_exception(caught.value))
+
+
+@pytest.mark.parametrize("stage", ["resolve", "read"])
+@pytest.mark.parametrize("failure", [PermissionError, OSError, ValueError, RuntimeError])
+def test_library_sanitizes_artifact_io_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str, failure: type[Exception],
+) -> None:
+    contract, evidence = fixture(tmp_path)
+    assert run(tmp_path, contract, evidence)["verdict"] == "record_consistent"
+    reached = 0
+
+    def broken(*args: object, **kwargs: object) -> bytes:
+        nonlocal reached
+        reached += 1
+        raise failure("PRIVATE_SENTINEL")
+
+    with monkeypatch.context() as patch:
+        if stage == "resolve":
+            patch.setattr(Path, "resolve", broken)
+        else:
+            patch.setattr("jev_kit.review_evidence.read_bytes", broken)
+        with pytest.raises(EvidenceError, match=r"^artifact_io$") as caught:
+            run(tmp_path, contract, evidence)
+    assert reached == 1
+    assert "PRIVATE_SENTINEL" not in "".join(traceback.format_exception(caught.value))
+
+
+@pytest.mark.parametrize("name", ["PRIVATE_SENTINEL\x08.txt", "PRIVATE_SENTINEL_missing.txt"])
+def test_cli_artifact_failures_stay_private(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], name: str,
+) -> None:
+    contract, evidence = fixture(tmp_path)
+    changed = rewrite(evidence, '"probe.txt"', json.dumps(name))
+    contract_path, evidence_path = tmp_path / "contract.json", tmp_path / "evidence.json"
+    contract_path.write_bytes(contract)
+    evidence_path.write_text(json.dumps(changed), encoding="utf-8")
+    assert main(["check", str(contract_path), str(evidence_path), "--candidate", SHA,
+                 "--reviewer", "independent-reviewer", "--artifacts", str(tmp_path)]) == 2
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == '{"verdict":"invalid_record","authorizes_action":false}\n'
 
 
 def test_symlink_escape_is_rejected(tmp_path: Path) -> None:

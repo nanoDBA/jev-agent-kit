@@ -121,6 +121,12 @@ Exit 0 and `record_consistent` mean only structural completeness and matching ar
 bytes. Exit 1 means `revise`. Exit 2 means invalid/unreadable evidence, with a fixed error
 response rather than raw input or exception text. Every result has `authorizes_action:false`.
 
+Direct `check()` callers receive fixed-code `EvidenceError` for artifact failures too:
+non-printable path characters produce `artifact_path`; filesystem resolution/read failures
+produce `artifact_io` with the original exception chain suppressed in standard tracebacks.
+Existing confinement, size, file-type, and digest errors retain their specific safe codes.
+This does not sanitize custom debuggers that deliberately inspect exception contexts/locals.
+
 ### Trust boundary and deliberate limitations
 
 The checker does not authenticate identities, git ancestry, the asserted SHA of the run,

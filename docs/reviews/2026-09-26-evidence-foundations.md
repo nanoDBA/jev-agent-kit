@@ -98,3 +98,29 @@ observation. Artifact reads assume a stable local filesystem; descriptor checks 
 a universal I/O deadline or a hostile-filesystem sandbox. Live Windows/Linux/macOS host
 behavior and real-traffic calibration were not measured. Existing PR #40 findings are not
 closed by this work, and all owner-gated boundaries remain intact.
+
+## Follow-up: Claude's PR #42 E1
+
+Claude independently reviewed `9a38459f5d4fe64776ee6be6cc680d8846798b97`, reran the original
+552-test gates, and reported one non-blocking library-error finding in
+[this review](https://github.com/nanoDBA/jev_agent_kit/pull/42#issuecomment-5847081211).
+This E1 is separate from the earlier internal E1 in the table above.
+
+The main agent reproduced the raw path-bearing error through public `check()` before fixing
+it: 17 selected cases failed and the existing NUL rejection control passed. The cause was
+an artifact filesystem exception boundary present only in the CLI, not the library.
+Non-printable artifact paths now reject before filesystem access; resolution/read failures
+become fixed-code `EvidenceError("artifact_io")` with normal exception chaining suppressed.
+Existing safe confinement, digest, file-type, and size errors retain their original codes.
+
+Twenty added tests cover the reported control character, other non-printable characters,
+missing roots/artifacts, observed injected read/resolution failures, and CLI non-disclosure.
+Final main-agent gates: **572 passed in 16.59 seconds**, Ruff clean, strict mypy clean across
+58 source files, and no whitespace errors. Source import was confirmed in this worktree.
+
+A separate reviewer independently exercised 29 library cases, two CLI cases, and positive
+controls before/after fault injection, reporting no actionable findings in the three-file
+implementation/test/contract delta. Actual symlink-loop behavior on older Python versions
+was not exercised; its `RuntimeError` path was injected. The guarantee excludes debuggers
+that deliberately inspect exception contexts or locals. Claude is asked to verify the
+pushed follow-up head before carrying forward the PR disposition. PR #40 is unchanged.

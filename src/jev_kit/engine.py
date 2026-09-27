@@ -25,7 +25,6 @@ import json
 import random
 import re
 import time
-import types
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -116,10 +115,9 @@ class EngineConfig:
     max_retries: int = 2
     source_allowlist: frozenset[str] = frozenset()
     public_names: frozenset[str] = frozenset()
+    # Reserved. Any non-empty language_profiles is rejected in phase 0 (see effective_contract,
+    # finding H3); a declarative, data-only profile format is tracked as jak-t4l.
     language_profiles: Mapping[str, Callable[[str], str]] = field(default_factory=dict)
-    # A stable version string per language profile, required for any profile in use. The
-    # fingerprint binds BOTH this version and a digest of the profile callable's own code, so a
-    # rules change invalidates calibration even if the version tag is not bumped (finding H3/C07).
     language_profile_versions: Mapping[str, str] = field(default_factory=dict)
     rate_budget: RateBudget | None = None
     writer: ReceiptWriter | None = None
@@ -153,210 +151,21 @@ def effective_contract(qset: QuestionSet, config: EngineConfig) -> dict[str, Any
     """The full egress contract hashed into question fingerprints: the question set's declared
     schema plus the local effective allowlists and profile identities (finding C07)."""
     contract = egress_contract(qset)
-    # Profile identity is (declared version, actual rule-content digest). A version bump alone
-    # is not enough: two normalizers carrying the same version tag but different rules would
-    # otherwise share a fingerprint and reuse each other's calibration (finding H3/C07, story
-    # 69). We bind the digest of the profile callable's own code so a rules change with an
-    # unchanged version tag still changes the fingerprint.
-    profiles: dict[str, dict[str, str]] = {}
-    for name in sorted(config.language_profiles):
-        version = config.language_profile_versions.get(name)
-        if not isinstance(version, str) or not version:
-            # A profile with no declared version could change behavior without changing the
-            # fingerprint, reusing stale calibration; refuse it (finding H3/C07).
-            raise ValidationError(FailReason.CONFIG, "profile_unversioned")
-        profiles[name] = {
-            "version": version,
-            "content": _profile_content_digest(config.language_profiles[name]),
-        }
+    # Language profiles (injected Python callables that normalize CODE fields) are not
+    # supported in phase 0. A Python callable cannot be bound to a fingerprint that captures its
+    # behavior: module attributes, substituted builtins, captured subclasses and hash-seeded
+    # iteration all change output without changing any inspectable identity, so a calibrated
+    # threshold could be silently reused after the behavior changed (finding H3). Any configured
+    # profile therefore fails closed. CODE fields stay blocked without a profile. A declarative,
+    # data-only profile format that can be bound by value is tracked as jak-t4l.
+    if config.language_profiles:
+        raise ValidationError(FailReason.CONFIG, "language_profiles_unsupported")
     contract["effective"] = {
         "public_names": sorted(config.public_names),
         "source_allowlist": sorted(config.source_allowlist),
-        "language_profiles": profiles,
+        "language_profiles": {},
     }
     return contract
-
-
-def _profile_content_digest(profile: Callable[[str], str]) -> str:
-    """A digest of a language profile's actual transformation rules, so two profiles that behave
-    differently never share a fingerprint even under the same version tag (finding H3).
-
-    For a plain Python function this hashes its code object (bytecode, constants, referenced
-    names) AND its captured behavior dependencies: the values in its closure cells and its
-    argument defaults. Two closures from one factory that captured different rules (for example
-    ``SELECT ?`` versus ``DELETE ?``) therefore get different digests, closing the reported gap.
-
-    A dependency we cannot bind to a stable digest fails closed:
-    - a callable with no inspectable code (an opaque C/builtin callable, or a callable object);
-    - a closure cell or default whose value is not a bounded, deterministically representable
-      primitive (a captured object, function, or anything whose ``repr`` embeds an address).
-    Global mutable state a function reads by name is not fully bound here; a file-backed profile
-    that reads external rule artifacts must fold those files' digests in, tracked as later work.
-    """
-    code = getattr(profile, "__code__", None)
-    if code is None:
-        raise ValidationError(FailReason.CONFIG, "profile_content_unhashable")
-    digest = hashlib.sha256()
-    digest.update(code.co_code)
-    # co_consts may hold compiler-interned membership sets (a `x in {...}` literal), where order
-    # is irrelevant, so unordered collections are allowed and sorted here.
-    digest.update(_stable_repr(code.co_consts, allow_unordered=True).encode("utf-8"))
-    digest.update(repr(code.co_names).encode("utf-8"))
-    captured: list[object] = []
-    for cell in getattr(profile, "__closure__", None) or ():
-        try:
-            captured.append(cell.cell_contents)
-        except ValueError:  # an empty cell (recursive/forward reference)
-            raise ValidationError(FailReason.CONFIG, "profile_content_unhashable") from None
-    captured.extend(getattr(profile, "__defaults__", None) or ())
-    captured.extend((getattr(profile, "__kwdefaults__", None) or {}).values())
-    digest.update(_stable_repr(tuple(captured)).encode("utf-8"))
-    digest.update(_global_dependencies_repr(profile, code).encode("utf-8"))
-    return digest.hexdigest()[:32]
-
-
-def _global_dependencies_repr(profile: Callable[[str], str], code: Any) -> str:
-    """Bind the profile's referenced module globals, or fail closed on an unbound one (H3).
-
-    Profiles are limited to a closed, bounded SUPPORTED SUBSET of Python, and anything outside
-    it fails closed. Detecting every way Python can reach mutable state (class-body LOAD_NAME,
-    imports, attribute stores, file reads, a user module's data attributes) one case at a time
-    does not converge, so we admit only forms whose behavior is fully bound (H3):
-    - every code object, outer and nested, is walked; name-scope, class, import and super
-      opcodes and attribute/global stores are rejected outright;
-    - a builtin must be on a short allowlist of pure functions (no open, __import__, getattr,
-      eval, globals, ...);
-    - a module global must be an allowlisted pure module (bound by name), a bounded primitive is
-      bound by value, and any other global (a user module, a mutable container, a function, an
-      object) fails closed.
-    """
-    import dis
-    import types
-
-    names: set[str] = set()
-    pending = [code]
-    while pending:
-        current = pending.pop()
-        for instr in dis.get_instructions(current):
-            if _is_unsupported_opcode(instr.opname):
-                raise ValidationError(FailReason.CONFIG, "profile_content_unhashable")
-            if instr.opname == "LOAD_GLOBAL" and isinstance(instr.argval, str):
-                names.add(instr.argval)
-        pending.extend(const for const in current.co_consts if hasattr(const, "co_code"))
-    referenced = sorted(names)
-    module_globals = getattr(profile, "__globals__", {})
-    parts: list[str] = []
-    for name in referenced:
-        if name not in module_globals:
-            if name not in _SAFE_BUILTINS:
-                raise ValidationError(FailReason.CONFIG, "profile_content_unhashable")
-            continue  # an allowlisted pure builtin: stable, nothing to bind
-        value = module_globals[name]
-        if isinstance(value, types.ModuleType):
-            if value.__name__ not in _SAFE_MODULES:
-                # A user module's attributes, or a stdlib module exposing mutable state
-                # (sys.modules, os.environ), are data the fingerprint cannot bind.
-                raise ValidationError(FailReason.CONFIG, "profile_content_unhashable")
-            parts.append(f"module:{name}={value.__name__}")
-        elif isinstance(value, _STABLE_TYPES):
-            parts.append(f"const:{name}={_stable_repr(value)}")
-        else:
-            # A mutable container, a helper function, or any other object: its behavior is not
-            # bound by the fingerprint, so the profile cannot be trusted to a stable identity.
-            raise ValidationError(FailReason.CONFIG, "profile_content_unhashable")
-    return "|".join(parts)
-
-
-# Value types whose repr is stable across runs (no embedded object address) and captures the
-# whole value, so binding them into a profile's identity is deterministic (finding H3).
-_STABLE_TYPES = (str, bytes, bool, int, float, type(None))
-
-# Pure builtins a profile may call. Anything else (open, __import__, getattr, eval, exec,
-# globals, vars, input, setattr, ...) can reach state the fingerprint does not bind (H3).
-# Pure modules a profile may use. Other standard-library modules are excluded on purpose: sys
-# (sys.modules), os (os.environ), importlib, builtins and io all reach state the fingerprint does
-# not bind (H3).
-_SAFE_MODULES = frozenset(
-    {"re", "string", "math", "unicodedata", "itertools", "operator", "json", "textwrap",
-     "fnmatch", "base64", "binascii", "hashlib"}
-)
-
-_SAFE_BUILTINS = frozenset(
-    {
-        "abs", "all", "any", "bool", "chr", "dict", "enumerate", "filter", "float", "frozenset",
-        "int", "isinstance", "iter", "len", "list", "map", "max", "min", "next", "ord", "range",
-        "repr", "reversed", "set", "sorted", "str", "sum", "tuple", "zip",
-        "ValueError", "TypeError", "KeyError", "IndexError", "StopIteration",
-    }
-)
-
-# Opcode families outside the supported profile subset: name-scope access (class bodies and
-# module-level code read through LOAD_NAME), class creation, imports, super attribute access,
-# and stores that mutate shared state. Matched by substring so a renamed variant in a newer
-# Python release is still rejected (fail closed) rather than silently admitted.
-_UNSUPPORTED_OPCODE_PARTS = ("NAME", "CLASS", "IMPORT", "SUPER", "FROM_DICT")
-_UNSUPPORTED_OPCODES = frozenset({"STORE_GLOBAL", "DELETE_GLOBAL", "STORE_ATTR", "DELETE_ATTR"})
-
-
-def _is_unsupported_opcode(opname: str) -> bool:
-    return opname in _UNSUPPORTED_OPCODES or any(
-        part in opname for part in _UNSUPPORTED_OPCODE_PARTS
-    )
-
-
-def _stable_repr(value: object, *, allow_unordered: bool = False) -> str:
-    # The type name is part of the representation so behaviorally distinct types that share a
-    # value repr (a list ['r'] versus a tuple ('r',), which a type-sensitive normalizer treats
-    # differently) do not collide (finding H3). bool is checked before int since it subclasses it.
-    if isinstance(value, bool):
-        return f"bool:{value!r}"
-    if isinstance(value, _STABLE_TYPES):
-        return f"{type(value).__name__}:{value!r}"
-    if isinstance(value, types.ModuleType):
-        # A captured module follows the same rule as a module global: only an allowlisted pure
-        # module is bound by name; any other module can expose unbound mutable state (H3).
-        if value.__name__ in _SAFE_MODULES:
-            return f"module:{value.__name__}"
-        raise ValidationError(FailReason.CONFIG, "profile_content_unhashable")
-    if allow_unordered and hasattr(value, "co_code"):
-        # A nested code object in co_consts (a lambda or generator expression inside the
-        # profile) is serialized canonically, never by repr, which embeds a per-process memory
-        # address and the checkout path (finding H3).
-        from jev_kit.egress import _canonical_code
-
-        nested = hashlib.sha256()
-        _canonical_code(value, nested)
-        return f"code:{nested.hexdigest()}"
-    if isinstance(value, (tuple, list)):
-        return (
-            f"{type(value).__name__}["
-            + ",".join(_stable_repr(v, allow_unordered=allow_unordered) for v in value)
-            + "]"
-        )
-    if isinstance(value, (frozenset, set)):
-        # A set/frozenset has no defined iteration order, so a captured one whose order a
-        # normalizer observes (next(iter(...))) cannot be bound to a stable, behavior-preserving
-        # digest: it fails closed (finding H3). It is only allowed as an order-irrelevant
-        # membership constant in a function's co_consts (a compiled `x in {...}` literal), where
-        # sorting is a faithful representation.
-        if not allow_unordered:
-            raise ValidationError(FailReason.CONFIG, "profile_content_unhashable")
-        items = sorted(value, key=repr)
-        return f"{type(value).__name__}[" + ",".join(
-            _stable_repr(v, allow_unordered=allow_unordered) for v in items
-        ) + "]"
-    if isinstance(value, dict):
-        # A dict's INSERTION ORDER is behaviorally significant in Python (iteration reflects it,
-        # so a normalizer reading next(iter(...)) depends on it); it must be preserved, not
-        # sorted, or two dicts with the same entries in different orders would collide (H3).
-        return "dict{" + ",".join(
-            f"{_stable_repr(k, allow_unordered=allow_unordered)}:"
-            f"{_stable_repr(v, allow_unordered=allow_unordered)}"
-            for k, v in value.items()
-        ) + "}"
-    # Anything else (a captured object, function, code, or a value whose repr embeds an address)
-    # cannot be bound deterministically, so the profile fails closed (finding H3).
-    raise ValidationError(FailReason.CONFIG, "profile_content_unhashable")
 
 
 def _error_envelope(reason: FailReason) -> dict[str, Any]:

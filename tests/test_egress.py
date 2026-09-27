@@ -663,3 +663,13 @@ def test_json_encoded_string_leaves_are_rescanned_h15() -> None:
         deep = json.dumps({"n": deep})
     assert scan_text(deep) == "embedded_json_too_deep"
     assert scan_text(json.dumps({"payload": json.dumps({"note": "hello"})})) is None
+
+
+def test_json_string_root_is_decoded_and_rescanned_h15() -> None:
+    # Batch-13 H15: a JSON document can have a string root; json.dumps of an encoded credential
+    # document is decoded under the same layer budget instead of skipped. Plain quoted text and
+    # benign string-root JSON stay clean.
+    assert scan_text(json.dumps(json.dumps({" password ": "opensesame"}))) is not None
+    assert scan_text(json.dumps(json.dumps(json.dumps({"password": "z"})))) is not None
+    assert scan_text('"hello world"') is None
+    assert scan_text(json.dumps(json.dumps({"note": "hi"}))) is None

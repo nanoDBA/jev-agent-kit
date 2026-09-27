@@ -520,10 +520,19 @@ _MAX_JSON_LAYERS = 4
 
 def _scan_embedded_json(text: str, depth: int = 0) -> str | None:
     stripped = text.strip()
-    if not stripped or stripped[0] not in "{[" or len(stripped) > _MAX_EMBEDDED_JSON:
+    # A JSON document can have an object, array OR string root. A string root ("...") is itself
+    # an encoding layer (json.dumps of a JSON document), so it is decoded and rescanned under
+    # the same layer budget rather than skipped (finding H15).
+    if not stripped or stripped[0] not in '{["' or len(stripped) > _MAX_EMBEDDED_JSON:
         return None
     if depth >= _MAX_JSON_LAYERS:
         return "embedded_json_too_deep"
+    if stripped[0] == '"':
+        try:
+            inner = json.loads(stripped)
+        except (ValueError, RecursionError):
+            return None
+        return _scan_text(inner, depth + 1) if isinstance(inner, str) else None
     try:
         parsed = json.loads(stripped, object_pairs_hook=_pairs_rejecting_duplicates)
     except _DuplicateEmbeddedKey:

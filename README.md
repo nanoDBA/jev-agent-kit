@@ -34,26 +34,73 @@ The runtime uses only the Python standard library. Installation uses the Hatchli
 backend. Keep the following examples in the repository root so their relative paths work.
 If `jev-kit` is not on your PATH after installation, use `python -m jev_kit.cli` instead.
 
-## Try a routing decision, offline
+## See it work, offline
+
+No account, API key or network call is needed for any of these.
+
+### 1. Scan a skill before you install it
+
+Skills are instructions your agent will follow, so a downloaded one deserves a look first.
+[`examples/suspicious-skill`](examples/suspicious-skill/SKILL.md) is a deliberately malicious
+"git helper":
+
+```sh
+jev-kit audit examples/suspicious-skill
+```
+
+```text
+SKILL.md:8   high  injection.ignore_previous         "ignore all previous instructions"
+SKILL.md:12  high  dangerous_command.curl_pipe_shell  curl ... | sh
+SKILL.md:14  high  aws_key                            a leaked AWS access key
+```
+
+That is a summary of the JSON the command prints; the exit code is `1` because of the
+high-severity findings. The audit only reads files; it never runs them or calls a model. It
+matches known patterns, so a clean result means no matches, not proof that a skill is safe.
+
+### 2. Stop a leaked key before it leaves your machine
+
+```sh
+python examples/leak_check.py
+```
+
+```text
+The agent's tool call carries a leaked key:
+  context: tool=Bash; description=Push after setting AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+
+jev-kit checks the exact outgoing bytes before sending:
+  BLOCKED  fail_reason=egress_blocked  requests sent: 0
+
+The same call without the key is sent, reduced to what the model sees:
+  {"command": "git", "context": "tool=Bash; description=Push the release branch", "target": "id_2be341514b09d550"}
+```
+
+The whole request is refused, so nothing reaches the network. When there is nothing to block,
+the command is cut to its program name and the file path becomes a keyed hash before sending.
+The key shown is AWS's published example, not a real credential.
+
+### 3. Ask Jev a typed question
 
 ```sh
 python examples/route_request.py
 ```
 
-This asks the shipped `preflight-route` question: should a request go to deterministic code,
-a specialist LLM, or a human? The response is scripted so you can inspect the behavior without
-an account, a network call or a charge:
-
 ```text
-request:       "What is the HTTP status code for 'Not Found'?"
-distribution:  {'deterministic': 0.82, 'specialist_llm': 0.15, 'human': 0.03}
-route:         no_advice  (mock=True)
-handled by:    specialist_llm
+request: "What is the HTTP status code for 'Not Found'?"
+Which handler should take it?  [scripted answer]
+  deterministic   ################     0.82
+  specialist_llm  ###                  0.15
+  human           #                    0.03
+route:   no_advice  (mock=True)
+handled: specialist_llm
 ```
 
-Even with `deterministic` at 0.82, the mock cannot produce an accepted decision. The example
-keeps its ordinary `specialist_llm` fallback. These numbers demonstrate the response shape;
-they are not a measurement of Jev's accuracy.
+Instead of a paragraph of reasoning, Jev returns a probability for each answer you defined,
+and your code decides what to do with it. Here the answer is scripted, so the kit refuses to
+act on it (`no_advice`) and the code keeps its normal path. With a real answer and a threshold
+measured on your own data, a confident `deterministic` would come back as `accept`, and your
+code could skip the LLM for this request. These numbers show the response shape; they are
+not a measurement of Jev's accuracy.
 
 ## Use the CLI
 
@@ -106,24 +153,6 @@ including an error envelope. Read `status` and each record's `route`; exit `0` i
 Malformed JSON or an unusable invocation returns exit `2` with a fixed config-error envelope.
 The [CLI schemas](docs/schemas/README.md) describe the request and response formats, including
 `decide_batch` and `record_outcome`.
-
-### Audit local files without a model call
-
-```sh
-jev-kit audit examples/hosts
-```
-
-Expected output for the supplied host examples:
-
-```json
-{"schema_version":1,"status":"ok","findings":[]}
-```
-
-Replace `examples/hosts` with a skill directory to scan it for known injection, dangerous
-command and secret patterns. The audit reads `.md`, `.txt` and `.json` files within size and
-file-count limits; it does not execute their contents or call Jev. Exit `1` means a
-high-severity finding. An empty list means no matches in the scanned files, not proof that a
-directory is safe. Example text can trigger a finding too.
 
 ### Preview a skill install
 

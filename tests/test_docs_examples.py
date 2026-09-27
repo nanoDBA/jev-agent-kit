@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -63,8 +64,9 @@ def test_gate_walkthrough_matches_readme() -> None:
 
 def test_route_request_matches_readme() -> None:
     out = _run_example("route_request.py")
-    assert "route:         no_advice  (mock=True)" in out
-    assert "handled by:    specialist_llm" in out
+    assert "route:   no_advice  (mock=True)" in out
+    assert "handled: specialist_llm" in out
+    assert "[scripted answer]" in out  # the mock is labelled wherever it appears
     for line in out.splitlines():
         assert line in README, line
 
@@ -117,14 +119,31 @@ def test_readme_request_reaches_mock_transport(
     assert record["receipt_written"] is True
 
 
-def test_readme_cli_audit() -> None:
+def test_readme_audit_of_suspicious_skill_matches_summary() -> None:
+    # The README shows a condensed table of the audit's JSON; every row must be a real
+    # finding (line, rule, severity), and every real finding must have a row.
     proc = subprocess.run(
-        [sys.executable, "-m", "jev_kit.cli", "audit", "examples/hosts"],
-        cwd=REPO, env=_env(), capture_output=True, text=True, timeout=60, check=True,
+        [sys.executable, "-m", "jev_kit.cli", "audit", "examples/suspicious-skill"],
+        cwd=REPO, env=_env(), capture_output=True, text=True, timeout=60,
     )
+    assert proc.returncode == 1  # high-severity findings, as the README says
     assert proc.stderr == ""
-    assert json.loads(proc.stdout) == {"schema_version": 1, "status": "ok", "findings": []}
-    assert proc.stdout.strip() in README
+    findings = {
+        (f["line"], f["rule_id"], f["severity"]) for f in json.loads(proc.stdout)["findings"]
+    }
+    rows = {
+        (int(m.group(1)), m.group(3), m.group(2))
+        for m in re.finditer(r"^SKILL\.md:(\d+)\s+(\w+)\s+(\S+)", README, re.MULTILINE)
+    }
+    assert rows == findings
+    assert len(rows) == 3
+
+
+def test_leak_check_matches_readme() -> None:
+    out = _run_example("leak_check.py")
+    assert "BLOCKED  fail_reason=egress_blocked  requests sent: 0" in out
+    for line in out.splitlines():
+        assert line in README, line
 
 
 def test_readme_cli_install_is_dry_run(tmp_path: Path) -> None:

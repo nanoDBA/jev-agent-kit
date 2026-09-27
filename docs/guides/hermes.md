@@ -93,7 +93,7 @@ Shadow mode prints `None`, which lets the call proceed. With `JEV_KIT_HOOK_MODE=
 and no API key it prints:
 
 ```text
-{'action': 'block', 'message': 'jev-kit gate: send to human approval. (reason: config)'}
+{'action': 'approve', 'message': 'jev-kit gate: send to human approval. (reason: config)'}
 ```
 
 ## What Hermes sees
@@ -102,7 +102,7 @@ and no API key it prints:
 | --- | --- | --- |
 | Shadow mode, any result | `None` | The call proceeds. |
 | Enforce, every gate cleared | `None` | The call proceeds under your usual Hermes rules. |
-| Enforce, a gate not cleared, or any failure | `{"action": "block", ...}` | Hermes blocks the call. |
+| Enforce, a gate not cleared, or any failure | `{"action": "approve", ...}` | Hermes asks you. With no one to ask (a non-interactive run), a timeout or a denial, it blocks the call. |
 
 Hermes treats a hook that exceeds its 30-second timeout as a block. The hook waits at most
 about 8 seconds for the engine's answer: a worker timeout, backed by a watchdog that kills the
@@ -110,10 +110,8 @@ engine's child process. If that budget runs out, the hook answers fail-closed wi
 further, and a worker still finishing keeps running in the background. Loading the engine also
 comes on top of the budget. That still leaves a wide margin under 30 seconds.
 
-Known limitation: in enforce mode the plugin returns Hermes' `block` action, so the call is
-stopped rather than sent for approval, even though the message says "send to human approval".
-Hermes also has an `approve` action that asks for approval. Switching to it is tracked as a
-follow-up.
+The plugin sends no `rule_key`, so each call is approved on its own. If another plugin
+returns `block` for the same call, Hermes blocks it.
 
 ## 5. Record real evidence (optional)
 

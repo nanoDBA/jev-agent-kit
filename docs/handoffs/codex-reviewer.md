@@ -40,7 +40,7 @@ review and verify. The owner makes every merge decision and every owner-gated ca
 ## Always check: code
 
 - Authority: an `accept` is evidence, never host permission. No shim emits an affirmative
-  allow; adverse evidence maps to Claude `ask`, Codex `deny`, Hermes `block`; shadow mode is
+  allow; adverse evidence maps to Claude `ask`, Codex `deny`, Hermes `approve`; shadow mode is
   decision-free.
 - Secrecy: no secret or input-derived text in records, receipts, or CLI diagnostics.
 - Egress: no bypass of the declared-field transforms or the credential scan (nesting,

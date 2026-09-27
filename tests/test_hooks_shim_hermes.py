@@ -1,4 +1,4 @@
-"""Hermes host shim tests (Phase 3): allow maps to `None`, ask maps to a Hermes block payload,
+"""Hermes host shim tests (Phase 3): allow maps to `None`, ask maps to a Hermes approve payload,
 shadow never blocks (even on a slow runner), and `register` wires the plugin hook contract. All
 use an injected fake runner (via the core's `runner` param); no engine, no network."""
 
@@ -41,13 +41,13 @@ def test_enforce_all_accept_allows() -> None:
     assert result is None
 
 
-def test_enforce_ask_blocks() -> None:
+def test_enforce_ask_requests_approval() -> None:
     runner = ok([{"route": "ask", "fail_reason": "uncalibrated", "is_mock": False}])
     result = hermes.pre_tool_call(
         FakeCtx(), TOOL_CALL, mode=Mode.ENFORCE, question_set_path=QS, runner=runner
     )
     assert result == {
-        "action": "block",
+        "action": "approve",
         "message": "jev-kit gate: send to human approval. (reason: uncalibrated)",
     }
 
@@ -76,7 +76,7 @@ def test_shadow_never_blocks_even_on_slow_runner_past_self_deadline() -> None:
     assert result is None
 
 
-def test_enforce_slow_runner_past_self_deadline_blocks() -> None:
+def test_enforce_slow_runner_past_self_deadline_requests_approval() -> None:
     def slow(req: dict[str, Any]) -> dict[str, Any]:
         time.sleep(2.0)
         return {"schema_version": 1, "status": "ok", "records": [{"route": "accept"}]}
@@ -90,7 +90,7 @@ def test_enforce_slow_runner_past_self_deadline_blocks() -> None:
         self_deadline_s=0.2,
     )
     assert result is not None
-    assert result["action"] == "block"
+    assert result["action"] == "approve"
 
 
 def test_unparseable_event_shadow_allows() -> None:
@@ -100,12 +100,12 @@ def test_unparseable_event_shadow_allows() -> None:
     assert result is None
 
 
-def test_unparseable_event_enforce_blocks() -> None:
+def test_unparseable_event_enforce_requests_approval() -> None:
     result = hermes.pre_tool_call(
         FakeCtx(), {"nothing": "useful"}, mode=Mode.ENFORCE, question_set_path=QS, runner=ok([])
     )
     assert result == {
-        "action": "block",
+        "action": "approve",
         "message": "jev-kit gate: send to human approval. (reason: unparseable_event)",
     }
 
@@ -128,7 +128,7 @@ def test_register_hook_accepts_kwarg_calling_convention() -> None:
     handler = ctx.hooks["pre_tool_call"]
     result = handler(tool_name="terminal", args={"command": "rm -rf /data"}, task_id="prod")
     assert result is not None
-    assert result["action"] == "block"
+    assert result["action"] == "approve"
 
 
 def test_register_defaults_to_shadow_and_never_blocks(monkeypatch: Any) -> None:

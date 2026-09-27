@@ -1,8 +1,10 @@
 """Hermes host shim for the `pre_tool_call` hook (Phase 3).
 
 A Hermes plugin registers a callback via `ctx.register_hook("pre_tool_call", fn)`. The callback
-allows a tool call by returning `None`, or blocks it by returning `{"action": "block",
-"message": ...}` (Hermes routes a block to human approval). Hermes fails closed at a
+allows a tool call by returning `None`, or sends it to human approval by returning
+`{"action": "approve", "message": ...}`. Hermes blocks the call when approval is unavailable
+(a non-interactive context), times out, or is denied, and a `block` from any other plugin
+still wins over this `approve`. Hermes also fails closed at a
 `plugins.hook_callback_timeout` (default 30s) plus a 60s suppression window on timeout or an
 uncaught exception (`docs/research/06-reverified-facts.md` section 9).
 
@@ -38,7 +40,7 @@ DEFAULT_QUESTION_SET_PATH = "skills/jev-runtime/questions/tool-call-gate.json"
 _MODE_ENV_VAR = "JEV_KIT_HOOK_MODE"
 _QUESTION_SET_ENV_VAR = "JEV_KIT_HOOK_QUESTION_SET_PATH"
 
-_BLOCK_MESSAGE = "jev-kit gate: send to human approval."
+_ASK_MESSAGE = "jev-kit gate: send to human approval."
 
 
 class HermesContext(Protocol):
@@ -111,10 +113,11 @@ def _extract_tool_call(event: Any) -> ToolCall | None:
         return None
 
 
-def _block(reason: str | None) -> dict[str, str]:
+def _ask(reason: str | None) -> dict[str, str]:
+    # No rule_key: each call is approved on its own, never as a remembered scope.
     if reason is None:
-        return {"action": "block", "message": _BLOCK_MESSAGE}
-    return {"action": "block", "message": f"{_BLOCK_MESSAGE} (reason: {reason})"}
+        return {"action": "approve", "message": _ASK_MESSAGE}
+    return {"action": "approve", "message": f"{_ASK_MESSAGE} (reason: {reason})"}
 
 
 def pre_tool_call(
@@ -126,14 +129,14 @@ def pre_tool_call(
     runner: Runner | None = None,
     self_deadline_s: float = DEFAULT_SELF_DEADLINE_S,
 ) -> dict[str, str] | None:
-    """Hermes `pre_tool_call` callback: allow (`None`) or block (a Hermes block payload).
+    """Hermes `pre_tool_call` callback: allow (`None`) or ask (a Hermes approve payload).
 
     `ctx` is accepted but unused beyond being part of the Hermes callback shape; this shim keeps
     no state on it. All decision logic lives in `hooks.core.decide_tool_call`. `mode` and
     `question_set_path` default from the environment when not given (`JEV_KIT_HOOK_MODE`,
     default shadow; `JEV_KIT_HOOK_QUESTION_SET_PATH`, default the tool-call-gate set).
 
-    Never raises: an unparseable event or any internal failure fails closed to a block in
+    Never raises: an unparseable event or any internal failure fails closed to approval in
     enforce and to allow in shadow, matching the core's own fail-closed behavior.
     """
     del ctx
@@ -141,7 +144,7 @@ def pre_tool_call(
 
     call = _extract_tool_call(tool_call)
     if call is None:
-        return None if resolved_mode is Mode.SHADOW else _block("unparseable_event")
+        return None if resolved_mode is Mode.SHADOW else _ask("unparseable_event")
 
     try:
         result = decide_tool_call(
@@ -154,11 +157,11 @@ def pre_tool_call(
     except Exception:
         # decide_tool_call never raises for runtime conditions; this is a last-resort net so the
         # shim itself can never crash a Hermes turn.
-        return None if resolved_mode is Mode.SHADOW else _block("internal")
+        return None if resolved_mode is Mode.SHADOW else _ask("internal")
 
     if result.outcome is HookOutcome.ALLOW:
         return None
-    return _block(result.reason)
+    return _ask(result.reason)
 
 
 def register(

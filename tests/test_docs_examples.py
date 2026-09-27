@@ -223,7 +223,7 @@ def test_hermes_example_plugin(mode: str, monkeypatch: pytest.MonkeyPatch) -> No
     if mode == "shadow":
         assert result is None
     else:
-        assert result["action"] == "block"
+        assert result["action"] == "approve"
 
 
 @pytest.mark.parametrize(

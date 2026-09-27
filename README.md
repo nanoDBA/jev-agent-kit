@@ -370,7 +370,7 @@ uncalibrated sets shipped today, it asks about or stops every matched tool call:
 | --- | --- |
 | Claude Code | Returns `permissionDecision: "ask"` |
 | Codex | Returns `permissionDecision: "deny"` and exit code `2` |
-| Hermes Agent | Returns `action: "block"` |
+| Hermes Agent | Returns `action: "approve"`, which asks you; Hermes blocks the call if no one can approve |
 
 When every gate clears, a hook still returns no decision (`{}` or `None`). No shim emits an
 affirmative allow. The host retains authority over tool execution.

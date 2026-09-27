@@ -81,6 +81,23 @@ See `docs/adr/0003-python-implementation.md`.
 Beads (`bd`). On the first session, import the backlog in `docs/plan.md` as issues with
 their dependencies. Check `bd --help` and `bd create --help` for flags; do not guess them.
 
+## Agent skills
+
+### Issue tracker
+
+Beads (`bd`) is the source of truth; items that need outside visibility are mirrored to
+GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`,
+`wontfix`), used in Beads and on GitHub mirrors. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: a root `CONTEXT.md` (created when first needed) and `docs/adr/`. See
+`docs/agents/domain.md`.
+
 ## Do not build
 
 - A Jev skill router as a headline feature. There is a published negative result for

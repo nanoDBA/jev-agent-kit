@@ -181,7 +181,13 @@ def verify_repository(
                 continue
             meta, _, name = entry.partition(b"\t")
             mode, kind, oid = meta.decode().split()
-            path = name.decode("utf-8", errors="surrogateescape")
+            try:
+                path = name.decode("utf-8")
+            except UnicodeDecodeError:
+                # A filename in another encoding (e.g. Latin-1) could carry a value the
+                # pattern scan cannot see, exactly like non-UTF-8 file contents: fail closed.
+                problems.append(f"path {name!r}: filename is not UTF-8, cannot verify")
+                continue
             paths.add(path)
             if mode == "160000":
                 problems.append(f"gitlink {path}: submodule links cannot be verified")

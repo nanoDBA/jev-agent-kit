@@ -231,3 +231,22 @@ def test_commit_with_non_utf8_message_encoding_fails_closed(tmp_path: Path) -> N
     _git(repo, "-c", "i18n.commitEncoding=ISO-8859-1", "commit", "-q", "--allow-empty",
          "-m", "latin-1 message")
     assert any("declares encoding" in p or "not UTF-8" in p for p in _verify(repo))
+
+
+def test_non_utf8_filename_fails_closed(tmp_path: Path) -> None:
+    # A Latin-1 filename ("Jos\xe9.txt") is built with git plumbing, since not every
+    # filesystem can hold it. Like non-UTF-8 content, it cannot be checked: fail closed.
+    repo = _repo(tmp_path)
+    blob = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"], cwd=repo, input=b"harmless\n",
+        capture_output=True, check=True,
+    ).stdout.strip()
+    tree = subprocess.run(
+        ["git", "mktree"], cwd=repo, input=b"100644 blob " + blob + b"\tJos\xe9.txt\n",
+        capture_output=True, check=True,
+    ).stdout.decode().strip()
+    head = _git(repo, "rev-parse", "HEAD").strip()
+    commit = _git(repo, "commit-tree", tree, "-p", head, "-m", "latin-1 name").strip()
+    _git(repo, "update-ref", "refs/heads/main", commit)
+    problems = _script().verify_repository(repo, [r"José\b"], [], "")
+    assert any("filename is not UTF-8" in p for p in problems)

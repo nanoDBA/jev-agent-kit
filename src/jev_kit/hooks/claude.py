@@ -30,7 +30,8 @@ Mapping to `ToolCall`:
 - `target`: the first of `tool_input["file_path"]`, `["path"]`, `["url"]`, `["notebook_path"]`
   that is a non-empty string, else `None`.
 - `context`: a short "key=value; key=value" string carrying the tool name, an optional
-  `tool_input["description"]`, and the event's `cwd`, for the gate's free-text context field.
+  `tool_input["description"]`, for the gate's free-text context field. The event's `cwd` is
+  never sent: folder names often name a project or client, and the gate does not need them.
 
 Response shape (Claude Code `PreToolUse`, current documented contract): a
 `hookSpecificOutput.permissionDecision` of `"allow"` or `"ask"`. Claude Code prompts the user on
@@ -111,9 +112,6 @@ def _extract_claude_call(event: dict[str, Any]) -> ToolCall | None:
     description = tool_input.get("description")
     if isinstance(description, str) and description:
         context_parts.append(f"description={description}")
-    cwd = event.get("cwd")
-    if isinstance(cwd, str) and cwd:
-        context_parts.append(f"cwd={cwd}")
 
     return ToolCall(command=command, target=target, context="; ".join(context_parts))
 

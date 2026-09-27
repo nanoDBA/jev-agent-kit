@@ -303,3 +303,36 @@ def test_codex_main_enforce_via_argv_denies_and_exits_nonzero(
     out = json.loads(captured.out)
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert captured.err.strip() != ""
+
+
+@pytest.mark.parametrize(
+    ("handle", "event"),
+    [
+        (claude_shim.handle_claude_event, {
+            "hook_event_name": "PreToolUse", "tool_name": "Bash",
+            "tool_input": {"command": "ls", "description": "List files"},
+            "cwd": "/home/alice/acme-client-secret-project",
+        }),
+        (codex_shim.handle_codex_event, {
+            "hook_event_name": "PreToolUse", "tool_name": "shell", "turn_id": "t1",
+            "tool_input": {"command": "ls"},
+            "cwd": "/home/alice/acme-client-secret-project",
+        }),
+    ],
+)
+def test_working_directory_never_reaches_the_gate(handle: Any, event: dict[str, Any]) -> None:
+    # Folder names often name a project or client; the gate request must not carry them
+    # in any field (jak-y49).
+    captured: list[dict[str, Any]] = []
+
+    def _capturing_runner(request: dict[str, Any]) -> dict[str, Any]:
+        captured.append(request)
+        return {"status": "ok", "records": [{"route": "ask", "is_mock": True}]}
+
+    for mode in (Mode.SHADOW, Mode.ENFORCE):
+        handle(event, mode=mode, question_set_path=_QUESTION_SET_PATH, runner=_capturing_runner)
+
+    assert len(captured) == 2
+    for request in captured:
+        assert "acme-client-secret-project" not in json.dumps(request)
+        assert "cwd" not in request["state"].get("context", "")

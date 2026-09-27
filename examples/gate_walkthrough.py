@@ -32,7 +32,7 @@ GATE = REPO / "skills" / "jev-runtime" / "questions" / "tool-call-gate.json"
 STATE = {
     "command": "rm -rf ./build",
     "target": "/home/alice/private-repo/build",
-    "context": "tool=Bash; description=Clean the build folder; cwd=/home/alice/private-repo",
+    "context": "tool=Bash; description=Clean the build folder",
 }
 
 MOCK_REPLY = {

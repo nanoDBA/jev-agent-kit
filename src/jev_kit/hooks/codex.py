@@ -31,8 +31,8 @@ Mapping to `ToolCall` mirrors the Claude Code shim:
   the command text there); otherwise the tool name itself.
 - `target`: the first of `tool_input["file_path"]`, `["path"]`, `["url"]`, `["notebook_path"]`
   that is a non-empty string, else `None`.
-- `context`: "key=value; ..." carrying the tool name, the event's `cwd`, and `turn_id` when
-  present.
+- `context`: "key=value; ..." carrying the tool name and `turn_id` when present. The event's
+  `cwd` is never sent: folder names often name a project or client.
 
 Note on `commandWindows` / `command_windows`: that field configures which command Codex itself
 runs to invoke *this hook program* on Windows (a `hooks.json` / `config.toml` concern owned by
@@ -112,9 +112,6 @@ def _extract_codex_call(event: dict[str, Any]) -> ToolCall | None:
     target = _first_str(tool_input, _TARGET_FIELDS)
 
     context_parts = [f"tool={tool_name}"]
-    cwd = event.get("cwd")
-    if isinstance(cwd, str) and cwd:
-        context_parts.append(f"cwd={cwd}")
     turn_id = event.get("turn_id")
     if isinstance(turn_id, str) and turn_id:
         context_parts.append(f"turn_id={turn_id}")

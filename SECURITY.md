@@ -1,6 +1,6 @@
 # Security policy
 
-jev_agent_kit sits between a coding agent and its tool calls, and it decides what leaves your
+jev-agent-kit sits between a coding agent and its tool calls, and it decides what leaves your
 machine. A bug here can leak data or weaken a safety check.
 
 ## Reporting a vulnerability

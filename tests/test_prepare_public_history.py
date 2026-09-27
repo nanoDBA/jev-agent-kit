@@ -67,7 +67,8 @@ def test_marker_in_binary_file_fails(tmp_path: Path) -> None:
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "add binary")
     problems = _verify(repo)
-    assert any(p.startswith("blob ") and MARKER in p for p in problems)
+    # Binary content cannot be verified as text, so it fails closed on its own.
+    assert any(p.startswith("blob blob.bin") and "binary" in p for p in problems)
 
 
 def test_marker_in_annotated_tag_fails(tmp_path: Path) -> None:
@@ -191,3 +192,42 @@ def test_path_and_unicode_controls_stay_clean(tmp_path: Path) -> None:
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "controls")
     assert _script().verify_repository(repo, ["private/customer-alice", r"José\b"], [], "") == []
+
+
+
+def test_object_shared_by_two_paths_is_checked_under_both(tmp_path: Path) -> None:
+    # rev-list --objects names a shared object by only one path; every path of every commit
+    # must be checked, so a forbidden name on the second path is still caught.
+    repo = _repo(tmp_path)
+    (repo / "public.txt").write_text("same bytes\n", encoding="utf-8")
+    (repo / "customer-alice.txt").write_text("same bytes\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "shared")
+    problems = _script().verify_repository(repo, ["customer-alice"], [], "")
+    assert any(p.startswith("path customer-alice.txt") for p in problems)
+
+
+def test_gitlink_fails_closed(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    fake = "1" * 40
+    _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{fake},vendor/sub")
+    _git(repo, "commit", "-q", "-m", "gitlink")
+    assert any(p.startswith("gitlink vendor/sub") for p in _verify(repo))
+
+
+@pytest.mark.parametrize("encoding", ["utf-16", "utf-32", "latin-1"])
+def test_non_utf8_text_fails_closed(tmp_path: Path, encoding: str) -> None:
+    # Text in another encoding could carry a value the scan cannot see, so it is refused.
+    repo = _repo(tmp_path)
+    (repo / "notes.txt").write_bytes(f"owner: José {MARKER}\n".encode(encoding))
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "encoded")
+    problems = _verify(repo)
+    assert any(p.startswith("blob notes.txt") and "cannot verify" in p for p in problems)
+
+
+def test_commit_with_non_utf8_message_encoding_fails_closed(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _git(repo, "-c", "i18n.commitEncoding=ISO-8859-1", "commit", "-q", "--allow-empty",
+         "-m", "latin-1 message")
+    assert any("declares encoding" in p or "not UTF-8" in p for p in _verify(repo))

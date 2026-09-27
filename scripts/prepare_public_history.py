@@ -135,15 +135,21 @@ def verify_repository(
 ) -> list[str]:
     """Return every reason the repository is NOT safe to publish (empty means clean).
 
-    It checks what a push would actually publish, not a rendered view of it:
-    - refs: exactly one, refs/heads/main, with no tags, notes, stashes, or remotes;
-    - every object reachable from any ref (commits, trees, blobs, tags), read as raw bytes
-      with `git cat-file`, so binary files and tag messages are covered too;
-    - every path in every commit, against the removed paths;
-    - author and committer identities in every commit.
-    It fails closed: an object that cannot be read is a problem, not a skip. Content that
-    git-filter-repo cannot rewrite (for example a secret inside a binary file) therefore makes
-    the run fail instead of passing unnoticed.
+    What "clean" guarantees: no forbidden pattern appears in any path of any commit, in any
+    commit object (message, author, committer, headers), or in any file of any commit, and
+    no removed path or old email survives. Patterns are matched as written, against text.
+
+    To keep that guarantee honest, anything the scan cannot read as text fails closed
+    instead of being skipped:
+    - refs must be exactly refs/heads/main, with no tags, notes, stashes, or remotes;
+    - every file must be UTF-8 text with no NUL bytes. A binary file, or text in another
+      encoding (UTF-16, UTF-32, Latin-1), could carry a value the scan cannot see;
+    - commit objects must be UTF-8 and must not declare another message encoding;
+    - submodule links (gitlinks) are refused: their target lives in another repository;
+    - an object that cannot be read is a failure, not a skip.
+
+    Out of scope: a value deliberately disguised as other valid text (base64, hex, a cipher)
+    is not detected. This guards against accidental publication of known values.
     """
     problems: list[str] = []
     refs = run(["git", "for-each-ref", "--format=%(refname)"], cwd=repo).split()
@@ -152,19 +158,44 @@ def verify_repository(
     if run(["git", "remote"], cwd=repo).split():
         problems.append("remotes: a remote is still configured")
 
-    listing = run(["git", "rev-list", "--objects", "--all"], cwd=repo).splitlines()
-    object_ids = [line.split(" ", 1)[0] for line in listing if line]
     # Patterns are matched as written (str regexes): compiling them to bytes would change
     # what \b, \w and case rules mean around non-ASCII text such as "José".
     patterns = [re.compile(p) for p in forbidden]
-    # Git stores a path one component per tree object, so a value spanning components
-    # ("private/customer-alice") never appears inside any single object. Scan the full
-    # path of every reachable blob and tree as well.
-    for line in listing:
-        oid, _, path = line.partition(" ")
+
+    # Every path in every commit. Listing each commit's full tree (not rev-list --objects,
+    # which names a shared object by only one of its paths) means an object reachable under
+    # two paths is checked under both, and a value spanning path components is still seen.
+    commits = run(["git", "rev-list", "--all"], cwd=repo).split()
+    paths: set[str] = set()
+    blob_paths: dict[str, str] = {}
+    for commit in commits:
+        raw = subprocess.run(
+            ["git", "ls-tree", "-r", "-t", "-z", "--full-tree", commit], cwd=repo,
+            capture_output=True,
+        )
+        if raw.returncode != 0:
+            problems.append(f"tree: cannot list commit {commit[:12]}")
+            continue
+        for entry in raw.stdout.split(b"\0"):
+            if not entry:
+                continue
+            meta, _, name = entry.partition(b"\t")
+            mode, kind, oid = meta.decode().split()
+            path = name.decode("utf-8", errors="surrogateescape")
+            paths.add(path)
+            if mode == "160000":
+                problems.append(f"gitlink {path}: submodule links cannot be verified")
+            if kind == "blob":
+                blob_paths.setdefault(oid, path)
+    for path in sorted(paths):
         for pattern in patterns:
-            if path and pattern.search(path):
+            if pattern.search(path):
                 problems.append(f"path {path}: matches {pattern.pattern}")
+        if any(path == r.rstrip("/") or path.startswith(r) for r in remove_paths):
+            problems.append(f"path: {path} should have been removed")
+
+    listing = run(["git", "rev-list", "--objects", "--all"], cwd=repo).splitlines()
+    object_ids = [line.split(" ", 1)[0] for line in listing if line]
     batch = subprocess.run(
         ["git", "cat-file", "--batch"], cwd=repo, input="\n".join(object_ids).encode() + b"\n",
         capture_output=True,
@@ -183,15 +214,33 @@ def verify_repository(
         body = data[header_end + 1 : header_end + 1 + size]
         pos = header_end + 1 + size + 1  # object content is followed by a newline
         seen += 1
-        text = body.decode("utf-8", errors="surrogateescape")
-        for pattern in patterns:
-            if pattern.search(text):
-                problems.append(f"{kind} {oid[:12]}: matches {pattern.pattern}")
+        if kind == "tree":
+            continue  # names are covered by the full-path scan above; entries are binary
+        where = blob_paths.get(oid, oid[:12])
+        if kind in ("blob", "commit", "tag"):
+            if b"\0" in body:
+                problems.append(f"{kind} {where}: contains NUL bytes (binary), cannot verify")
+                continue
+            try:
+                text = body.decode("utf-8")
+            except UnicodeDecodeError:
+                problems.append(f"{kind} {where}: not UTF-8 text, cannot verify")
+                continue
+            if kind == "commit":
+                headers = text.split("\n\n", 1)[0]
+                for line in headers.splitlines():
+                    if line.startswith("encoding ") and line.split()[1].lower() not in (
+                        "utf-8", "utf8",
+                    ):
+                        problems.append(f"commit {oid[:12]}: declares {line}, cannot verify")
+            for pattern in patterns:
+                if pattern.search(text):
+                    problems.append(f"{kind} {where}: matches {pattern.pattern}")
+        else:
+            problems.append(f"{kind} {oid[:12]}: unexpected object type, cannot verify")
     if seen != len(object_ids):
         problems.append(f"objects: read {seen} of {len(object_ids)} reachable objects")
 
-    names = run(["git", "log", "--all", "--name-only", "--format="], cwd=repo).splitlines()
-    problems += [f"path: {p}" for p in remove_paths if any(n.startswith(p) for n in names)]
     if old_email:
         identities = run(["git", "log", "--all", "--format=%ae%n%ce"], cwd=repo)
         if old_email in identities:

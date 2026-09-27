@@ -747,6 +747,11 @@ def _compute_transform_digest() -> str:
     return _source_digest(source)
 
 
+def source_digest(source: bytes) -> str:
+    """A line-ending-independent digest of source bytes, as "src:<28 hex>"."""
+    return _source_digest(source)
+
+
 def _source_digest(source: bytes) -> str:
     normalized = source.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     return "src:" + hashlib.sha256(normalized).hexdigest()[:28]

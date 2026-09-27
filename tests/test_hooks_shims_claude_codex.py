@@ -336,3 +336,36 @@ def test_working_directory_never_reaches_the_gate(handle: Any, event: dict[str, 
     for request in captured:
         assert "acme-client-secret-project" not in json.dumps(request)
         assert "cwd" not in request["state"].get("context", "")
+
+
+def test_hooks_declare_a_producer_bound_to_their_source(tmp_path: Any) -> None:
+    # Any change to a hook's state preprocessing must change its producer, and so every
+    # gate fingerprint it produces (jak-y49 P02).
+    from pathlib import Path
+
+    from jev_kit.hooks.core import producer_id
+
+    captured: list[dict[str, Any]] = []
+
+    def _capturing_runner(request: dict[str, Any]) -> dict[str, Any]:
+        captured.append(request)
+        return {"status": "ok", "records": [{"route": "ask", "is_mock": True}]}
+
+    event = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "ls"}}
+    claude_shim.handle_claude_event(
+        event, mode=Mode.SHADOW, question_set_path=_QUESTION_SET_PATH, runner=_capturing_runner
+    )
+    codex_shim.handle_codex_event(
+        {**event, "tool_name": "shell"}, mode=Mode.SHADOW,
+        question_set_path=_QUESTION_SET_PATH, runner=_capturing_runner,
+    )
+    assert captured[0]["producer"] == producer_id("claude", claude_shim.__file__)
+    assert captured[1]["producer"] == producer_id("codex", codex_shim.__file__)
+    assert captured[0]["producer"] != captured[1]["producer"]
+
+    edited = tmp_path / "claude.py"
+    source = Path(claude_shim.__file__).read_text(encoding="utf-8")
+    changed = source.replace('f"tool={tool_name}"', 'f"tool:{tool_name}"')
+    assert changed != source
+    edited.write_text(changed, encoding="utf-8")
+    assert producer_id("claude", str(edited)) != captured[0]["producer"]

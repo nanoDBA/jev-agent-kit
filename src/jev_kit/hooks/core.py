@@ -18,8 +18,10 @@ import concurrent.futures
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
+from jev_kit.egress import source_digest
 from jev_kit.types import Mode
 
 # The default self-deadline, chosen to sit well under Hermes' 30s fail-closed hook timeout.
@@ -66,11 +68,24 @@ def _fail_closed(
     return HookResult(outcome, None, reason, is_mock, timed_out)
 
 
+def producer_id(name: str, shim_file: str) -> str:
+    """Identity of a hook's state preprocessing: its own source plus this module's.
+
+    Sent as the request's `producer`, which the engine binds into every fingerprint, so any
+    change to how a hook builds state invalidates calibration made with the old code.
+    """
+    shim = Path(shim_file).read_bytes()
+    core = Path(__file__).read_bytes()
+    digest = source_digest(shim + bytes(1) + core)
+    return f"hook.{name}@{digest}"
+
+
 def decide_tool_call(
     call: ToolCall,
     *,
     mode: Mode,
     question_set_path: str,
+    producer: str | None = None,
     runner: Runner | None = None,
     self_deadline_s: float = DEFAULT_SELF_DEADLINE_S,
 ) -> HookResult:
@@ -80,6 +95,7 @@ def decide_tool_call(
         "op": "decide",
         "question_set_path": question_set_path,
         "mode": mode.value,
+        **({"producer": producer} if producer else {}),
         "state": {
             "command": call.command,
             "target": call.target,

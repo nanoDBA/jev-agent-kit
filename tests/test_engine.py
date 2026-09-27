@@ -734,3 +734,58 @@ def _receipt_request_ids(directory: Any) -> list[Any]:
         for line in path.read_text(encoding="utf-8").splitlines()
     ]
     return [line["server_request_id"] for line in lines if "server_request_id" in line]
+
+
+def _registry_for(tmp_path: Any, producer: str | None) -> str:
+    from jev_kit.engine import effective_contract
+    from jev_kit.fingerprint import question_fingerprint
+    from jev_kit.questionset import load_question_set
+
+    fp = question_fingerprint(
+        instructions="Is the command destructive?", criteria=None, question_type="noul",
+        option_or_level_set=[], model="jev-1.13.0",
+        egress_contract=effective_contract(
+            load_question_set(question_set()), EngineConfig(), producer
+        ),
+    )
+    reg = tmp_path / "registry.json"
+    reg.write_text(json.dumps({"schema_version": 1, "entries": {fp: {
+        "status": "calibrated", "escalation_target": "gpt-6", "evidence_ref": "e",
+        "type": "noul", "threshold": {"yes_bound": 0.9, "no_bound": 0.1}, "date": "2026-09-25"}}}),
+        encoding="utf-8")
+    return str(reg)
+
+
+PRODUCER_OLD = "hook.claude@src:" + "0" * 28
+PRODUCER_NEW = "hook.claude@src:" + "1" * 28
+
+
+@pytest.mark.parametrize(
+    ("calibrated_with", "sent", "calibrated"),
+    [
+        (None, None, True),  # control: same contract, calibration applies
+        (None, PRODUCER_NEW, False),  # calibrated before hooks declared a producer
+        (PRODUCER_OLD, PRODUCER_NEW, False),  # the hook's preprocessing changed
+        (PRODUCER_NEW, PRODUCER_NEW, True),  # control: same hook code
+    ],
+)
+def test_state_producer_is_part_of_calibration_identity(
+    tmp_path: Any, calibrated_with: str | None, sent: str | None, calibrated: bool
+) -> None:
+    cfg = EngineConfig(
+        hmac_key=HMAC_KEY, writer=ReceiptWriter(directory=tmp_path), rate_budget=RateBudget(),
+        registry_path=_registry_for(tmp_path, calibrated_with),
+    )
+    req = request("shadow")
+    if sent is not None:
+        req["producer"] = sent
+    rec = only(decide(req, transport=reply(0.1), config=cfg))
+    assert (rec["threshold_status"] == "calibrated") is calibrated
+
+
+@pytest.mark.parametrize("producer", ["", "Hook@src:x", "hook.claude", 7, "a@src:" + "g" * 28])
+def test_malformed_producer_is_a_config_error(tmp_path: Any, producer: Any) -> None:
+    req = request("shadow")
+    req["producer"] = producer
+    resp = decide(req, transport=reply(0.1), config=config(tmp_path))
+    assert resp["status"] == "error" and resp["reason"] == "config"

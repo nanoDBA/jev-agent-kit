@@ -342,8 +342,8 @@ All three routes are `ask` because the replies are mocks. The outgoing state is:
 
 Notice what was lost and what was kept. The command is only `rm`: flags and arguments are
 removed, so this field alone cannot distinguish `rm file` from `rm -rf /`. The target is a
-keyed hash. `context` is plain text, so the hooks keep it to the tool name and a short
-description, never the working directory, and it needs an explicit source opt-in for live calls.
+keyed hash. `context` is plain text and needs an explicit source opt-in for live calls. The
+hooks no longer add the working directory to it, but a description can still name a folder.
 
 ## Add it to your agent
 
@@ -383,7 +383,7 @@ Only fields declared by a question set are sent, after their transforms. For `to
 | --- | --- |
 | `command` | The program name only. `rm -rf ./build` becomes `rm`. |
 | `target` | A keyed hash of the file path or URL, never the path itself. |
-| `context` | Plain text: the tool name, plus the description in Claude Code, turn id in Codex, or task id in Hermes. The working directory is never sent. Email addresses, IP addresses and phone numbers are masked. |
+| `context` | Plain text: the tool name, plus the description in Claude Code, turn id in Codex, or task id in Hermes. The hooks do not add the working directory, but a description or id can still contain a folder name. Email addresses, IP addresses and phone numbers are masked. |
 
 The gate always includes `context`. Without `agent_context` in `JEV_KIT_SOURCE_ALLOWLIST`,
 its live requests are blocked before sending, so you collect no model evidence. Opting in

@@ -57,6 +57,7 @@ from jev_kit.hooks.core import (
     Runner,
     ToolCall,
     decide_tool_call,
+    producer_id,
 )
 from jev_kit.types import Mode
 
@@ -73,6 +74,9 @@ _TARGET_FIELDS = ("file_path", "path", "url", "notebook_path")
 # a PowerShell call is never collapsed to its bare tool name while still carrying real script
 # text (H13).
 _COMMAND_FIELDS = ("command", "script", "code")
+
+# Identity of this hook's state preprocessing; part of every gate fingerprint.
+_PRODUCER = producer_id("claude", __file__)
 
 
 def _mode_from_env() -> Mode:
@@ -161,6 +165,7 @@ def handle_claude_event(
         call,
         mode=resolved_mode,
         question_set_path=resolved_question_set_path,
+        producer=_PRODUCER,
         runner=runner,
         self_deadline_s=self_deadline_s,
     )

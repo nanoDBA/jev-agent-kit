@@ -61,6 +61,7 @@ from jev_kit.hooks.core import (
     Runner,
     ToolCall,
     decide_tool_call,
+    producer_id,
 )
 from jev_kit.types import Mode
 
@@ -74,6 +75,9 @@ _TARGET_FIELDS = ("file_path", "path", "url", "notebook_path")
 # Codex documents exit code 2 as a hard block regardless of JSON output (the same convention
 # Claude Code uses). Used as a fail-closed backstop for ASK/deny; never relied on alone.
 _EXIT_DENY = 2
+
+# Identity of this hook's state preprocessing; part of every gate fingerprint.
+_PRODUCER = producer_id("codex", __file__)
 
 
 def _mode_from_env() -> Mode:
@@ -166,6 +170,7 @@ def handle_codex_event(
         call,
         mode=resolved_mode,
         question_set_path=resolved_question_set_path,
+        producer=_PRODUCER,
         runner=runner,
         self_deadline_s=self_deadline_s,
     )

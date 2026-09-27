@@ -147,9 +147,13 @@ def _config_from_env() -> EngineConfig:
     )
 
 
-def effective_contract(qset: QuestionSet, config: EngineConfig) -> dict[str, Any]:
+def effective_contract(
+    qset: QuestionSet, config: EngineConfig, producer: str | None = None
+) -> dict[str, Any]:
     """The full egress contract hashed into question fingerprints: the question set's declared
-    schema plus the local effective allowlists and profile identities (finding C07)."""
+    schema plus the local effective allowlists and profile identities (finding C07), and the
+    identity of the code that built the state, when a caller such as a hook declares one.
+    """
     contract = egress_contract(qset)
     # Language profiles (injected Python callables that normalize CODE fields) are not
     # supported in phase 0. A Python callable cannot be bound to a fingerprint that captures its
@@ -165,6 +169,10 @@ def effective_contract(qset: QuestionSet, config: EngineConfig) -> dict[str, Any
         "source_allowlist": sorted(config.source_allowlist),
         "language_profiles": {},
     }
+    # A hook builds state from host events; if that preprocessing changes, what the model sees
+    # changes, so calibration from the old preprocessing must not carry over (jak-y49 P02).
+    if producer is not None:
+        contract["effective"]["producer"] = producer
     return contract
 
 
@@ -385,6 +393,12 @@ def _decide(
     except ValidationError:
         return _error_envelope(FailReason.CONFIG)
 
+    producer = request.get("producer")
+    if producer is not None and not (
+        isinstance(producer, str) and _PRODUCER_PATTERN.fullmatch(producer)
+    ):
+        return _error_envelope(FailReason.CONFIG)
+
     action_id = request.get("action_id")
     if action_id is not None:
         try:
@@ -401,7 +415,7 @@ def _decide(
     set_digest = question_set_digest(qset.raw)
     # The fingerprint contract includes the local effective egress configuration and profile
     # identities, so changing an allowlist or profile invalidates a prior calibration (C07).
-    contract = effective_contract(qset, config)
+    contract = effective_contract(qset, config, producer)
 
     # A whole-request failure (alias, registry, egress, transport, validation) sets these.
     whole_fail: FailReason | None = None
@@ -846,8 +860,12 @@ def record_outcome(decision_id: str, outcome_code: str, action_id: str | None = 
 _OUTCOME_CODES = frozenset({"applied", "not_applied", "overridden_by_host", "overridden_by_human"})
 
 # The fields a decide request may carry; anything else is rejected before egress (finding H18).
+# A declared state producer, such as "hook.claude@src:<digest>". Bound into fingerprints.
+_PRODUCER_PATTERN = re.compile(r"[a-z][a-z0-9._-]{0,39}@src:[0-9a-f]{28}")
+
 _DECIDE_ALLOWED_FIELDS = frozenset(
-    {"schema_version", "op", "question_set", "question_set_path", "state", "mode", "action_id"}
+    {"schema_version", "op", "question_set", "question_set_path", "state", "mode", "action_id",
+     "producer"}
 )
 _BATCH_ALLOWED_FIELDS = frozenset({"schema_version", "op", "requests"})
 _OUTCOME_ALLOWED_FIELDS = frozenset(

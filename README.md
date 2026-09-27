@@ -127,13 +127,13 @@ Before the first release, the package and these docs live on the development bra
 `main`. The repository is currently private, so you need read access to clone it.
 
 ```sh
-git clone --branch phase-0-hardening https://github.com/nanoDBA/jev_agent_kit.git
+git clone --branch phase-0 https://github.com/nanoDBA/jev_agent_kit.git
 cd jev_agent_kit
 python -m pip install -e .
 ```
 
 You need Python 3.11 or later; the runtime uses only the standard library. Once the package
-reaches `main`, drop `--branch phase-0-hardening`.
+reaches `main`, drop `--branch phase-0`.
 
 ## Add it to your agent
 
@@ -243,6 +243,14 @@ python -m mypy
 
 Tests never call the live API.
 
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Report security problems privately as described in
+[SECURITY.md](SECURITY.md), not in a public issue.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+TypeSafe, Jev, Claude, Claude Code, Codex, and Hermes Agent are trademarks of their respective
+owners. This project is independent and is not affiliated with or endorsed by them.

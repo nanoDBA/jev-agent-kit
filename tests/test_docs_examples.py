@@ -149,5 +149,7 @@ def test_sample_event_is_valid_json(path: str) -> None:
 
 def test_docs_have_no_em_dashes() -> None:
     # Owner style rule for all prose (CLAUDE.md).
-    for doc in [REPO / "README.md", *sorted((REPO / "docs" / "guides").glob("*.md"))]:
+    docs = [REPO / name for name in ("README.md", "SECURITY.md", "CONTRIBUTING.md")]
+    docs += [REPO / "docs" / "handoffs" / "codex-reviewer.md"]
+    for doc in [*docs, *sorted((REPO / "docs" / "guides").glob("*.md"))]:
         assert "—" not in doc.read_text(encoding="utf-8"), doc.name

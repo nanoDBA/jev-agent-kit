@@ -130,6 +130,10 @@ def _state_base() -> Path:
 
 def _home() -> Path:
     """The user's home directory. A lookup failure is a location failure, never a guess."""
+    # POSIX expands an empty HOME to "/", which is absolute but not a home. Treat it as
+    # no home at all, the same as an empty USERPROFILE on Windows.
+    if sys.platform != "win32" and os.environ.get("HOME") == "":
+        raise ReceiptLocationError("home directory unavailable")
     try:
         return Path.home()
     except RuntimeError as exc:  # Path.home() raises this when it cannot resolve a home

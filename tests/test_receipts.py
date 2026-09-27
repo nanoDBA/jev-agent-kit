@@ -372,3 +372,16 @@ def test_writer_without_a_location_fails_every_write(monkeypatch: pytest.MonkeyP
     assert writer.write_call([{"call_id": "c"}]) is False
     assert writer.append_outcome({"kind": "outcome"}) is False
     assert writer.append_correction({"kind": "correction"}) is False
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_empty_posix_home_is_not_the_root_directory(
+    platform: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("JEV_KIT_RECEIPTS_DIR", "XDG_STATE_HOME"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setenv("HOME", "")
+
+    with pytest.raises(receipts.ReceiptLocationError):
+        receipts.receipts_dir()

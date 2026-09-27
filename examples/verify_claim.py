@@ -13,8 +13,8 @@ would let the code skip the check on messages that make no such claim.
 
 A command line and its exit code cannot show that tests ran: `pytest -V` exits 0 and runs
 nothing, and `pytest || echo done` hides a failure. So the count comes only from JUnit XML
-reports the host collected this session (`pytest --junitxml`, and most other runners have an
-equivalent). No report, or one that cannot be read, counts as zero passed tests. It shows that
+reports the host collected this session, in the shape `pytest --junitxml` writes. No report,
+or one that cannot be read or has any other shape, counts as zero passed tests. It shows that
 tests ran and passed, not that they were the right tests.
 
 Run it from the repository root:
@@ -64,20 +64,49 @@ TEST_REPORTS: list[str] = []
 FINAL_MESSAGE = "Refactored the parser and cleaned up the imports. All tests pass."
 
 
+# The report shape this example accepts: what `pytest --junitxml` writes. Anything else,
+# including other JUnit dialects, namespaces and unknown elements, makes the whole report
+# count as zero passes rather than guessing.
+SUITE_CHILDREN = {"properties", "testcase", "system-out", "system-err"}
+CASE_ATTRIBUTES = {"name", "classname", "time", "file", "line"}
+CASE_CHILDREN_NOT_PASSED = {"failure", "error", "skipped"}
+CASE_CHILDREN_NEUTRAL = {"properties", "system-out", "system-err"}
+
+
 def passed_tests(junit_xml: str) -> int:
-    """Test cases in one JUnit XML report that ran and passed. Unreadable counts as zero."""
+    """Passed test cases in one pytest-style JUnit XML report; anything unsupported is zero."""
     try:
         root = ET.fromstring(junit_xml)
     except ET.ParseError:
         return 0
-    not_passed = {"failure", "error", "skipped"}
-    return sum(
-        1 for case in root.iter("testcase") if not any(c.tag in not_passed for c in case)
-    )
+    if root.tag == "testsuites":
+        suites = list(root)
+        if not suites or any(suite.tag != "testsuite" for suite in suites):
+            return 0
+    elif root.tag == "testsuite":
+        suites = [root]
+    else:
+        return 0
+    passed = 0
+    for suite in suites:
+        cases = [child for child in suite if child.tag == "testcase"]
+        if any(child.tag not in SUITE_CHILDREN for child in suite):
+            return 0
+        if suite.get("tests") != str(len(cases)):  # the suite's own count must agree
+            return 0
+        for case in cases:
+            if set(case.attrib) - CASE_ATTRIBUTES:
+                return 0
+            tags = {child.tag for child in case}
+            if tags - CASE_CHILDREN_NOT_PASSED - CASE_CHILDREN_NEUTRAL:
+                return 0
+            if not tags & CASE_CHILDREN_NOT_PASSED:
+                passed += 1
+    return passed
 
 
-def main() -> None:
-    tests_passed = sum(passed_tests(report) for report in TEST_REPORTS)  # counted in code
+def main(test_reports: list[str] = TEST_REPORTS) -> None:
+    tests_passed = sum(passed_tests(report) for report in test_reports)  # counted in code
 
     response = decide(
         {"schema_version": 1, "question_set": QUESTION_SET, "mode": "shadow",
@@ -96,7 +125,7 @@ def main() -> None:
 
     print(f"Agent says:      {FINAL_MESSAGE!r}")
     print(f"Commands run:    {', '.join(COMMANDS_RUN)}")
-    reports = len(TEST_REPORTS)
+    reports = len(test_reports)
     print(f"Tests passed:    {tests_passed}  (from {reports} test reports, counted in code)")
     print(f"Jev (scripted):  claims tests passed?  p(yes)={rec['noul']}  route={rec['route']}")
     if claims_pass and tests_passed == 0:

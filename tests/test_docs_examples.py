@@ -338,22 +338,51 @@ def _verify_claim_module() -> Any:
     return module
 
 
-@pytest.mark.parametrize(
-    ("report", "passed"),
-    [
-        # What pytest -V, --fixtures, --collect-only or "pytest || echo" leave: no report.
-        ("", 0),
-        ("not xml", 0),
-        ('<testsuite tests="0"/>', 0),
-        ('<testsuite><testcase name="a"><failure/></testcase></testsuite>', 0),
-        ('<testsuite><testcase name="a"><error/></testcase></testsuite>', 0),
-        ('<testsuite><testcase name="a"><skipped/></testcase></testsuite>', 0),
-        ('<testsuites><testsuite><testcase name="a"/><testcase name="b"><failure/>'
-         '</testcase><testcase name="c"/></testsuite></testsuites>', 2),
-    ],
+PYTEST_REPORT = (
+    '<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0"'
+    ' failures="1" skipped="0" tests="2" time="0.1"><testcase classname="t" name="a"'
+    ' time="0.01"/><testcase classname="t" name="b" time="0.01"><failure message="x">x'
+    '</failure></testcase></testsuite></testsuites>'
 )
-def test_verify_claim_counts_only_reported_passes(report: str, passed: int) -> None:
-    assert _verify_claim_module().passed_tests(report) == passed
+NOT_A_PASS = [
+    "",
+    "not xml",
+    '<testsuite tests="0"/>',
+    '<testsuite tests="1"><testcase name="a"><failure/></testcase></testsuite>',
+    '<testsuite tests="1"><testcase name="a"><error/></testcase></testsuite>',
+    '<testsuite tests="1"><testcase name="a"><skipped/></testcase></testsuite>',
+    # Shapes from the PR #1 review: none may count as a pass.
+    '<document><testcase name="not-a-test"/></document>',
+    '<testsuite tests="0"><system-out><testcase name="text-fixture"/></system-out></testsuite>',
+    '<testsuite><testcase name="outer"><failure/><testcase name="inner"/></testcase></testsuite>',
+    '<testsuite xmlns:j="urn:junit"><testcase name="bad"><j:failure/></testcase></testsuite>',
+    '<testsuite><testcase name="never" status="notrun" result="suppressed"/></testsuite>',
+    # Nearby variants.
+    '<testsuite tests="2"><testcase name="a"/></testsuite>',
+    '<testsuite tests="1"><testcase name="a"/><testsuite tests="1"><testcase name="b"/>'
+    '</testsuite></testsuite>',
+    '<testsuites><testcase name="a"/></testsuites>',
+    '<testsuite xmlns="urn:junit" tests="1"><testcase name="a"/></testsuite>',
+]
+
+
+@pytest.mark.parametrize("report", NOT_A_PASS)
+def test_verify_claim_rejects_reports_that_show_no_pass(
+    report: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _verify_claim_module()
+    assert module.passed_tests(report) == 0
+    module.main([report])
+    out = capsys.readouterr().out
+    assert "Tests passed:    0  (from 1 test reports" in out
+    assert "claim not backed by a test report" in out
+
+
+def test_verify_claim_counts_a_pytest_report(capsys: pytest.CaptureFixture[str]) -> None:
+    module = _verify_claim_module()
+    assert module.passed_tests(PYTEST_REPORT) == 1
+    module.main([PYTEST_REPORT])
+    assert "1 passing tests are on record" in capsys.readouterr().out
 
 
 def test_verify_claim_never_counts_command_lines() -> None:

@@ -114,11 +114,12 @@ The agent's tool call carries a leaked key:
 jev-kit checks the exact outgoing bytes before sending:
   BLOCKED  fail_reason=egress_blocked  requests sent: 0
 
-The same call without the key is sent, reduced to what the model sees:
+The same call without the key passes, reduced to what would be sent:
   {"command": "git", "context": "tool=Bash; description=Push the release branch", "target": "id_2be341514b09d550"}
 ```
 
-The whole request is refused, so nothing reaches the network. When there is nothing to block,
+The whole request is refused, so nothing reaches the network. Both requests go to a mock
+transport here, so no model receives either one; the check itself is the real one. When there is nothing to block,
 the command is cut to its program name and the file path becomes a keyed hash before sending.
 The key shown is AWS's published example, not a real credential.
 
@@ -153,14 +154,17 @@ python examples/verify_claim.py
 
 ```text
 Agent says:      'Refactored the parser and cleaned up the imports. All tests pass.'
-Commands run:    git diff --stat, ruff check src, git add -A
-Test runs:       0  (counted in code)
+Command log:     git diff --stat (exit 0), ruff check src (exit 0), git add -A (exit 0)
+Passing tests:   0 runs  (counted in code)
 Jev (scripted):  claims tests passed?  p(yes)=0.96  route=no_advice
 Verdict:         claim not backed by any test run; ask the agent to run them
 ```
 
-Each part does what it is good at. Code counts the test commands that actually ran; counting
-is a known Jev weak spot, and it is exact and free in code. Jev reads the message and answers
+Each part does what it is good at. Code counts passing test runs in the host's command log;
+counting is a known Jev weak spot, and it is free in code. The count is only as good as the
+log: the example counts a command only when a known test runner was invoked directly, did not
+just list tests, and exited 0, so `echo pytest` or `pytest --collect-only` does not count. It
+is a check of what was recorded, not proof that the right tests ran. Jev reads the message and answers
 one typed question: does it claim the tests passed? Code combines the two. Because the answer
 here is scripted, the kit returns `no_advice` and the code assumes the worst. With a threshold
 calibrated on your own labeled messages, a confident "no claim" would let the code skip the
@@ -208,16 +212,16 @@ caveats. Details and more sources are in
 | Source | What they measured | Result | Caveat |
 | --- | --- | --- | --- |
 | [jev-as-a-judge](https://github.com/danielgshea/jev-as-a-judge) | 5 agent runs, each judged 100 times, against human pass/fail labels | Matched every human label. The LLM judges' repeat variance was 92x to 913x higher. $0.00035 and 0.44 s per call | Small corpus; observational |
-| [PrimeLine](https://primeline.cc/blog/typesafe-jev-pre-registered-test) | Pre-registered, about 9,750 calls, against Claude Haiku | Won one task (65.8% vs 54.6%) and lost another (90.7% vs 97.8%). About 92% accurate on the 73% of decisions at confidence 0.9 or above | One developer's data; "not a portable benchmark" |
-| [Rajesh Beri](https://www.beri.net/article/typesafe-jev-typed-decision-model-calibration-decomposition-shadow-eval) | Phishing emails, held-out test set, against Claude Haiku | One question: 62.6% vs 81.3%. Five narrow questions combined: 95.0% vs 93.2%, not a significant difference | Synthetic email bodies; labels from reputation feeds |
-| [Jev-Calibration](https://github.com/keduseworku/Jev-Calibration) | 8,801 sentiment examples | Confident yes/no answers were reliable; raw Choice confidence was weak below 0.95 until calibrated | One task |
+| [PrimeLine](https://primeline.cc/blog/typesafe-jev-pre-registered-test) | Pre-registered, about 9,750 calls in all, against Claude Haiku on the developer's own tasks | Won one task (65.8% vs 54.6%) and lost another (90.7% vs 97.8%). Separately, on 2,600 pooled public-dataset items: about 92% accurate on the 73% answered at confidence 0.9 or above | One developer's data; "not a portable benchmark" |
+| [jev-phishing-bench](https://github.com/anisselbd/jev-phishing-bench/blob/main/results/report.md) (summarized by [Rajesh Beri](https://www.beri.net/article/typesafe-jev-typed-decision-model-calibration-decomposition-shadow-eval)) | 2,000 phishing emails, against Claude Haiku | One question, all 2,000 emails: 62.6% vs 81.3%. Five narrow questions per model, combined by a logistic model trained on 1,000 emails and tested on the other 1,000: 95.0% vs 93.2%, not a significant difference | Synthetic email bodies; labels from reputation feeds; the combiner is trained |
+| [Jev-Calibration](https://github.com/AnthusAI/Jev-Calibration) | Sentiment: 8,801 items for raw confidence, 3,521 held out for calibration | Raw confidence (the probability of the predicted label) was weak below 0.95. Calibration cut the yes/no error (ECE) from 0.117 to 0.008 | One task; the dataset's neutral labels are arbitrary by design |
 
 The pattern across them: Jev is most consistently strong at giving the same answer twice, and
 it is cheap per call. Accuracy depends on the task and on how the question is split, and
 confidence has to be calibrated per question. That is why this kit asks narrow questions,
 keeps facts in code, and enforces nothing until a threshold is measured on your data.
-TypeSafe publishes larger speed and cost multiples; independent tests that checked the largest
-of those did not reproduce them, so treat them as claims.
+TypeSafe publishes larger speed and cost multiples. We found no independent test of those
+figures, so treat them as vendor claims.
 
 ## Use the CLI
 

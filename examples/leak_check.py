@@ -2,7 +2,8 @@
 
 An agent is about to run a command, and its context happens to contain an AWS access key.
 jev-kit checks the exact bytes of the outgoing request and blocks it: nothing is sent.
-The same call without the key goes through, reduced to what the model would actually see.
+The same call without the key passes, reduced to what would be sent. Both requests go to a
+mock transport, so no model receives either one.
 
 Run it from the repository root:
 
@@ -21,9 +22,9 @@ from typing import Any
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from jev_kit.engine import EngineConfig, decide  # noqa: E402
-from jev_kit.receipts import ReceiptWriter  # noqa: E402
-from jev_kit.transport import MockTransport  # noqa: E402
+from jev_kit.engine import EngineConfig, decide  # noqa: E402 (after the src path setup)
+from jev_kit.receipts import ReceiptWriter  # noqa: E402 (after the src path setup)
+from jev_kit.transport import MockTransport  # noqa: E402 (after the src path setup)
 
 GATE = REPO / "skills" / "jev-runtime" / "questions" / "tool-call-gate.json"
 LEAKED_KEY = "AKIAIOSFODNN7EXAMPLE"  # AWS's published example key, not a real credential
@@ -70,7 +71,7 @@ def main() -> None:
     clean = dict(leaky, context="tool=Bash; description=Push the release branch")
     _, mock = send(clean)
     sent = json.loads(mock.requests[0])["state"]
-    print("The same call without the key is sent, reduced to what the model sees:")
+    print("The same call without the key passes, reduced to what would be sent:")
     print(f"  {json.dumps(sent)}")
 
 

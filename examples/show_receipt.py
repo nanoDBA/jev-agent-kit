@@ -21,9 +21,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from jev_kit.engine import EngineConfig, decide  # noqa: E402
-from jev_kit.receipts import ReceiptWriter  # noqa: E402
-from jev_kit.transport import MockTransport  # noqa: E402
+from jev_kit.engine import EngineConfig, decide  # noqa: E402 (after the src path setup)
+from jev_kit.receipts import ReceiptWriter  # noqa: E402 (after the src path setup)
+from jev_kit.transport import MockTransport  # noqa: E402 (after the src path setup)
 
 ROUTER = REPO / "skills" / "jev-runtime" / "questions" / "preflight-route.json"
 MOCK_REPLY = {

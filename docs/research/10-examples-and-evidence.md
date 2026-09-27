@@ -39,7 +39,10 @@ likes; the top one is a Claude Code plugin that scores tool calls. Demos that sp
 visible decision inside a loop the viewer already knows. TypeSafe's own launch leaned on a
 real-time game demo for the same reason.
 
-Nobody we found shows a **decision receipt**. That is distinctive to this kit.
+Few demos show a **decision receipt**.
+[TypeSafeAI/jev-harness](https://github.com/TypeSafeAI/jev-harness/blob/main/docs/hardening/05-receipt-binding.md)
+documents bound receipts and replay; this kit's demo prints one real receipt with each field
+explained.
 
 ## Official use cases (VENDOR)
 
@@ -54,19 +57,24 @@ From the [docs index](https://docs.typesafe.ai/llms.txt) and the
 | [Rerank](https://docs.typesafe.ai/cookbooks/rerank_typesafe.md) | A Noul per query and candidate pair | Better top-k on a legal corpus |
 | [Confidence routing](https://docs.typesafe.ai/patterns/confidence-routing.md) | One Choice; confidence decides act, confirm or hand off | Three confidence bands |
 
-The launch post claims large speed and cost multiples. Independent write-ups that tested them
-did not reproduce the largest figures (for example
-[pasqualepillitteri](https://pasqualepillitteri.it/en/news/16460/typesafe-jev-chatless-ai-beats-claude)).
-Treat vendor multiples as claims.
+The launch post claims large speed and cost multiples. We found no independent reproduction;
+write-ups such as
+[pasqualepillitteri](https://pasqualepillitteri.it/en/news/16460/typesafe-jev-chatless-ai-beats-claude)
+treat them as awaiting outside verification. Smaller gains on other tasks are not a test of
+those figures. Treat vendor multiples as claims.
 
 ## Independent measurements, checked at the source
 
 | Source | Method | Result | Caveats (the author's own) |
 | --- | --- | --- | --- |
 | [danielgshea/jev-as-a-judge](https://github.com/danielgshea/jev-as-a-judge) | 5 frozen agent runs, each judged 100 times, against human pass/fail labels | Jev matched every human label; the compared LLM judges' repeat variance was 92x to 913x higher; $0.00035 and 0.44 s per call | Small corpus; observational, not causal |
-| [PrimeLine](https://primeline.cc/blog/typesafe-jev-pre-registered-test) (2026-09-18) | Pre-registered, about 9,750 calls | Beat Haiku on commit classification (65.8% vs 54.6%), lost on knowledge categories (90.7% vs 97.8%); about 92% accurate on the 73% of decisions at confidence 0.9 or above | Single-developer corpora; "not a portable benchmark" |
-| [Rajesh Beri](https://www.beri.net/article/typesafe-jev-typed-decision-model-calibration-decomposition-shadow-eval) (2026-09-17 to 20) | Phishing set, 1,000 train / 1,000 held-out; weights fitted on train | One question: 62.6% vs Haiku 81.3%. Five questions combined: 95.0% vs Haiku 93.2%, not significant (p = 0.063). Confident but wrong on questions the state cannot answer | Synthetic bodies; labels from URL-reputation feeds |
-| [keduseworku/Jev-Calibration](https://github.com/keduseworku/Jev-Calibration) | 8,801 sentiment examples on jev-1.13.0 | High Noul confidence was reliable; raw Choice confidence was weak below 0.95; isotonic calibration cut ECE from 0.117 to 0.008 | One task and domain |
+| [PrimeLine](https://primeline.cc/blog/typesafe-jev-pre-registered-test) (2026-09-18) | Pre-registered, about 9,750 calls across the study | Beat Haiku on commit classification (65.8% vs 54.6%), lost on knowledge categories (90.7% vs 97.8%). Test 1, a separate pool of 2,600 public-dataset items: about 92% accurate on the 73% answered at confidence 0.9 or above | Single-developer corpora; "not a portable benchmark" |
+| [anisselbd/jev-phishing-bench](https://github.com/anisselbd/jev-phishing-bench/blob/main/results/report.md), summarized by [Rajesh Beri](https://www.beri.net/article/typesafe-jev-typed-decision-model-calibration-decomposition-shadow-eval) (2026-09-17 to 20) | 2,000 phishing emails against Haiku. Headline: one question on all 2,000. Control 2: five questions per model, combined by a logistic model fitted on 1,000 and tested on the other 1,000 | One question: 62.6% vs Haiku 81.3% (all 2,000). Five questions combined: 95.0% vs Haiku 93.2% on the 1,000 held out, not significant (p = 0.063) | Synthetic bodies; labels from URL-reputation feeds; both combiners are trained |
+| [AnthusAI/Jev-Calibration](https://github.com/AnthusAI/Jev-Calibration) (a fork is at keduseworku/Jev-Calibration) | Sentiment on jev-1.13.0: 8,801 items for raw confidence bands, 3,521 held out for calibration | Raw confidence, meaning the probability of the predicted label, was weak below 0.95. Isotonic calibration cut the ECE of Noul P(positive) from 0.117 to 0.008 on the 3,521 held out | One task; the constructed dataset gives neutral items arbitrary labels |
+
+A separate finding, from
+[scienthoon/jev-ood-calibration](https://github.com/scienthoon/jev-ood-calibration): Jev
+answered confidently on questions the state could not answer.
 
 What these agree on, and what it means for us:
 
@@ -85,7 +93,7 @@ Offline ideas can ship now; the others need a live key under the repository's ca
 our own labels.
 
 1. **Show one decision receipt, annotated** (digest, fingerprint, pinned model, full
-   distribution, `uncalibrated`, `applied`). No other project shows receipts. Offline.
+   distribution, `uncalibrated`, `applied`). Offline.
 2. **"Tests pass" without a test run**: code records whether a test command ran and its exit
    code, puts the facts in state, and the postflight-verify question judges the agent's claim.
    A relatable failure, and it shows keeping facts in code. Offline with a mock answer.

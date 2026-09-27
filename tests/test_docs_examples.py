@@ -316,7 +316,7 @@ def test_new_examples_match_readme(example: str) -> None:
 
 def test_verify_claim_keeps_counting_in_code_and_stays_cautious() -> None:
     out = _run_example("verify_claim.py")
-    assert "Test runs:       0  (counted in code)" in out
+    assert "Passing tests:   0 runs  (counted in code)" in out
     assert "route=no_advice" in out  # a scripted answer is never trusted
     assert "claim not backed by any test run" in out
 
@@ -326,6 +326,30 @@ def test_receipt_example_reflects_a_real_receipt() -> None:
     assert "model             mock" in out
     assert "threshold_status  none" in out
     assert "route             no_advice" in out
+
+
+@pytest.mark.parametrize(
+    ("command", "exit_code", "counts"),
+    [
+        ("echo pytest", 0, False),
+        ("python -m pytest --collect-only", 0, False),
+        ("pytest -q", 1, False),
+        ("git commit -m 'run pytest later'", 0, False),
+        ("pytest -q", 0, True),
+        ("python -m pytest tests", 0, True),
+        ("npm test", 0, True),
+    ],
+)
+def test_verify_claim_counts_only_passing_test_runs(
+    command: str, exit_code: int, counts: bool
+) -> None:
+    spec = importlib.util.spec_from_file_location(
+        "verify_claim", REPO / "examples" / "verify_claim.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.is_passing_test_run(command, exit_code) is counts
 
 
 def test_others_measurements_match_the_research_note() -> None:

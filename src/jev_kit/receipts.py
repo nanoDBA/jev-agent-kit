@@ -75,6 +75,10 @@ def validate_metadata_id(value: str | None, field_name: str) -> str | None:
     return value
 
 
+APP_DIR = "jev-agent-kit"
+LEGACY_APP_DIR = "jev_agent_kit"  # the folder name before the public rename
+
+
 def receipts_dir() -> Path:
     """Where receipts are written for this process.
 
@@ -88,20 +92,29 @@ def receipts_dir() -> Path:
         if candidate.is_absolute():
             return candidate
 
+    base = _state_base()
+    current, legacy = base / APP_DIR / "receipts", base / LEGACY_APP_DIR / "receipts"
+    # Installs from before the rename keep their receipts in one place until moved.
+    if legacy.is_dir() and not current.exists():
+        return legacy
+    return current
+
+
+def _state_base() -> Path:
+    """The per-user state directory for this platform, without the app folder."""
     if sys.platform == "win32":
         local_app_data = os.environ.get("LOCALAPPDATA")
-        base = Path(local_app_data) if local_app_data else Path.home() / "AppData" / "Local"
-        return base / "jev_agent_kit" / "receipts"
+        return Path(local_app_data) if local_app_data else Path.home() / "AppData" / "Local"
 
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "jev_agent_kit" / "receipts"
+        return Path.home() / "Library" / "Application Support"
 
     xdg_state_home = os.environ.get("XDG_STATE_HOME")
     if xdg_state_home:
         xdg_candidate = Path(xdg_state_home)
         if xdg_candidate.is_absolute():
-            return xdg_candidate / "jev_agent_kit" / "receipts"
-    return Path.home() / ".local" / "state" / "jev_agent_kit" / "receipts"
+            return xdg_candidate
+    return Path.home() / ".local" / "state"
 
 
 def _best_effort_log(message: str, *args: object) -> None:

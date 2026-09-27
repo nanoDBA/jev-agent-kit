@@ -191,7 +191,7 @@ def test_receipts_dir_windows_default(tmp_path: Path, monkeypatch: pytest.Monkey
 
     result = receipts.receipts_dir()
 
-    assert result == tmp_path / "jev_agent_kit" / "receipts"
+    assert result == tmp_path / "jev-agent-kit" / "receipts"
 
 
 def test_receipts_dir_macos_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -201,7 +201,7 @@ def test_receipts_dir_macos_default(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
     result = receipts.receipts_dir()
 
-    expected = tmp_path / "Library" / "Application Support" / "jev_agent_kit" / "receipts"
+    expected = tmp_path / "Library" / "Application Support" / "jev-agent-kit" / "receipts"
     assert result == expected
 
 
@@ -214,7 +214,7 @@ def test_receipts_dir_linux_xdg_state_home(
 
     result = receipts.receipts_dir()
 
-    assert result == tmp_path / "jev_agent_kit" / "receipts"
+    assert result == tmp_path / "jev-agent-kit" / "receipts"
 
 
 def test_receipts_dir_linux_relative_xdg_state_home_ignored(
@@ -227,7 +227,7 @@ def test_receipts_dir_linux_relative_xdg_state_home_ignored(
 
     result = receipts.receipts_dir()
 
-    assert result == tmp_path / ".local" / "state" / "jev_agent_kit" / "receipts"
+    assert result == tmp_path / ".local" / "state" / "jev-agent-kit" / "receipts"
 
 
 def test_receipts_dir_linux_default_without_xdg(
@@ -240,7 +240,7 @@ def test_receipts_dir_linux_default_without_xdg(
 
     result = receipts.receipts_dir()
 
-    assert result == tmp_path / ".local" / "state" / "jev_agent_kit" / "receipts"
+    assert result == tmp_path / ".local" / "state" / "jev-agent-kit" / "receipts"
 
 
 # --- get_writer: lazy per-process singleton ----------------------------------
@@ -256,3 +256,16 @@ def test_get_writer_returns_same_instance(
     second = receipts.get_writer()
 
     assert first is second
+
+
+def test_receipts_dir_keeps_a_pre_rename_folder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("JEV_KIT_RECEIPTS_DIR", raising=False)
+    monkeypatch.setattr(receipts, "_state_base", lambda: tmp_path)
+    assert receipts.receipts_dir() == tmp_path / "jev-agent-kit" / "receipts"
+    legacy = tmp_path / "jev_agent_kit" / "receipts"
+    legacy.mkdir(parents=True)
+    assert receipts.receipts_dir() == legacy
+    (tmp_path / "jev-agent-kit" / "receipts").mkdir(parents=True)
+    assert receipts.receipts_dir() == tmp_path / "jev-agent-kit" / "receipts"

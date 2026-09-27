@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://nanoDBA/jev_agent_kit/schemas/cli-response.schema.json",
+  "$id": "https://github.com/nanoDBA/jev-agent-kit/schemas/cli-response.schema.json",
   "title": "CLI response",
   "type": "object",
   "required": [

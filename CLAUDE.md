@@ -1,4 +1,4 @@
-# CLAUDE.md: jev_agent_kit
+# CLAUDE.md: jev-agent-kit
 
 ## Mission
 

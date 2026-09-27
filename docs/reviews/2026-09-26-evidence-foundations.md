@@ -1,6 +1,6 @@
 # Evidence-backed skill foundations: verification record
 
-Tracking: [#41](https://github.com/nanoDBA/jev_agent_kit/issues/41).
+Tracking: issue 41 in the private development repository (not public).
 Implementation base: `ec3cda506ccc04652563ca62d1da993204dc9b8c` (`phase-0`).
 Tested implementation: `bee7ec769eb06692553f8ac9b5b2bb327823e43a`.
 
@@ -103,7 +103,7 @@ closed by this work, and all owner-gated boundaries remain intact.
 
 Claude independently reviewed `9a38459f5d4fe64776ee6be6cc680d8846798b97`, reran the original
 552-test gates, and reported one non-blocking library-error finding in
-[this review](https://github.com/nanoDBA/jev_agent_kit/pull/42#issuecomment-5847081211).
+a review comment on PR 42 in the private development repository.
 This E1 is separate from the earlier internal E1 in the table above.
 
 The main agent reproduced the raw path-bearing error through public `check()` before fixing

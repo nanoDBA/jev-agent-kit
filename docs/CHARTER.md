@@ -1,4 +1,4 @@
-# Project charter: drive jev_agent_kit to completion, unattended
+# Project charter: drive jev-agent-kit to completion, unattended
 
 The single goal that governs the autonomous loop across all phases, the Claude + Codex
 collaboration, and the limits of that autonomy. Read with `CLAUDE.md` (non-negotiables) and

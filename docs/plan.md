@@ -7,7 +7,8 @@
 2. **Host priority:** Claude Code first, then Codex, then Hermes? (Default order.)
 3. **Egress policy:** decided 2026-09-25, based on accepted standards. See
    `adr/0002-egress-policy.md`.
-4. **Repo name:** decided 2026-09-25: `jev_agent_kit` (matches the local folder and the Beads database).
+4. **Repo name:** decided 2026-09-25 as `jev_agent_kit`; renamed `jev-agent-kit` for the public
+   repository on 2026-09-27. Receipts written under the old folder name are still used.
 
 ## Phases
 

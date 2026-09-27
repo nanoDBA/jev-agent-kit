@@ -316,9 +316,9 @@ def test_new_examples_match_readme(example: str) -> None:
 
 def test_verify_claim_keeps_counting_in_code_and_stays_cautious() -> None:
     out = _run_example("verify_claim.py")
-    assert "Passing tests:   0 runs  (counted in code)" in out
+    assert "Tests passed:    0  (from 0 test reports, counted in code)" in out
     assert "route=no_advice" in out  # a scripted answer is never trusted
-    assert "claim not backed by any test run" in out
+    assert "claim not backed by a test report" in out
 
 
 def test_receipt_example_reflects_a_real_receipt() -> None:
@@ -328,28 +328,38 @@ def test_receipt_example_reflects_a_real_receipt() -> None:
     assert "route             no_advice" in out
 
 
-@pytest.mark.parametrize(
-    ("command", "exit_code", "counts"),
-    [
-        ("echo pytest", 0, False),
-        ("python -m pytest --collect-only", 0, False),
-        ("pytest -q", 1, False),
-        ("git commit -m 'run pytest later'", 0, False),
-        ("pytest -q", 0, True),
-        ("python -m pytest tests", 0, True),
-        ("npm test", 0, True),
-    ],
-)
-def test_verify_claim_counts_only_passing_test_runs(
-    command: str, exit_code: int, counts: bool
-) -> None:
+def _verify_claim_module() -> Any:
     spec = importlib.util.spec_from_file_location(
         "verify_claim", REPO / "examples" / "verify_claim.py"
     )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    assert module.is_passing_test_run(command, exit_code) is counts
+    return module
+
+
+@pytest.mark.parametrize(
+    ("report", "passed"),
+    [
+        # What pytest -V, --fixtures, --collect-only or "pytest || echo" leave: no report.
+        ("", 0),
+        ("not xml", 0),
+        ('<testsuite tests="0"/>', 0),
+        ('<testsuite><testcase name="a"><failure/></testcase></testsuite>', 0),
+        ('<testsuite><testcase name="a"><error/></testcase></testsuite>', 0),
+        ('<testsuite><testcase name="a"><skipped/></testcase></testsuite>', 0),
+        ('<testsuites><testsuite><testcase name="a"/><testcase name="b"><failure/>'
+         '</testcase><testcase name="c"/></testsuite></testsuites>', 2),
+    ],
+)
+def test_verify_claim_counts_only_reported_passes(report: str, passed: int) -> None:
+    assert _verify_claim_module().passed_tests(report) == passed
+
+
+def test_verify_claim_never_counts_command_lines() -> None:
+    module = _verify_claim_module()
+    assert module.TEST_REPORTS == []
+    assert not hasattr(module, "is_passing_test_run")
 
 
 def test_others_measurements_match_the_research_note() -> None:

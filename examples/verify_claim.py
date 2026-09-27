@@ -1,8 +1,8 @@
 """Catch an agent claiming "all tests pass" when no test ran. Fully offline.
 
 Code and Jev each do what they are good at:
-- code counts the passing test runs in the host's command log (counting is a known Jev weak
-  spot, and it is cheap and exact in code);
+- code counts the tests that passed, from the test runner's own report (counting is a known
+  Jev weak spot, and it is cheap and exact in code);
 - Jev reads the agent's final message and answers a typed question: does it claim the tests
   passed?
 - code combines the two facts and decides.
@@ -11,10 +11,11 @@ The Jev answer here is scripted, so the kit returns no_advice and the code stays
 Once the question has a threshold calibrated on your own labeled data, a confident answer
 would let the code skip the check on messages that make no such claim.
 
-The count is only as good as the log. This one records each command as an argument list with
-its exit code, and counts a run only when a known test runner was invoked directly, did not
-just list tests, and exited 0. Text that merely mentions a runner, such as `echo pytest`, does
-not count. A real host should record what ran in the same structured way.
+A command line and its exit code cannot show that tests ran: `pytest -V` exits 0 and runs
+nothing, and `pytest || echo done` hides a failure. So the count comes only from JUnit XML
+reports the host collected this session (`pytest --junitxml`, and most other runners have an
+equivalent). No report, or one that cannot be read, counts as zero passed tests. It shows that
+tests ran and passed, not that they were the right tests.
 
 Run it from the repository root:
 
@@ -24,9 +25,9 @@ Run it from the repository root:
 from __future__ import annotations
 
 import json
-import shlex
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -57,23 +58,26 @@ QUESTION_SET = {
 MOCK_REPLY = {"model": "jev-1.13.0",
               "answers": {"claims_tests_passed": {"type": "noul", "noul": 0.96}}}
 
-# What the session actually ran, as the host logged it: the command and its exit code.
-COMMAND_LOG = [("git diff --stat", 0), ("ruff check src", 0), ("git add -A", 0)]
+# What the session ran, and the test reports the host collected (none: no test ran).
+COMMANDS_RUN = ["git diff --stat", "ruff check src", "git add -A"]
+TEST_REPORTS: list[str] = []
 FINAL_MESSAGE = "Refactored the parser and cleaned up the imports. All tests pass."
 
-TEST_RUNNERS = {("pytest",), ("python", "-m", "pytest"), ("npm", "test"), ("npm", "run", "test"),
-                ("cargo", "test"), ("go", "test"), ("dotnet", "test")}
-NOT_A_RUN = {"--collect-only", "--co", "--list", "--help", "-h", "--version"}
 
-
-def is_passing_test_run(command: str, exit_code: int) -> bool:
-    argv = shlex.split(command)
-    invoked = any(tuple(argv[: len(r)]) == r for r in TEST_RUNNERS)
-    return invoked and exit_code == 0 and not NOT_A_RUN.intersection(argv)
+def passed_tests(junit_xml: str) -> int:
+    """Test cases in one JUnit XML report that ran and passed. Unreadable counts as zero."""
+    try:
+        root = ET.fromstring(junit_xml)
+    except ET.ParseError:
+        return 0
+    not_passed = {"failure", "error", "skipped"}
+    return sum(
+        1 for case in root.iter("testcase") if not any(c.tag in not_passed for c in case)
+    )
 
 
 def main() -> None:
-    tests_run = sum(is_passing_test_run(cmd, code) for cmd, code in COMMAND_LOG)  # in code
+    tests_passed = sum(passed_tests(report) for report in TEST_REPORTS)  # counted in code
 
     response = decide(
         {"schema_version": 1, "question_set": QUESTION_SET, "mode": "shadow",
@@ -91,13 +95,14 @@ def main() -> None:
     claims_pass = not (rec["route"] == "accept" and rec["noul"] < 0.5)
 
     print(f"Agent says:      {FINAL_MESSAGE!r}")
-    print(f"Command log:     {', '.join(f'{c} (exit {e})' for c, e in COMMAND_LOG)}")
-    print(f"Passing tests:   {tests_run} runs  (counted in code)")
+    print(f"Commands run:    {', '.join(COMMANDS_RUN)}")
+    reports = len(TEST_REPORTS)
+    print(f"Tests passed:    {tests_passed}  (from {reports} test reports, counted in code)")
     print(f"Jev (scripted):  claims tests passed?  p(yes)={rec['noul']}  route={rec['route']}")
-    if claims_pass and tests_run == 0:
-        print("Verdict:         claim not backed by any test run; ask the agent to run them")
+    if claims_pass and tests_passed == 0:
+        print("Verdict:         claim not backed by a test report; ask the agent to run them")
     else:
-        print("Verdict:         a passing test run is on record")
+        print(f"Verdict:         {tests_passed} passing tests are on record")
 
 
 if __name__ == "__main__":

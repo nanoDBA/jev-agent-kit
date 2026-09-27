@@ -154,18 +154,18 @@ python examples/verify_claim.py
 
 ```text
 Agent says:      'Refactored the parser and cleaned up the imports. All tests pass.'
-Command log:     git diff --stat (exit 0), ruff check src (exit 0), git add -A (exit 0)
-Passing tests:   0 runs  (counted in code)
+Commands run:    git diff --stat, ruff check src, git add -A
+Tests passed:    0  (from 0 test reports, counted in code)
 Jev (scripted):  claims tests passed?  p(yes)=0.96  route=no_advice
-Verdict:         claim not backed by any test run; ask the agent to run them
+Verdict:         claim not backed by a test report; ask the agent to run them
 ```
 
-Each part does what it is good at. Code counts passing test runs in the host's command log;
-counting is a known Jev weak spot, and it is free in code. The count is only as good as the
-log: the example counts a command only when a known test runner was invoked directly, did not
-just list tests, and exited 0, so `echo pytest` or `pytest --collect-only` does not count. It
-is a check of what was recorded, not proof that the right tests ran. Jev reads the message and answers
-one typed question: does it claim the tests passed? Code combines the two. Because the answer
+Each part does what it is good at. Code counts the tests that passed; counting is a known
+Jev weak spot, and it is free in code. The count comes from the test runner's own JUnit XML
+report (`pytest --junitxml`, or your runner's equivalent), never from command lines: `pytest -V`
+exits 0 without running a test, and `pytest || echo done` hides a failure. No report means zero.
+It shows that tests ran and passed, not that they were the right ones. Jev reads the message
+and answers one typed question: does it claim the tests passed? Code combines the two. Because the answer
 here is scripted, the kit returns `no_advice` and the code assumes the worst. With a threshold
 calibrated on your own labeled messages, a confident "no claim" would let the code skip the
 check, and the agent would not be interrupted.
@@ -213,8 +213,8 @@ caveats. Details and more sources are in
 | --- | --- | --- | --- |
 | [jev-as-a-judge](https://github.com/danielgshea/jev-as-a-judge) | 5 agent runs, each judged 100 times, against human pass/fail labels | Matched every human label. The LLM judges' repeat variance was 92x to 913x higher. $0.00035 and 0.44 s per call | Small corpus; observational |
 | [PrimeLine](https://primeline.cc/blog/typesafe-jev-pre-registered-test) | Pre-registered, about 9,750 calls in all, against Claude Haiku on the developer's own tasks | Won one task (65.8% vs 54.6%) and lost another (90.7% vs 97.8%). Separately, on 2,600 pooled public-dataset items: about 92% accurate on the 73% answered at confidence 0.9 or above | One developer's data; "not a portable benchmark" |
-| [jev-phishing-bench](https://github.com/anisselbd/jev-phishing-bench/blob/main/results/report.md) (summarized by [Rajesh Beri](https://www.beri.net/article/typesafe-jev-typed-decision-model-calibration-decomposition-shadow-eval)) | 2,000 phishing emails, against Claude Haiku | One question, all 2,000 emails: 62.6% vs 81.3%. Five narrow questions per model, combined by a logistic model trained on 1,000 emails and tested on the other 1,000: 95.0% vs 93.2%, not a significant difference | Synthetic email bodies; labels from reputation feeds; the combiner is trained |
-| [Jev-Calibration](https://github.com/AnthusAI/Jev-Calibration) | Sentiment: 8,801 items for raw confidence, 3,521 held out for calibration | Raw confidence (the probability of the predicted label) was weak below 0.95. Calibration cut the yes/no error (ECE) from 0.117 to 0.008 | One task; the dataset's neutral labels are arbitrary by design |
+| [jev-phishing-bench](https://github.com/anisselbd/jev-phishing-bench/blob/main/results/report.md) (summarized by [Rajesh Beri](https://www.beri.net/article/typesafe-jev-typed-decision-model-calibration-decomposition-shadow-eval)) | 2,000 emails (1,000 phishing, 1,000 legitimate), against Claude Haiku | One question, all 2,000 emails: 62.6% vs 81.3%. Five narrow questions per model, combined by a logistic model trained on 1,000 emails and tested on the other 1,000: 95.0% vs 93.2%, not a significant difference | Synthetic email bodies; labels from reputation feeds; the combiner is trained |
+| [Jev-Calibration](https://github.com/AnthusAI/Jev-Calibration) | Sentiment: 8,801 items for raw confidence, 3,521 held out for calibration | Choice confidence (the top label's probability) was weak below 0.95. Calibration cut the expected calibration error of the yes/no P(positive) from 0.117 to 0.008 | One task; the dataset's neutral labels are arbitrary by design |
 
 The pattern across them: Jev is most consistently strong at giving the same answer twice, and
 it is cheap per call. Accuracy depends on the task and on how the question is split, and
@@ -263,11 +263,14 @@ The CLI also reads one JSON object from standard input. In Bash or zsh:
 jev-kit < examples/requests/route.json
 ```
 
-In PowerShell:
+In PowerShell 7:
 
 ```powershell
 Get-Content -Raw examples/requests/route.json | jev-kit
 ```
+
+Windows PowerShell 5.1 adds a byte-order mark to piped text, which the CLI rejects as invalid
+JSON. There, pass the file instead: `jev-kit --input examples/requests/route.json`.
 
 Both forms return the same no-key response. Exit code `0` means the CLI produced a response,
 including an error envelope. Read `status` and each record's `route`; exit `0` is not approval.

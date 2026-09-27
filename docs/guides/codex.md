@@ -29,7 +29,7 @@ given folder: if both define hooks, Codex merges them and warns at startup.
         "hooks": [
           {
             "type": "command",
-            "command": "python -m jev_kit.hooks.codex --mode shadow --question-set-path \"/ABSOLUTE/PATH/TO/jev_agent_kit/skills/jev-runtime/questions/tool-call-gate.json\"",
+            "command": "python -m jev_kit.hooks.codex --mode shadow --question-set-path \"/ABSOLUTE/PATH/TO/jev-agent-kit/skills/jev-runtime/questions/tool-call-gate.json\"",
             "statusMessage": "jev-kit: checking tool call",
             "timeout": 30
           }
@@ -49,7 +49,7 @@ matcher = "^(shell|Bash)$"
 
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = 'python -m jev_kit.hooks.codex --mode shadow --question-set-path "/ABSOLUTE/PATH/TO/jev_agent_kit/skills/jev-runtime/questions/tool-call-gate.json"'
+command = 'python -m jev_kit.hooks.codex --mode shadow --question-set-path "/ABSOLUTE/PATH/TO/jev-agent-kit/skills/jev-runtime/questions/tool-call-gate.json"'
 statusMessage = "jev-kit: checking tool call"
 timeout = 30
 ```

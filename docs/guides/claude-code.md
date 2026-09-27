@@ -30,7 +30,7 @@ project). Replace the path with the absolute path to your clone:
         "hooks": [
           {
             "type": "command",
-            "command": "python -m jev_kit.hooks.claude --mode shadow --question-set-path \"/ABSOLUTE/PATH/TO/jev_agent_kit/skills/jev-runtime/questions/tool-call-gate.json\"",
+            "command": "python -m jev_kit.hooks.claude --mode shadow --question-set-path \"/ABSOLUTE/PATH/TO/jev-agent-kit/skills/jev-runtime/questions/tool-call-gate.json\"",
             "timeout": 30
           }
         ]

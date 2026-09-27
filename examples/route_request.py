@@ -19,9 +19,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from jev_kit.engine import EngineConfig, decide  # noqa: E402
-from jev_kit.receipts import ReceiptWriter  # noqa: E402
-from jev_kit.transport import MockTransport  # noqa: E402
+from jev_kit.engine import EngineConfig, decide  # noqa: E402 (after the src path setup)
+from jev_kit.receipts import ReceiptWriter  # noqa: E402 (after the src path setup)
+from jev_kit.transport import MockTransport  # noqa: E402 (after the src path setup)
 
 ROUTER = REPO / "skills" / "jev-runtime" / "questions" / "preflight-route.json"
 
@@ -57,9 +57,12 @@ def handle(request: str) -> str:
         config=config,
     )
     rec = response["records"][0]
-    print(f"request:       {request!r}")
-    print(f"distribution:  {rec['distribution']}")
-    print(f"route:         {rec['route']}  (mock={rec['is_mock']})")
+    print(f"request: {request!r}")
+    print("Which handler should take it?  [scripted answer]")
+    for option, p in rec["distribution"].items():
+        bar = "#" * round(p * 20)
+        print(f"  {option:<15} {bar:<20} {p:.2f}")
+    print(f"route:   {rec['route']}  (mock={rec['is_mock']})")
 
     # Your code owns the decision. Act on the label only when the kit says `accept`;
     # otherwise use your normal path.
@@ -70,4 +73,4 @@ def handle(request: str) -> str:
 
 if __name__ == "__main__":
     handler = handle("What is the HTTP status code for 'Not Found'?")
-    print(f"handled by:    {handler}")
+    print(f"handled: {handler}")

@@ -362,6 +362,23 @@ NOT_A_PASS = [
     '<testsuite tests="1"><testcase name="a"/><testsuite tests="1"><testcase name="b"/>'
     '</testsuite></testsuite>',
     '<testsuites><testcase name="a"/></testsuites>',
+    # Round 3: totals that contradict the cases, and outcomes hidden in nested elements.
+    '<testsuite tests="1" failures="1" errors="0" skipped="0"><testcase name="bad"/></testsuite>',
+    '<testsuite tests="1" failures="0" errors="0" skipped="1"><testcase name="s"/></testsuite>',
+    '<testsuite tests="1"><testcase name="bad"><properties><failure/></properties></testcase>'
+    '</testsuite>',
+    '<testsuite tests="1" xmlns:j="urn:junit"><testcase name="bad"><properties><j:failure/>'
+    '</properties></testcase></testsuite>',
+    '<testsuite tests="1" failures="0" errors="0" skipped="0"><testcase name="a">'
+    '<system-out><failure/></system-out></testcase></testsuite>',
+    '<testsuite tests="1" failures="1" errors="0" skipped="0"><testcase name="a">'
+    '<failure><error/></failure></testcase></testsuite>',
+    '<testsuite tests="1" failures="1" errors="1" skipped="0"><testcase name="a"><failure/>'
+    '<error/></testcase></testsuite>',
+    '<testsuite tests="1" failures="0" errors="0" skipped="0"><properties><property>'
+    '<testcase name="x"/></property></properties><testcase name="a"><failure/></testcase>'
+    '</testsuite>',
+    '<testsuite tests="1"><testcase name="a"/></testsuite>',
     '<testsuite xmlns="urn:junit" tests="1"><testcase name="a"/></testsuite>',
 ]
 

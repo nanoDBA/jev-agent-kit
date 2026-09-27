@@ -65,12 +65,48 @@ FINAL_MESSAGE = "Refactored the parser and cleaned up the imports. All tests pas
 
 
 # The report shape this example accepts: what `pytest --junitxml` writes. Anything else,
-# including other JUnit dialects, namespaces and unknown elements, makes the whole report
-# count as zero passes rather than guessing.
-SUITE_CHILDREN = {"properties", "testcase", "system-out", "system-err"}
+# including other JUnit dialects, namespaces, unknown or misplaced elements, and totals that
+# disagree with the test cases, makes the whole report count as zero passes.
 CASE_ATTRIBUTES = {"name", "classname", "time", "file", "line"}
-CASE_CHILDREN_NOT_PASSED = {"failure", "error", "skipped"}
-CASE_CHILDREN_NEUTRAL = {"properties", "system-out", "system-err"}
+OUTCOMES = {"failure": "failures", "error": "errors", "skipped": "skipped"}
+TEXT_ONLY = {"system-out", "system-err"}
+
+
+def _is_neutral(element: ET.Element) -> bool:
+    """Captured output or recorded properties: allowed, but never an outcome."""
+    if element.tag in TEXT_ONLY:
+        return len(element) == 0
+    return element.tag == "properties" and all(
+        child.tag == "property" and len(child) == 0 for child in element
+    )
+
+
+def _suite_passes(suite: ET.Element) -> int | None:
+    """Passed cases in one suite, or None if the suite is not in the supported shape."""
+    counts = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
+    passed = 0
+    for child in suite:
+        if _is_neutral(child):
+            continue
+        if child.tag != "testcase" or set(child.attrib) - CASE_ATTRIBUTES:
+            return None
+        outcomes = []
+        for part in child:
+            if part.tag in OUTCOMES and len(part) == 0:
+                outcomes.append(part.tag)
+            elif not _is_neutral(part):
+                return None
+        if len(outcomes) > 1:
+            return None
+        counts["tests"] += 1
+        if outcomes:
+            counts[OUTCOMES[outcomes[0]]] += 1
+        else:
+            passed += 1
+    # The suite's own totals must be present and agree with its test cases.
+    if any(suite.get(key) != str(value) for key, value in counts.items()):
+        return None
+    return passed
 
 
 def passed_tests(junit_xml: str) -> int:
@@ -79,30 +115,16 @@ def passed_tests(junit_xml: str) -> int:
         root = ET.fromstring(junit_xml)
     except ET.ParseError:
         return 0
-    if root.tag == "testsuites":
-        suites = list(root)
-        if not suites or any(suite.tag != "testsuite" for suite in suites):
-            return 0
-    elif root.tag == "testsuite":
-        suites = [root]
-    else:
+    suites = list(root) if root.tag == "testsuites" else [root]
+    if not suites or any(suite.tag != "testsuite" for suite in suites):
         return 0
-    passed = 0
+    total = 0
     for suite in suites:
-        cases = [child for child in suite if child.tag == "testcase"]
-        if any(child.tag not in SUITE_CHILDREN for child in suite):
+        passed = _suite_passes(suite)
+        if passed is None:
             return 0
-        if suite.get("tests") != str(len(cases)):  # the suite's own count must agree
-            return 0
-        for case in cases:
-            if set(case.attrib) - CASE_ATTRIBUTES:
-                return 0
-            tags = {child.tag for child in case}
-            if tags - CASE_CHILDREN_NOT_PASSED - CASE_CHILDREN_NEUTRAL:
-                return 0
-            if not tags & CASE_CHILDREN_NOT_PASSED:
-                passed += 1
-    return passed
+        total += passed
+    return total
 
 
 def main(test_reports: list[str] = TEST_REPORTS) -> None:

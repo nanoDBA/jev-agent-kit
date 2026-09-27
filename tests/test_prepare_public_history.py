@@ -158,3 +158,36 @@ def test_end_to_end_cleans_text_drops_tags_and_fails_on_binary(tmp_path: Path) -
     failed = run_script(tmp_path / "out-binary")
     assert failed.returncode != 0
     assert "verification FAILED" in failed.stderr
+
+
+def test_value_spanning_nested_path_components_fails(tmp_path: Path) -> None:
+    # Git stores "private/customer-alice" as two tree entries in two objects, so no single
+    # object contains the full path; the verifier must scan full paths too (D11 residual).
+    repo = _repo(tmp_path)
+    (repo / "private").mkdir()
+    (repo / "private" / "customer-alice").write_text("harmless content\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "nested")
+    problems = _script().verify_repository(repo, ["private/customer-alice"], [], "")
+    assert any(p.startswith("path ") for p in problems)
+
+
+def test_unicode_pattern_semantics_are_preserved(tmp_path: Path) -> None:
+    # A byte-compiled regex changes what \b means next to non-ASCII letters, so "José\b"
+    # missed a retained "José" (D11 residual). Patterns are matched as written.
+    repo = _repo(tmp_path)
+    (repo / "people.md").write_text("owner: José\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "people")
+    problems = _script().verify_repository(repo, [r"José\b"], [], "")
+    assert any("people" in p or p.startswith("blob ") for p in problems)
+
+
+def test_path_and_unicode_controls_stay_clean(tmp_path: Path) -> None:
+    # Controls: an unrelated nested path and a longer name that "José\b" must not match.
+    repo = _repo(tmp_path)
+    (repo / "private").mkdir()
+    (repo / "private" / "customer-bob").write_text("owner: Josélito\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "controls")
+    assert _script().verify_repository(repo, ["private/customer-alice", r"José\b"], [], "") == []

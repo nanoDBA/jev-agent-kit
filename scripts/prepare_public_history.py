@@ -154,7 +154,17 @@ def verify_repository(
 
     listing = run(["git", "rev-list", "--objects", "--all"], cwd=repo).splitlines()
     object_ids = [line.split(" ", 1)[0] for line in listing if line]
-    patterns = [re.compile(p.encode("utf-8")) for p in forbidden]
+    # Patterns are matched as written (str regexes): compiling them to bytes would change
+    # what \b, \w and case rules mean around non-ASCII text such as "José".
+    patterns = [re.compile(p) for p in forbidden]
+    # Git stores a path one component per tree object, so a value spanning components
+    # ("private/customer-alice") never appears inside any single object. Scan the full
+    # path of every reachable blob and tree as well.
+    for line in listing:
+        oid, _, path = line.partition(" ")
+        for pattern in patterns:
+            if path and pattern.search(path):
+                problems.append(f"path {path}: matches {pattern.pattern}")
     batch = subprocess.run(
         ["git", "cat-file", "--batch"], cwd=repo, input="\n".join(object_ids).encode() + b"\n",
         capture_output=True,
@@ -173,9 +183,10 @@ def verify_repository(
         body = data[header_end + 1 : header_end + 1 + size]
         pos = header_end + 1 + size + 1  # object content is followed by a newline
         seen += 1
+        text = body.decode("utf-8", errors="surrogateescape")
         for pattern in patterns:
-            if pattern.search(body):
-                problems.append(f"{kind} {oid[:12]}: matches {pattern.pattern.decode()}")
+            if pattern.search(text):
+                problems.append(f"{kind} {oid[:12]}: matches {pattern.pattern}")
     if seen != len(object_ids):
         problems.append(f"objects: read {seen} of {len(object_ids)} reachable objects")
 

@@ -2,7 +2,7 @@
 
 Beads (`bd`) is the source of truth for work in this repo. Its database is private, so
 anything outside contributors need to see or discuss is mirrored to GitHub Issues on
-nanoDBA/jev_agent_kit and linked back with `--external-ref gh-<number>`.
+nanoDBA/jev-agent-kit and linked back with `--external-ref gh-<number>`.
 
 ## Conventions (Beads)
 

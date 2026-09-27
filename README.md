@@ -123,17 +123,13 @@ scale and returns a distribution over its levels. To try Jev by hand, use the
 
 ## Get the code
 
-Before the first release, the package and these docs live on the development branch, not on
-`main`. The repository is currently private, so you need read access to clone it.
-
 ```sh
-git clone --branch phase-0 https://github.com/nanoDBA/jev_agent_kit.git
-cd jev_agent_kit
+git clone https://github.com/nanoDBA/jev-agent-kit.git
+cd jev-agent-kit
 python -m pip install -e .
 ```
 
-You need Python 3.11 or later; the runtime uses only the standard library. Once the package
-reaches `main`, drop `--branch phase-0`.
+You need Python 3.11 or later; the runtime uses only the standard library.
 
 ## Add it to your agent
 

@@ -1,7 +1,7 @@
 # Evidence-backed skill maintenance
 
 Status: offline foundation, not a gate promotion or a claim that PR #40 is fixed.
-Tracking: [#41](https://github.com/nanoDBA/jev_agent_kit/issues/41).
+Tracking: issue #41 in the maintainer's private working repository.
 
 This adapts selective retrieval, evidence-linked constraints, attributed revisions, and
 matched parent/candidate evaluation from [EvoOntology](https://arxiv.org/abs/2609.15779),

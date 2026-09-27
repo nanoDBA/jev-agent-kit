@@ -10,6 +10,10 @@ Codex will find on your `PATH`.
 
 ## 2. Register the hook
 
+Registering the hook changes how your agent runs tool calls, even in shadow mode. Do it only
+with approval from whoever owns that environment. The offline check in the "Try it" step needs
+no registration.
+
 Codex reads hooks from `~/.codex/hooks.json`, from `[hooks]` in `~/.codex/config.toml`, or
 from the same files under a repository's `.codex/` folder. Pick one of the two formats for a
 given folder: if both define hooks, Codex merges them and warns at startup.
@@ -92,16 +96,18 @@ Shadow mode prints `{}` and exits 0. With `--mode enforce` and no API key it pri
 Codex has no "ask" decision for hooks, so a gate that needs a human becomes `deny`. You can
 then run the command yourself or approve it another way.
 
-Codex skips a hook that exceeds its timeout and carries on, so a slow hook fails open. The
-engine call inside this hook is capped at 8 seconds (a worker timeout plus a watchdog that
-kills the engine's child process). Python startup and reading the event come on top of that,
-so keep the hook `timeout` well above 8 seconds; 30 is a reasonable start.
+Codex skips a hook that exceeds its timeout and carries on, so a slow hook fails open. The hook
+waits at most about 8 seconds for the engine's answer: a worker timeout, backed by a watchdog
+that kills the engine's child process. If that budget runs out, the hook answers fail-closed
+without waiting further, but a worker still finishing can delay the hook process exiting.
+Python startup and reading the event also come on top of the budget. Keep the hook `timeout`
+well above 8 seconds; 30 is a reasonable start.
 
 ## 5. Record real evidence (optional)
 
 Live calls send data to TypeSafe, so only do this with authorization to send it. Read
 [What leaves your machine](../../README.md#what-leaves-your-machine) first, then set the
-variables in [Recording real evidence](../../README.md#recording-real-evidence-shadow) in the
+variables in [Recording real evidence](../../README.md#recording-real-evidence-optional) in the
 environment Codex starts from. Stay in shadow mode: enforce needs thresholds measured on
 labeled, held-out data and approval from whoever owns the environment.
 

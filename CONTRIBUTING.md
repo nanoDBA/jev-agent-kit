@@ -6,7 +6,7 @@ calls, so correctness and safety come before features.
 ## Before you start
 
 - For anything bigger than a small fix, open an issue first so we can agree on the approach.
-- For a security problem, do not open an issue. Follow [SECURITY.md](SECURITY.md).
+- For a security problem, do not describe it in a public issue. Follow [SECURITY.md](SECURITY.md).
 - Read the rules in [CLAUDE.md](CLAUDE.md). They apply to human contributors as much as to
   coding agents. The short version: code owns authority, gates fail closed, nothing enforces on
   an uncalibrated threshold, and tests never call the live API.

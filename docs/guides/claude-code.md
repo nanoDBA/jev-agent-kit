@@ -14,6 +14,10 @@ python -c "import jev_kit.hooks.claude; print('ok')"
 
 ## 2. Register the hook
 
+Registering the hook changes how your agent runs tool calls, even in shadow mode. Do it only
+with approval from whoever owns that environment. The offline check in the "Try it" step needs
+no registration.
+
 Add this to `~/.claude/settings.json` (all projects) or `.claude/settings.json` (one
 project). Replace the path with the absolute path to your clone:
 
@@ -74,16 +78,19 @@ prompt you before running the command.
 | Enforce, a gate not cleared, or any failure | `permissionDecision: "ask"` | Claude Code asks you to confirm. |
 
 The hook reads the command from `tool_input.command`, `script`, or `code`, so Bash and
-PowerShell calls are both covered. It always exits 0. The engine call is capped at 8 seconds
-(a worker timeout plus a watchdog that kills the engine's child process). Python startup and
-reading the event come on top of that, so keep the `timeout` in your settings well above 8
-seconds.
+PowerShell calls are both covered. It always exits 0.
+
+The hook waits at most about 8 seconds for the engine's answer: a worker timeout, backed by a
+watchdog that kills the engine's child process. If that budget runs out, the hook answers
+fail-closed without waiting further, but a worker still finishing can delay the hook process
+exiting. Python startup and reading the event also come on top of the budget. Keep the
+`timeout` in your settings well above 8 seconds.
 
 ## 4. Record real evidence (optional)
 
 Live calls send data to TypeSafe, so only do this with authorization to send it. Read
 [What leaves your machine](../../README.md#what-leaves-your-machine) first, then set the
-variables in [Recording real evidence](../../README.md#recording-real-evidence-shadow) in the
+variables in [Recording real evidence](../../README.md#recording-real-evidence-optional) in the
 environment Claude Code starts from. Receipts accumulate in the receipts folder. Stay in
 shadow mode: enforce needs thresholds measured on labeled, held-out data and approval from
 whoever owns the environment.

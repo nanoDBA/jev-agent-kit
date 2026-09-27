@@ -5,12 +5,13 @@ Why a new repository: a force-push cannot purge a GitHub repo. Pull-request refs
 publish them. So the public release starts from a fresh repo, seeded with history that is
 cleaned here before it ever leaves the machine.
 
-What it does, on a fresh single-branch clone (the source repo is never modified):
+What it does, on a fresh single-branch clone without tags (the source repo is never modified):
 1. drops the listed paths from EVERY commit;
 2. replaces private strings in every file AND every commit message;
 3. optionally rewrites author/committer identity with a mailmap;
 4. renames the branch to `main` and removes all remotes;
-5. scans the full rewritten history and messages, and fails if anything private remains.
+5. verifies every reachable object (commits, trees, blobs, tags) as raw bytes plus the refs,
+   and fails if anything private remains, including content it could not rewrite.
 
 The private values themselves (server addresses, file ids, local paths, emails) are not in
 this file, or committing it would reintroduce them. They live in a local, gitignored JSON
@@ -87,9 +88,10 @@ def main() -> None:
     if Path(source).exists():
         source = Path(source).resolve().as_uri()
 
-    # 1. Fresh single-branch clone: filter-repo requires one, and the source stays untouched.
-    run(["git", "clone", "--no-local", "--single-branch", "--branch", args.branch, source,
-         str(out)])
+    # 1. Fresh single-branch clone without tags: filter-repo requires a fresh clone, the source
+    # stays untouched, and tags (whose messages are never rewritten) are not published at all.
+    run(["git", "clone", "--no-local", "--single-branch", "--no-tags", "--branch", args.branch,
+         source, str(out)])
 
     env = dict(os.environ)
     if args.filter_repo_path:
@@ -117,22 +119,73 @@ def main() -> None:
         run(["git", "remote", "remove", remote], cwd=out)
     run(["git", "gc", "--prune=now", "--aggressive", "--quiet"], cwd=out)
 
-    # 5. Verify the whole rewritten history, including commit messages and metadata.
-    history = run(["git", "log", "--all", "-p", "--no-color"], cwd=out)
-    messages = run(["git", "log", "--all", "--format=%B"], cwd=out)
-    problems = [f"content: {pat}" for pat in forbidden if re.search(pat, history)]
-    problems += [f"message: {pat}" for pat in forbidden if re.search(pat, messages)]
-    names = run(["git", "log", "--all", "--name-only", "--format="], cwd=out).splitlines()
-    problems += [f"path: {p}" for p in remove_paths if any(n.startswith(p) for n in names)]
-    if old_email and not args.keep_email:
-        identities = run(["git", "log", "--all", "--format=%ae%n%ce"], cwd=out)
-        if old_email in identities:
-            problems.append("old email still in commit metadata")
+    # 5. Verify what would actually be published.
+    problems = verify_repository(
+        out, forbidden, remove_paths, old_email if not args.keep_email else ""
+    )
     if problems:
         sys.exit("verification FAILED, do not publish:\n  " + "\n  ".join(problems))
 
     count = run(["git", "rev-list", "--count", "main"], cwd=out).strip()
     print(f"ok: {out} has {count} commits on main, verified clean. Nothing was pushed.")
+
+
+def verify_repository(
+    repo: Path, forbidden: list[str], remove_paths: list[str], old_email: str
+) -> list[str]:
+    """Return every reason the repository is NOT safe to publish (empty means clean).
+
+    It checks what a push would actually publish, not a rendered view of it:
+    - refs: exactly one, refs/heads/main, with no tags, notes, stashes, or remotes;
+    - every object reachable from any ref (commits, trees, blobs, tags), read as raw bytes
+      with `git cat-file`, so binary files and tag messages are covered too;
+    - every path in every commit, against the removed paths;
+    - author and committer identities in every commit.
+    It fails closed: an object that cannot be read is a problem, not a skip. Content that
+    git-filter-repo cannot rewrite (for example a secret inside a binary file) therefore makes
+    the run fail instead of passing unnoticed.
+    """
+    problems: list[str] = []
+    refs = run(["git", "for-each-ref", "--format=%(refname)"], cwd=repo).split()
+    if refs != ["refs/heads/main"]:
+        problems.append(f"refs: expected only refs/heads/main, found {refs}")
+    if run(["git", "remote"], cwd=repo).split():
+        problems.append("remotes: a remote is still configured")
+
+    listing = run(["git", "rev-list", "--objects", "--all"], cwd=repo).splitlines()
+    object_ids = [line.split(" ", 1)[0] for line in listing if line]
+    patterns = [re.compile(p.encode("utf-8")) for p in forbidden]
+    batch = subprocess.run(
+        ["git", "cat-file", "--batch"], cwd=repo, input="\n".join(object_ids).encode() + b"\n",
+        capture_output=True,
+    )
+    if batch.returncode != 0:
+        return [*problems, "objects: git cat-file failed, cannot verify"]
+    data, pos, seen = batch.stdout, 0, 0
+    while pos < len(data):
+        header_end = data.index(b"\n", pos)
+        header = data[pos:header_end].split()
+        if len(header) != 3:
+            problems.append(f"objects: unreadable object {header[0].decode()}")
+            pos = header_end + 1
+            continue
+        oid, kind, size = header[0].decode(), header[1].decode(), int(header[2])
+        body = data[header_end + 1 : header_end + 1 + size]
+        pos = header_end + 1 + size + 1  # object content is followed by a newline
+        seen += 1
+        for pattern in patterns:
+            if pattern.search(body):
+                problems.append(f"{kind} {oid[:12]}: matches {pattern.pattern.decode()}")
+    if seen != len(object_ids):
+        problems.append(f"objects: read {seen} of {len(object_ids)} reachable objects")
+
+    names = run(["git", "log", "--all", "--name-only", "--format="], cwd=repo).splitlines()
+    problems += [f"path: {p}" for p in remove_paths if any(n.startswith(p) for n in names)]
+    if old_email:
+        identities = run(["git", "log", "--all", "--format=%ae%n%ce"], cwd=repo)
+        if old_email in identities:
+            problems.append("identity: old email still in commit metadata")
+    return problems
 
 
 if __name__ == "__main__":

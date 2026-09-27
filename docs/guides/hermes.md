@@ -10,6 +10,10 @@ Python environment Hermes runs in, so the plugin can import `jev_kit`.
 
 ## 2. Add the plugin
 
+Installing the plugin changes how your agent runs tool calls, even in shadow mode. Do it only
+with approval from whoever owns that environment. The offline check in the "Try it" step needs
+no registration.
+
 Copy the example plugin into your Hermes plugins folder:
 
 ```sh
@@ -100,10 +104,11 @@ and no API key it prints:
 | Enforce, every gate cleared | `None` | The call proceeds under your usual Hermes rules. |
 | Enforce, a gate not cleared, or any failure | `{"action": "block", ...}` | Hermes blocks the call. |
 
-Hermes treats a hook that exceeds its 30-second timeout as a block. The engine call inside
-this hook is capped at 8 seconds (a worker timeout plus a watchdog that kills the engine's
-child process). Loading the engine comes on top of that, which still leaves a wide margin
-under 30 seconds.
+Hermes treats a hook that exceeds its 30-second timeout as a block. The hook waits at most
+about 8 seconds for the engine's answer: a worker timeout, backed by a watchdog that kills the
+engine's child process. If that budget runs out, the hook answers fail-closed without waiting
+further, and a worker still finishing keeps running in the background. Loading the engine also
+comes on top of the budget. That still leaves a wide margin under 30 seconds.
 
 Known limitation: in enforce mode the plugin returns Hermes' `block` action, so the call is
 stopped rather than sent for approval, even though the message says "send to human approval".
@@ -114,7 +119,7 @@ follow-up.
 
 Live calls send data to TypeSafe, so only do this with authorization to send it. Read
 [What leaves your machine](../../README.md#what-leaves-your-machine) first, then set the
-variables in [Recording real evidence](../../README.md#recording-real-evidence-shadow) in the
+variables in [Recording real evidence](../../README.md#recording-real-evidence-optional) in the
 environment Hermes starts from. Stay in shadow mode: enforce needs thresholds measured on
 labeled, held-out data and approval from whoever owns the environment.
 

@@ -5,8 +5,13 @@ machine. A bug here can leak data or weaken a safety check.
 
 ## Reporting a vulnerability
 
-Report privately through GitHub: open the repository's **Security** tab and choose **Report a
-vulnerability**. Please do not open a public issue or pull request for a security problem.
+Please do not describe a security problem in a public issue or pull request.
+
+- **If the repository's Security tab offers "Report a vulnerability"**, use it. That is
+  GitHub's private vulnerability reporting, which is available once the repository is public
+  and the maintainer has enabled it.
+- **Otherwise**, open a public issue titled "Security contact request" that contains no
+  details of the problem. The maintainer will reply with a private way to send the report.
 
 Include what you can:
 
@@ -52,7 +57,9 @@ files. Report those to their owners.
 
 ## How the kit is designed to fail
 
-Gates fail closed to asking a human; advisory questions fail open to "no advice". Shadow mode,
-the default, never changes what the agent does. The egress policy is in
+When a gate question fails or is not cleared, the engine routes it to `ask`, and each host
+applies that its own way: Claude Code asks you to confirm, Codex denies the call, and Hermes
+blocks it. Advisory questions fail open to "no advice". Shadow mode, the default, never
+changes what the agent does. The egress policy is in
 [ADR 0002](docs/adr/0002-egress-policy.md), and what leaves the machine is summarized in the
 [README](README.md#what-leaves-your-machine).

@@ -26,3 +26,6 @@ __pycache__/
 .venv/
 dist/
 build/
+
+# Private values for scripts/prepare_public_history.py. Never commit.
+.public-release.local.json

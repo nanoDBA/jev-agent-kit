@@ -50,9 +50,6 @@ files. Report those to their owners.
   API while testing.
 - Do not test against infrastructure you do not own.
 
-Good-faith research that follows these rules is welcome, and we will not pursue legal action
-over it.
-
 ## How the kit is designed to fail
 
 Gates fail closed to asking a human; advisory questions fail open to "no advice". Shadow mode,

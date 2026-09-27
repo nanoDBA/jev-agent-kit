@@ -51,15 +51,6 @@ text copied from another project or vendor unless its license allows it, and say
 from so we can keep its notice. Short factual references and links are fine; copies of other
 people's documentation are not.
 
-Please sign off each commit to certify the
-[Developer Certificate of Origin](https://developercertificate.org/):
-
-```sh
-git commit -s -m "Describe the change"
-```
-
-This adds a `Signed-off-by:` line with your name and email.
-
 ## Pull requests
 
 - Keep a pull request to one purpose.

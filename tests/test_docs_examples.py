@@ -233,7 +233,7 @@ def test_hermes_example_plugin(mode: str, monkeypatch: pytest.MonkeyPatch) -> No
 def test_example_hook_command_survives_a_path_with_spaces(path: str, module: str) -> None:
     config = json.loads((EXAMPLES / path).read_text(encoding="utf-8"))
     command = config["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-    spaced = "/tmp/My Kit/jev_agent_kit"
+    spaced = "/tmp/My Kit/jev-agent-kit"
     argv = shlex.split(command.replace("/ABSOLUTE/PATH/TO/jev-agent-kit", spaced))
     assert argv[:3] == ["python", "-m", f"jev_kit.hooks.{module}"]
     assert argv[argv.index("--question-set-path") + 1] == (

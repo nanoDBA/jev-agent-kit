@@ -28,7 +28,7 @@ import sys
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from jev_kit.errors import FailReason, ValidationError
 
@@ -75,12 +75,21 @@ def validate_metadata_id(value: str | None, field_name: str) -> str | None:
     return value
 
 
+APP_DIR = "jev-agent-kit"
+LEGACY_APP_DIR = "jev_agent_kit"  # the folder name before the public rename
+
+
+class ReceiptLocationError(OSError):
+    """No safe, absolute receipts location could be determined."""
+
+
 def receipts_dir() -> Path:
     """Where receipts are written for this process.
 
     ``JEV_KIT_RECEIPTS_DIR`` is honored only when it is set and absolute; a relative value is
     ignored in favor of the platform default (spec story 78). This function never creates the
-    directory; that happens on first write.
+    directory; that happens on first write. Raises ``ReceiptLocationError`` when no absolute
+    location can be determined, so a receipt never resolves against the working directory.
     """
     override = os.environ.get("JEV_KIT_RECEIPTS_DIR")
     if override:
@@ -88,20 +97,43 @@ def receipts_dir() -> Path:
         if candidate.is_absolute():
             return candidate
 
+    base = _state_base()
+    if not base.is_absolute():
+        raise ReceiptLocationError("no absolute receipts location")
+    current, legacy = base / APP_DIR / "receipts", base / LEGACY_APP_DIR / "receipts"
+    # Installs from before the rename keep their receipts in one place until moved.
+    if legacy.is_dir() and not current.exists():
+        return legacy
+    return current
+
+
+def _state_base() -> Path:
+    """The per-user state directory for this platform, without the app folder."""
     if sys.platform == "win32":
+        # A relative LOCALAPPDATA would resolve against the working directory, which may be a
+        # repository; ignore it, as a relative XDG_STATE_HOME is ignored below.
         local_app_data = os.environ.get("LOCALAPPDATA")
-        base = Path(local_app_data) if local_app_data else Path.home() / "AppData" / "Local"
-        return base / "jev_agent_kit" / "receipts"
+        if local_app_data and Path(local_app_data).is_absolute():
+            return Path(local_app_data)
+        return _home() / "AppData" / "Local"
 
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "jev_agent_kit" / "receipts"
+        return _home() / "Library" / "Application Support"
 
     xdg_state_home = os.environ.get("XDG_STATE_HOME")
     if xdg_state_home:
         xdg_candidate = Path(xdg_state_home)
         if xdg_candidate.is_absolute():
-            return xdg_candidate / "jev_agent_kit" / "receipts"
-    return Path.home() / ".local" / "state" / "jev_agent_kit" / "receipts"
+            return xdg_candidate
+    return _home() / ".local" / "state"
+
+
+def _home() -> Path:
+    """The user's home directory. A lookup failure is a location failure, never a guess."""
+    try:
+        return Path.home()
+    except RuntimeError as exc:  # Path.home() raises this when it cannot resolve a home
+        raise ReceiptLocationError("home directory unavailable") from exc
 
 
 def _best_effort_log(message: str, *args: object) -> None:
@@ -125,10 +157,22 @@ class ReceiptWriter:
     """
 
     def __init__(self, directory: Path | None = None) -> None:
-        base = directory if directory is not None else receipts_dir()
         started = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-        self.path: Path = base / f"{started}-{os.getpid()}.jsonl"
+        # Without a safe location, every write fails and returns False (a receipt failure).
+        self.path: Path | None
+        try:
+            base = directory if directory is not None else receipts_dir()
+        except ReceiptLocationError:
+            self.path = None
+        else:
+            self.path = base / f"{started}-{os.getpid()}.jsonl"
         self._lock = threading.Lock()
+
+    def _open(self) -> TextIO:
+        if self.path is None:
+            raise ReceiptLocationError("no absolute receipts location")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        return self.path.open("a", encoding="utf-8")
 
     def write_call(self, lines: list[dict[str, Any]]) -> bool:
         """Append every line for one call, then a commit marker, in a single durable write.
@@ -141,16 +185,14 @@ class ReceiptWriter:
         call_id = lines[0].get("call_id") if lines else None
         commit = {"kind": "commit", "call_id": call_id, "lines": len(lines)}
         try:
-            with self._lock:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                with self.path.open("a", encoding="utf-8") as handle:
-                    for line in lines:
-                        handle.write(_dump_line(line))
-                        handle.write("\n")
-                    handle.write(_dump_line(commit))
+            with self._lock, self._open() as handle:
+                for line in lines:
+                    handle.write(_dump_line(line))
                     handle.write("\n")
-                    handle.flush()
-                    os.fsync(handle.fileno())
+                handle.write(_dump_line(commit))
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
             return True
         except (OSError, ValueError):
             _best_effort_log("receipt write_call failed for %s", str(self.path))
@@ -163,13 +205,11 @@ class ReceiptWriter:
         line. Returns ``False`` on any failure, on the same terms as ``write_call``.
         """
         try:
-            with self._lock:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                with self.path.open("a", encoding="utf-8") as handle:
-                    handle.write(_dump_line(outcome_line))
-                    handle.write("\n")
-                    handle.flush()
-                    os.fsync(handle.fileno())
+            with self._lock, self._open() as handle:
+                handle.write(_dump_line(outcome_line))
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
             return True
         except (OSError, ValueError):
             _best_effort_log("receipt append_outcome failed for %s", str(self.path))
@@ -184,13 +224,11 @@ class ReceiptWriter:
         returned route stay in agreement. Returns ``False`` on any failure, like write_call.
         """
         try:
-            with self._lock:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                with self.path.open("a", encoding="utf-8") as handle:
-                    handle.write(_dump_line(correction_line))
-                    handle.write("\n")
-                    handle.flush()
-                    os.fsync(handle.fileno())
+            with self._lock, self._open() as handle:
+                handle.write(_dump_line(correction_line))
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
             return True
         except (OSError, ValueError):
             _best_effort_log("receipt append_correction failed for %s", str(self.path))

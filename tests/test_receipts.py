@@ -24,7 +24,8 @@ from jev_kit.receipts import (
 )
 
 
-def _read_lines(path: Path) -> list[dict[str, object]]:
+def _read_lines(path: Path | None) -> list[dict[str, object]]:
+    assert path is not None
     text = path.read_text(encoding="utf-8")
     return [json.loads(line) for line in text.splitlines() if line]
 
@@ -191,7 +192,7 @@ def test_receipts_dir_windows_default(tmp_path: Path, monkeypatch: pytest.Monkey
 
     result = receipts.receipts_dir()
 
-    assert result == tmp_path / "jev_agent_kit" / "receipts"
+    assert result == tmp_path / "jev-agent-kit" / "receipts"
 
 
 def test_receipts_dir_macos_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -201,7 +202,7 @@ def test_receipts_dir_macos_default(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
     result = receipts.receipts_dir()
 
-    expected = tmp_path / "Library" / "Application Support" / "jev_agent_kit" / "receipts"
+    expected = tmp_path / "Library" / "Application Support" / "jev-agent-kit" / "receipts"
     assert result == expected
 
 
@@ -214,7 +215,7 @@ def test_receipts_dir_linux_xdg_state_home(
 
     result = receipts.receipts_dir()
 
-    assert result == tmp_path / "jev_agent_kit" / "receipts"
+    assert result == tmp_path / "jev-agent-kit" / "receipts"
 
 
 def test_receipts_dir_linux_relative_xdg_state_home_ignored(
@@ -227,7 +228,7 @@ def test_receipts_dir_linux_relative_xdg_state_home_ignored(
 
     result = receipts.receipts_dir()
 
-    assert result == tmp_path / ".local" / "state" / "jev_agent_kit" / "receipts"
+    assert result == tmp_path / ".local" / "state" / "jev-agent-kit" / "receipts"
 
 
 def test_receipts_dir_linux_default_without_xdg(
@@ -240,7 +241,7 @@ def test_receipts_dir_linux_default_without_xdg(
 
     result = receipts.receipts_dir()
 
-    assert result == tmp_path / ".local" / "state" / "jev_agent_kit" / "receipts"
+    assert result == tmp_path / ".local" / "state" / "jev-agent-kit" / "receipts"
 
 
 # --- get_writer: lazy per-process singleton ----------------------------------
@@ -256,3 +257,118 @@ def test_get_writer_returns_same_instance(
     second = receipts.get_writer()
 
     assert first is second
+
+
+def test_receipts_dir_keeps_a_pre_rename_folder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("JEV_KIT_RECEIPTS_DIR", raising=False)
+    monkeypatch.setattr(receipts, "_state_base", lambda: tmp_path)
+    assert receipts.receipts_dir() == tmp_path / "jev-agent-kit" / "receipts"
+    legacy = tmp_path / "jev_agent_kit" / "receipts"
+    legacy.mkdir(parents=True)
+    assert receipts.receipts_dir() == legacy
+    (tmp_path / "jev-agent-kit" / "receipts").mkdir(parents=True)
+    assert receipts.receipts_dir() == tmp_path / "jev-agent-kit" / "receipts"
+
+
+def test_receipts_dir_ignores_a_relative_localappdata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("JEV_KIT_RECEIPTS_DIR", raising=False)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", "relative-state")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+
+    assert receipts.receipts_dir() == (
+        tmp_path / "home" / "AppData" / "Local" / "jev-agent-kit" / "receipts"
+    )
+
+
+def test_default_receipts_never_land_in_the_working_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Public path: decide() with no receipt directory, run from inside a repository, with
+    # a relative LOCALAPPDATA (Windows) or XDG_STATE_HOME (Linux).
+    from jev_kit.engine import EngineConfig, decide
+    from jev_kit.transport import MockTransport
+
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    monkeypatch.chdir(repo)
+    monkeypatch.delenv("JEV_KIT_RECEIPTS_DIR", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", "relative-state")
+    monkeypatch.setenv("XDG_STATE_HOME", "relative-state")
+    monkeypatch.setattr(receipts, "_default_writer", None)  # resolve the default afresh
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    question_set = (
+        Path(__file__).resolve().parents[1]
+        / "skills" / "jev-runtime" / "questions" / "preflight-route.json"
+    )
+    reply = {"model": "jev-1.13.0", "answers": {"route": {
+        "type": "choice", "choice": "human", "confidence": 0.9,
+        "probabilities": {"deterministic": 0.05, "specialist_llm": 0.05, "human": 0.9},
+    }}}
+
+    response = decide(
+        {"schema_version": 1, "question_set_path": str(question_set), "mode": "shadow",
+         "state": {"request": "hello"}},
+        transport=MockTransport.replying(200, json.dumps(reply).encode(), {}),
+        config=EngineConfig(source_allowlist=frozenset({"agent_request"})),
+    )
+
+    assert response["records"][0]["receipt_written"] is True
+    assert sorted(p.name for p in repo.iterdir()) == [".git"]
+    assert list((tmp_path / "home").rglob("*.jsonl"))
+
+
+@pytest.mark.parametrize("home", ["relative-home", ""])
+def test_no_receipt_without_an_absolute_home(
+    home: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Real home resolution, not a patched Path.home(): every variable it reads is relative or
+    # empty. decide() must report a receipt failure and write nothing into the repository.
+    from jev_kit.engine import EngineConfig, decide
+    from jev_kit.transport import MockTransport
+
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    monkeypatch.chdir(repo)
+    for name in ("JEV_KIT_RECEIPTS_DIR", "LOCALAPPDATA", "XDG_STATE_HOME", "HOMEDRIVE"):
+        monkeypatch.delenv(name, raising=False)
+    for name in ("USERPROFILE", "HOME", "HOMEPATH"):
+        monkeypatch.setenv(name, home)
+    monkeypatch.setattr(receipts, "_default_writer", None)
+    question_set = (
+        Path(__file__).resolve().parents[1]
+        / "skills" / "jev-runtime" / "questions" / "preflight-route.json"
+    )
+    reply = {"model": "jev-1.13.0", "answers": {"route": {
+        "type": "choice", "choice": "human", "confidence": 0.9,
+        "probabilities": {"deterministic": 0.05, "specialist_llm": 0.05, "human": 0.9},
+    }}}
+
+    response = decide(
+        {"schema_version": 1, "question_set_path": str(question_set), "mode": "shadow",
+         "state": {"request": "hello"}},
+        transport=MockTransport.replying(200, json.dumps(reply).encode(), {}),
+        config=EngineConfig(source_allowlist=frozenset({"agent_request"})),
+    )
+
+    record = response["records"][0]
+    assert record["receipt_written"] is False
+    assert record["route"] != "accept"
+    assert sorted(p.name for p in repo.iterdir()) == [".git"]
+
+
+def test_writer_without_a_location_fails_every_write(monkeypatch: pytest.MonkeyPatch) -> None:
+    def no_location() -> Path:
+        raise receipts.ReceiptLocationError("no absolute receipts location")
+
+    monkeypatch.setattr(receipts, "receipts_dir", no_location)
+    writer = receipts.ReceiptWriter()
+
+    assert writer.path is None
+    assert writer.write_call([{"call_id": "c"}]) is False
+    assert writer.append_outcome({"kind": "outcome"}) is False
+    assert writer.append_correction({"kind": "correction"}) is False

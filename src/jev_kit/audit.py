@@ -58,7 +58,7 @@ def has_high_severity(findings: list[Finding]) -> bool:
 
 # --------------------------------------------------------------------------- rules
 #
-# Authored fresh for jev_agent_kit (phase-2-plan.md D5 amendment). Each injection-rule entry is
+# Authored fresh for jev-agent-kit (phase-2-plan.md D5 amendment). Each injection-rule entry is
 # (rule_id, severity, pattern), compiled once below. Every injection pattern is linear:
 # alternation and bounded repetition only, no nested quantifiers, so matching a single line
 # cannot blow up regardless of its content. The dangerous-command rules below are matched by

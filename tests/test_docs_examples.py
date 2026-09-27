@@ -305,3 +305,36 @@ def test_readme_hermes_audit_line_matches_real_findings() -> None:
     assert f"{len(findings)} high-severity findings" in section
     for f in findings:
         assert f"{f['rule_id']} (line {f['line']})" in section
+
+
+@pytest.mark.parametrize("example", ["verify_claim.py", "show_receipt.py"])
+def test_new_examples_match_readme(example: str) -> None:
+    out = _run_example(example)
+    for line in out.splitlines():
+        assert line in README, line
+
+
+def test_verify_claim_keeps_counting_in_code_and_stays_cautious() -> None:
+    out = _run_example("verify_claim.py")
+    assert "Test runs:       0  (counted in code)" in out
+    assert "route=no_advice" in out  # a scripted answer is never trusted
+    assert "claim not backed by any test run" in out
+
+
+def test_receipt_example_reflects_a_real_receipt() -> None:
+    out = _run_example("show_receipt.py")
+    assert "model             mock" in out
+    assert "threshold_status  none" in out
+    assert "route             no_advice" in out
+
+
+def test_others_measurements_match_the_research_note() -> None:
+    # Every figure in the README's "What others have measured" table must also appear in
+    # the research note, where each was checked against its source.
+    note = (REPO / "docs" / "research" / "10-examples-and-evidence.md").read_text(encoding="utf-8")
+    start = README.index("## What others have measured")
+    section = README[start: README.index("## Use the CLI")]
+    figures = re.findall(r"\$?\d+(?:[.,]\d+)?(?:x|%| s)", section)
+    assert len(figures) >= 10
+    for figure in figures:
+        assert figure in note, figure

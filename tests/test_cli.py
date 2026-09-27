@@ -177,6 +177,27 @@ def test_json_array_on_stdin_is_config_error(
     assert captured.err != ""
 
 
+def test_duplicate_keys_rejected_h18(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The CLI parses strictly, so a duplicate key (which json.loads would silently collapse to
+    # last-wins) is rejected before the engine ever sees an ambiguous request (finding H18).
+    _set_stdin(monkeypatch, '{"schema_version": 1, "mode": "shadow", "mode": "enforce"}')
+    exit_code = main([])
+    assert exit_code == 2
+    assert json.loads(capsys.readouterr().out) == _CONFIG_ENVELOPE
+
+
+def test_nan_rejected_h18(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # NaN/Infinity are not valid JSON and must be rejected, not accepted as Python floats.
+    _set_stdin(monkeypatch, '{"schema_version": 1, "state": {"x": NaN}}')
+    exit_code = main([])
+    assert exit_code == 2
+    assert json.loads(capsys.readouterr().out) == _CONFIG_ENVELOPE
+
+
 def test_unknown_argument_is_config_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -186,6 +207,20 @@ def test_unknown_argument_is_config_error(
     captured = capsys.readouterr()
     assert json.loads(captured.out) == _CONFIG_ENVELOPE
     assert captured.err != ""
+
+
+def test_unknown_argument_does_not_echo_secret_shaped_text_h21(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # H21: an unknown argument containing a secret-shaped token must not be echoed verbatim to
+    # stderr; a fixed invocation-error message is emitted instead.
+    secret = "--AKIAABCDEFGHIJKLMNOP"
+    exit_code = main([secret])
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert "AKIAABCDEFGHIJKLMNOP" not in captured.err
+    assert "AKIAABCDEFGHIJKLMNOP" not in captured.out
+    assert json.loads(captured.out) == _CONFIG_ENVELOPE
 
 
 def test_subprocess_stub_engine_yields_internal_envelope_and_exit_zero() -> None:
@@ -240,3 +275,28 @@ def test_cli_audit_missing_path_is_invocation_error(capsys: Any) -> None:
 
     rc = cli.main(["audit", "/no/such/path/here"])
     assert rc == 2
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["install", "--AKIAABCDEFGHIJKLMNOP"],
+        ["install", "--scope", "AKIAABCDEFGHIJKLMNOP"],
+        ["install", "--source", "AKIAABCDEFGHIJKLMNOP"],
+        ["audit", ".", "--AKIAABCDEFGHIJKLMNOP"],
+        ["audit", "AKIAABCDEFGHIJKLMNOP"],
+        ["--input", "AKIAABCDEFGHIJKLMNOP"],
+    ],
+)
+def test_no_invocation_branch_echoes_input_h21(argv: list[str]) -> None:
+    # Batch-10 H21: every invocation-error branch (subcommand parsers, missing paths, unreadable
+    # input) uses fixed diagnostics; a real subprocess must never echo the argv token.
+    repo_root = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "PYTHONPATH": str(repo_root / "src")}
+    proc = subprocess.run(
+        [sys.executable, "-m", "jev_kit.cli", *argv], env=env, capture_output=True,
+        text=True, stdin=subprocess.DEVNULL, timeout=60,
+    )
+    assert proc.returncode == 2
+    assert "AKIAABCDEFGHIJKLMNOP" not in proc.stdout
+    assert "AKIAABCDEFGHIJKLMNOP" not in proc.stderr

@@ -27,13 +27,28 @@ def test_shadow_always_allows_even_on_failure() -> None:
         assert res.outcome is HookOutcome.ALLOW
 
 
-def test_enforce_all_accept_allows() -> None:
+def test_enforce_all_accept_safe_label_allows() -> None:
     runner = ok([
-        {"route": "accept", "is_mock": False},
-        {"route": "accept", "is_mock": False},
+        {"route": "accept", "label": "no", "allow_labels": ["no"], "is_mock": False},
+        {"route": "accept", "label": "no", "allow_labels": ["no"], "is_mock": False},
     ])
     res = decide_tool_call(CALL, mode=Mode.ENFORCE, question_set_path=QS, runner=runner)
     assert res.outcome is HookOutcome.ALLOW
+
+
+def test_enforce_accept_with_dangerous_label_asks() -> None:
+    # H1: a confident "destructive = yes" cleared its threshold (accept) but yes is not a safe
+    # label, so the hook must ASK, never allow.
+    runner = ok([{"route": "accept", "label": "yes", "allow_labels": ["no"], "is_mock": False}])
+    res = decide_tool_call(CALL, mode=Mode.ENFORCE, question_set_path=QS, runner=runner)
+    assert res.outcome is HookOutcome.ASK
+
+
+def test_enforce_accept_without_allow_labels_asks() -> None:
+    # Backstop: an accept with no declared allow-list never allows.
+    runner = ok([{"route": "accept", "label": "no", "is_mock": False}])
+    res = decide_tool_call(CALL, mode=Mode.ENFORCE, question_set_path=QS, runner=runner)
+    assert res.outcome is HookOutcome.ASK
 
 
 def test_enforce_any_ask_escalates() -> None:

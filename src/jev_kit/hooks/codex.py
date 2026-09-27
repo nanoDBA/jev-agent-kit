@@ -123,12 +123,15 @@ def _extract_codex_call(event: dict[str, Any]) -> ToolCall | None:
 
 
 def _build_response(outcome: HookOutcome, *, reason: str | None) -> dict[str, Any]:
+    # ALLOW returns a decision-free response so it cannot bypass Codex's own approval policy;
+    # only ASK emits an affirmative deny (finding H2). A gate only adds friction.
+    if outcome is HookOutcome.ALLOW:
+        return {}
     inner: dict[str, Any] = {
         "hookEventName": "PreToolUse",
-        "permissionDecision": "allow" if outcome is HookOutcome.ALLOW else "deny",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": reason or "jev-kit: needs human review",
     }
-    if outcome is HookOutcome.ASK:
-        inner["permissionDecisionReason"] = reason or "jev-kit: needs human review"
     return {"hookSpecificOutput": inner}
 
 

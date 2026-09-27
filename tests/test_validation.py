@@ -146,6 +146,7 @@ def test_score_inconsistent_with_distribution_rejected() -> None:
         validate_answer(
             score_q(),
             {
+                "type": "score",
                 "score": 0.0,
                 "legend": {"0": "safe", "1": "review", "2": "unsafe"},
                 "probabilities": {"0": 0.0, "1": 0.0, "2": 1.0},
@@ -160,6 +161,7 @@ def test_score_swapped_legend_rejected() -> None:
         validate_answer(
             score_q(),
             {
+                "type": "score",
                 "score": 1.0,
                 "legend": {"0": "unsafe", "1": "review", "2": "safe"},  # swapped 0 and 2
                 "probabilities": {"0": 0.0, "1": 1.0, "2": 0.0},
@@ -193,7 +195,7 @@ def test_noul_out_of_range_rejected() -> None:
 
 def test_answer_set_matches() -> None:
     questions = {"destructive": noul_q()}
-    answers = validate_answer_set(questions, {"destructive": {"noul": 0.1}})
+    answers = validate_answer_set(questions, {"destructive": {"type": "noul", "noul": 0.1}})
     assert set(answers) == {"destructive"}
 
 

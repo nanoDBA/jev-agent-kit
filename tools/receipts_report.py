@@ -35,7 +35,13 @@ from typing import Any
 
 __all__ = ["main", "read_receipts", "summarize", "to_duckdb"]
 
-_VALID_KINDS = frozenset({"decision", "commit", "outcome"})
+_VALID_KINDS = frozenset({"decision", "commit", "outcome", "route_correction"})
+
+# A route_correction is only honored when well-formed and permitted (finding H8): the receipt
+# schema version, the closed set of downgrade routes, and the closed set of reasons.
+_CORRECTION_SCHEMA_VERSION = 1
+_CORRECTION_ROUTES = frozenset({"ask", "no_advice"})
+_CORRECTION_REASONS = frozenset({"timeout"})
 
 
 def read_receipts(
@@ -69,10 +75,13 @@ def read_receipts(
     - ``"dropped_batches"``: call batches dropped for a missing or mismatched commit marker.
     - ``"committed_calls"``: call batches whose commit marker matched and were included.
     """
-    local_stats = {"malformed_lines": 0, "dropped_batches": 0, "committed_calls": 0}
+    local_stats = {
+        "malformed_lines": 0, "dropped_batches": 0, "committed_calls": 0, "dropped_corrections": 0
+    }
 
     committed: list[dict[str, Any]] = []
     outcomes: list[dict[str, Any]] = []
+    corrections: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
     pending_call_id: Any = None
 
@@ -99,6 +108,8 @@ def read_receipts(
             pending.append(payload)
         elif kind == "outcome":
             outcomes.append(payload)
+        elif kind == "route_correction":
+            corrections.append(payload)
         else:  # kind == "commit"
             if payload.get("call_id") == pending_call_id and payload.get("lines") == len(pending):
                 committed.extend(pending)
@@ -124,6 +135,44 @@ def read_receipts(
         decision_id = outcome.get("decision_id")
         if isinstance(decision_id, str) and decision_id in by_decision_id:
             by_decision_id[decision_id]["outcomes"].append(outcome)
+
+    # Apply route corrections to their committed decision (finding H8): a correction supersedes
+    # the decision's original route (a late accept downgraded to ask/no_advice after the write
+    # overran the deadline), so summaries and exports report the corrected route, not the stale
+    # accept. The pre-correction route is preserved under "route_before_correction".
+    #
+    # A correction is applied only when it is well-formed and permitted (finding H8, minor): its
+    # schema_version and call_id must match the committed decision, its route/reason must be from
+    # the closed downgrade vocabulary, and it may only downgrade an accept, never reverse a
+    # decision in some other direction. A malformed or disallowed correction is counted as a
+    # dropped correction and does NOT change the recorded route.
+    for correction in corrections:
+        decision_id = correction.get("decision_id")
+        if not isinstance(decision_id, str) or decision_id not in by_decision_id:
+            local_stats["dropped_corrections"] = local_stats.get("dropped_corrections", 0) + 1
+            continue
+        decision = by_decision_id[decision_id]
+        corrected_route = correction.get("route")
+        fail_reason = correction.get("fail_reason")
+        schema_version = correction.get("schema_version")
+        # Validate exact types BEFORE any set-membership test: a list- or dict-valued route/reason
+        # is unhashable and would raise TypeError from `in`, aborting the whole report; a float or
+        # bool schema_version must not be accepted as 1 (finding H8, minor).
+        if (
+            type(schema_version) is int
+            and schema_version == _CORRECTION_SCHEMA_VERSION
+            and correction.get("call_id") == decision.get("call_id")
+            and isinstance(corrected_route, str)
+            and corrected_route in _CORRECTION_ROUTES
+            and isinstance(fail_reason, str)
+            and fail_reason in _CORRECTION_REASONS
+            and decision.get("route") == "accept"  # only a late accept may be downgraded
+        ):
+            decision.setdefault("route_before_correction", decision.get("route"))
+            decision["route"] = corrected_route
+            decision["fail_reason"] = fail_reason
+        else:
+            local_stats["dropped_corrections"] = local_stats.get("dropped_corrections", 0) + 1
 
     if stats is not None:
         for key, value in local_stats.items():

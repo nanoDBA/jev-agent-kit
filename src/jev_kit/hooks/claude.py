@@ -19,9 +19,14 @@ https://code.claude.com/docs/en/hooks)::
 
 Mapping to `ToolCall`:
 
-- `command`: for the `Bash` tool, `tool_input["command"]` (the actual shell command text, which
-  is what the tool-call-gate questions judge); for every other tool, the tool name itself (for
-  example "Edit"), since there is no shell command to inspect.
+- `command`: the first non-empty string found in `tool_input` among `command`, `script`, and
+  `code` (in that order) -- the actual command/script text that the tool-call-gate questions
+  judge, whatever the field is named for a given tool (for example a `Bash` call carries it in
+  `command`; a PowerShell/pwsh call may carry it in `command` or `script`). Only when none of
+  those fields is present does this fall back to the tool name itself (for example "Edit"),
+  since then there is genuinely no command text to inspect. A shell-executing tool must never be
+  reduced to its bare name when it carries a command string: doing so would make a harmless and
+  a destructive invocation of that tool indistinguishable to the gate (H13).
 - `target`: the first of `tool_input["file_path"]`, `["path"]`, `["url"]`, `["notebook_path"]`
   that is a non-empty string, else `None`.
 - `context`: a short "key=value; key=value" string carrying the tool name, an optional
@@ -61,6 +66,13 @@ _QUESTION_SET_PATH_ENV_VAR = "JEV_KIT_QUESTION_SET_PATH"
 
 _TARGET_FIELDS = ("file_path", "path", "url", "notebook_path")
 
+# Fields that may carry the actual command/script text for a tool call, in priority order.
+# Checked regardless of tool name: a shell-executing tool (Bash, PowerShell/pwsh, and any other
+# tool a host names differently) is identified by carrying one of these fields, not by name, so
+# a PowerShell call is never collapsed to its bare tool name while still carrying real script
+# text (H13).
+_COMMAND_FIELDS = ("command", "script", "code")
+
 
 def _mode_from_env() -> Mode:
     raw = os.environ.get(_MODE_ENV_VAR, "").strip().lower()
@@ -90,10 +102,8 @@ def _extract_claude_call(event: dict[str, Any]) -> ToolCall | None:
     if not isinstance(tool_name, str) or not tool_name or not isinstance(tool_input, dict):
         return None
 
-    if tool_name == "Bash" and isinstance(tool_input.get("command"), str):
-        command = str(tool_input["command"])
-    else:
-        command = tool_name
+    command_text = _first_str(tool_input, _COMMAND_FIELDS)
+    command = command_text if command_text is not None else tool_name
 
     target = _first_str(tool_input, _TARGET_FIELDS)
 
@@ -109,11 +119,13 @@ def _extract_claude_call(event: dict[str, Any]) -> ToolCall | None:
 
 
 def _build_response(outcome: HookOutcome, *, reason: str | None) -> dict[str, Any]:
-    inner: dict[str, Any] = {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": "allow" if outcome is HookOutcome.ALLOW else "ask",
-    }
-    if outcome is HookOutcome.ASK and reason:
+    # A gate only ever ADDS friction, never removes it: an affirmative "allow" would skip
+    # Claude's normal permission prompt, so ALLOW returns a decision-free response and only ASK
+    # emits a decision (finding H2). This holds in shadow and enforce alike.
+    if outcome is HookOutcome.ALLOW:
+        return {}
+    inner: dict[str, Any] = {"hookEventName": "PreToolUse", "permissionDecision": "ask"}
+    if reason:
         inner["permissionDecisionReason"] = reason
     return {"hookSpecificOutput": inner}
 

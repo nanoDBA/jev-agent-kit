@@ -17,6 +17,10 @@ from typing import Any
 
 import pytest
 
+from jev_kit.engine import EngineConfig, decide
+from jev_kit.receipts import ReceiptWriter
+from jev_kit.transport import MockTransport
+
 REPO = Path(__file__).resolve().parents[1]
 GATE = REPO / "skills" / "jev-runtime" / "questions" / "tool-call-gate.json"
 EXAMPLES = REPO / "examples"
@@ -63,6 +67,82 @@ def test_route_request_matches_readme() -> None:
     assert "handled by:    specialist_llm" in out
     for line in out.splitlines():
         assert line in README, line
+
+
+@pytest.mark.parametrize("from_file", [True, False])
+def test_readme_cli_request_without_key(from_file: bool, tmp_path: Path) -> None:
+    request_path = EXAMPLES / "requests" / "route.json"
+    request = request_path.read_text(encoding="utf-8")
+    assert request.strip() in README
+    args = [sys.executable, "-m", "jev_kit.cli"]
+    if from_file:
+        args += ["--input", "examples/requests/route.json"]
+    proc = subprocess.run(
+        args, cwd=REPO, input=None if from_file else request,
+        env=_env(JEV_KIT_RECEIPTS_DIR=str(tmp_path)),
+        capture_output=True, text=True, timeout=60, check=True,
+    )
+    assert proc.stderr == ""
+    assert json.loads(proc.stdout) == {
+        "schema_version": 1, "status": "error", "reason": "config", "records": [],
+    }
+    assert proc.stdout.strip() in README
+    assert not list(tmp_path.iterdir())
+
+
+def test_readme_request_reaches_mock_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A no-key response alone cannot establish that the documented request is usable.
+    monkeypatch.chdir(REPO)
+    request = json.loads((EXAMPLES / "requests" / "route.json").read_text(encoding="utf-8"))
+    probabilities = {"deterministic": 0.82, "specialist_llm": 0.15, "human": 0.03}
+    transport = MockTransport.replying(200, json.dumps({
+        "model": "jev-1.13.0",
+        "answers": {"route": {
+            "type": "choice", "choice": "deterministic",
+            "probabilities": probabilities, "confidence": 0.82,
+        }},
+    }).encode())
+    response = decide(request, transport=transport, config=EngineConfig(
+        source_allowlist=frozenset({"agent_request"}),
+        writer=ReceiptWriter(directory=tmp_path),
+    ))
+    assert len(transport.requests) == 1
+    assert json.loads(transport.requests[0])["state"] == request["state"]
+    record = response["records"][0]
+    assert record["distribution"] == probabilities
+    assert record["route"] == "no_advice"
+    assert record["is_mock"] is True
+    assert record["receipt_written"] is True
+
+
+def test_readme_cli_audit() -> None:
+    proc = subprocess.run(
+        [sys.executable, "-m", "jev_kit.cli", "audit", "examples/hosts"],
+        cwd=REPO, env=_env(), capture_output=True, text=True, timeout=60, check=True,
+    )
+    assert proc.stderr == ""
+    assert json.loads(proc.stdout) == {"schema_version": 1, "status": "ok", "findings": []}
+    assert proc.stdout.strip() in README
+
+
+def test_readme_cli_install_is_dry_run(tmp_path: Path) -> None:
+    # Use the same repo-scope install, with its source explicit in a disposable repo root.
+    proc = subprocess.run(
+        [sys.executable, "-m", "jev_kit.cli", "install", "--scope", "repo",
+         "--source", str(REPO / "skills" / "jev-runtime")],
+        cwd=tmp_path, env=_env(), capture_output=True, text=True, timeout=60, check=True,
+    )
+    assert proc.stderr == ""
+    response = json.loads(proc.stdout)
+    assert response["status"] == "ok"
+    assert response["applied"] is False
+    assert {Path(action["target"]).relative_to(tmp_path).as_posix()
+            for action in response["actions"]} == {
+        ".claude/skills/jev-runtime", ".agents/skills/jev-runtime", ".hermes/skills/jev-runtime",
+    }
+    assert not list(tmp_path.iterdir())
 
 
 @pytest.mark.parametrize(

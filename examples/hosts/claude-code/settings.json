@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -m jev_kit.hooks.claude --mode shadow --question-set-path \"/ABSOLUTE/PATH/TO/jev_agent_kit/skills/jev-runtime/questions/tool-call-gate.json\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

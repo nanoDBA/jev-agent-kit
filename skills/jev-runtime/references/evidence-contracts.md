@@ -48,8 +48,10 @@ target and current resource state, the relevant trust boundary and data destinat
 the host's authorization scope. Code checks paths, permissions, destructive effects, and
 egress deterministically; evidence must describe the same action that would execute.
 
-Known limitations: command transforms redact argument values, identifier transforms obscure
-target identity, and `context` requires an allowlisted source type. Those transforms can
+Known limitations: the command transform keeps only the executable's basename and drops
+every subcommand, flag, and argument (`git -C repo push --force` is sent as `git`), identifier
+transforms obscure target identity, and `context` requires an allowlisted source type. Those
+transforms can
 remove precisely what distinguishes a safe command from a destructive or outbound one. Keep
 raw checks local; if the permitted packet loses a necessary distinction, `ask` rather than
 infer safety from redaction. A missing target or boundary is unknown, not harmless.

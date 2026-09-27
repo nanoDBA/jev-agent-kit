@@ -30,10 +30,12 @@ do not load the whole repository, research archive, or every reference into cont
    A URL, title, search snippet, or another model's assertion alone is insufficient. If source
    access is unavailable or unauthorized, mark the claim unverified rather than fetching or
    inventing support outside the task's authorization.
-5. Check sufficiency again against what survives permitted transforms and size limits. If
-   essential evidence is lost or cannot fit the selected schema, skip that inference: advisory
-   work continues with `no_advice`; a gate goes to `ask`. Gather authorized evidence, use a
-   deterministic check, or ask a human. Confidence cannot repair an evidence gap.
+5. Check sufficiency again against what survives permitted transforms and size limits. A
+   command field reaches Jev as the executable's basename only, with no subcommand, flags, or
+   arguments, so Jev cannot tell `rm file` from `rm -rf /`. If essential evidence is lost or
+   cannot fit the selected schema, skip that inference: advisory work continues with
+   `no_advice`; a gate goes to `ask`. Gather authorized evidence, use a deterministic check,
+   or ask a human. Confidence cannot repair an evidence gap.
 
 ## Question and state discipline
 

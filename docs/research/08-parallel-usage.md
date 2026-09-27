@@ -1,7 +1,7 @@
 # 08. Parallel usage: best practices
 
-Researched 2026-09-25. Sources are official TypeSafe docs (snapshots in
-`https://docs.typesafe.ai/`; page names below are relative to https://docs.typesafe.ai/),
+Researched 2026-09-25. Sources are official TypeSafe docs (listed in `raw/SOURCES.md`; page
+names below are relative to https://docs.typesafe.ai/),
 the official skill `typesafe-ai/skills` at the pinned commit
 (`skills/typesafe-ai/SKILL.md`), and pinned prior art. Vendor numbers are the vendor's, not
 our measurements.

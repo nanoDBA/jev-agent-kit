@@ -23,9 +23,8 @@ Jev judges while the LLM generates, and independent questions go in one request.
 
 ## Thread claims checked against the official docs
 
-Source: docs.typesafe.ai, fetched 2026-09-25. Copies are in
-`https://docs.typesafe.ai/` (the pages' embedded JavaScript widgets are left as they
-are). Page names below are relative to https://docs.typesafe.ai/.
+Source: docs.typesafe.ai, read 2026-09-25. The pages are listed in `raw/SOURCES.md`. Page
+names below are relative to https://docs.typesafe.ai/.
 
 | Thread claim | Official position | Verdict |
 | --- | --- | --- |

@@ -458,70 +458,6 @@ def test_decide_batch_shares_process_wide_cap(tmp_path: Any, monkeypatch: Any) -
 # --- phase-0 hardening batch 2 (H3, H11, H12) -------------------------------
 
 
-def test_fingerprint_changes_with_profile_version() -> None:
-    # H3: bumping a profile's version invalidates the prior calibration fingerprint.
-    from jev_kit.engine import EngineConfig, effective_contract
-    from jev_kit.fingerprint import question_fingerprint
-    from jev_kit.questionset import load_question_set
-
-    qset = load_question_set(question_set())
-
-    def fp(cfg: EngineConfig) -> str:
-        return question_fingerprint(
-            instructions="x", criteria=None, question_type="noul", option_or_level_set=[],
-            model="jev-1.13.0", egress_contract=effective_contract(qset, cfg),
-        )
-
-    profiles = {"sql": (lambda s: s)}
-    v1 = EngineConfig(language_profiles=profiles, language_profile_versions={"sql": "1"})
-    v2 = EngineConfig(language_profiles=profiles, language_profile_versions={"sql": "2"})
-    assert fp(v1) != fp(v2)
-
-
-def test_fingerprint_differs_for_different_profiles_same_version_h3() -> None:
-    # H3: two profiles that behave differently must not share a fingerprint just because they
-    # carry the same version tag; the profile's actual code content is bound in.
-    from jev_kit.engine import EngineConfig, effective_contract
-    from jev_kit.fingerprint import question_fingerprint
-    from jev_kit.questionset import load_question_set
-
-    qset = load_question_set(question_set())
-
-    def fp(cfg: EngineConfig) -> str:
-        return question_fingerprint(
-            instructions="x", criteria=None, question_type="noul", option_or_level_set=[],
-            model="jev-1.13.0", egress_contract=effective_contract(qset, cfg),
-        )
-
-    def normalizer_a(s: str) -> str:
-        return s.upper()
-
-    def normalizer_b(s: str) -> str:
-        return s.lower()
-
-    cfg_a = EngineConfig(
-        language_profiles={"sql": normalizer_a}, language_profile_versions={"sql": "1"}
-    )
-    cfg_b = EngineConfig(
-        language_profiles={"sql": normalizer_b}, language_profile_versions={"sql": "1"}
-    )
-    assert fp(cfg_a) != fp(cfg_b)
-
-
-def test_profile_without_version_is_rejected_h3() -> None:
-    # H3: a profile in use with no declared version could change behavior without changing the
-    # fingerprint, so it fails closed rather than defaulting to an "unversioned" marker.
-    from jev_kit.engine import EngineConfig, effective_contract
-    from jev_kit.errors import FailReason, ValidationError
-    from jev_kit.questionset import load_question_set
-
-    qset = load_question_set(question_set())
-    cfg = EngineConfig(language_profiles={"sql": (lambda s: s)})  # no versions map entry
-    with pytest.raises(ValidationError) as exc:
-        effective_contract(qset, cfg)
-    assert exc.value.reason is FailReason.CONFIG
-
-
 def test_record_outcome_survives_across_processes(tmp_path: Any, monkeypatch: Any) -> None:
     # H11: an outcome may reference a decision committed by a PRIOR process, via the durable
     # receipt on disk, not only the in-memory set.
@@ -673,148 +609,12 @@ def test_unversioned_model_rejected_h22(tmp_path: Any) -> None:
         assert rec["fail_reason"] in ("config", None) or rec["is_mock"]
 
 
-def test_fingerprint_differs_for_closures_capturing_different_rules_h3() -> None:
-    # H3: two closures from one factory that captured different replacement rules must not share
-    # a fingerprint even under the same version tag; captured behavior is bound in.
-    from jev_kit.engine import EngineConfig, effective_contract
-    from jev_kit.fingerprint import question_fingerprint
-    from jev_kit.questionset import load_question_set
-
-    qset = load_question_set(question_set())
-
-    def make(rule: str) -> Any:
-        def normalize(text: str) -> str:
-            return text.replace("X", rule)
-        return normalize
-
-    def fp(cfg: EngineConfig) -> str:
-        return question_fingerprint(
-            instructions="x", criteria=None, question_type="noul", option_or_level_set=[],
-            model="jev-1.13.0", egress_contract=effective_contract(qset, cfg),
-        )
-
-    select = EngineConfig(
-        language_profiles={"sql": make("SELECT")}, language_profile_versions={"sql": "1"}
-    )
-    delete = EngineConfig(
-        language_profiles={"sql": make("DELETE")}, language_profile_versions={"sql": "1"}
-    )
-    assert fp(select) != fp(delete)
-
-
-def test_fingerprint_type_sensitive_captured_values_h3() -> None:
-    # Batch-7 H3: a list ['r'] and a tuple ('r',) captured by a type-sensitive normalizer must
-    # not share a fingerprint; the captured type is part of the identity.
-    from jev_kit.engine import EngineConfig, effective_contract
-    from jev_kit.fingerprint import question_fingerprint
-    from jev_kit.questionset import load_question_set
-
-    qset = load_question_set(question_set())
-
-    def make(rule: Any) -> Any:
-        def normalize(text: str) -> str:
-            return "SELECT" if isinstance(rule, list) else "DELETE"
-        return normalize
-
-    def fp(cfg: EngineConfig) -> str:
-        return question_fingerprint(
-            instructions="x", criteria=None, question_type="noul", option_or_level_set=[],
-            model="jev-1.13.0", egress_contract=effective_contract(qset, cfg),
-        )
-
-    as_list = EngineConfig(
-        language_profiles={"sql": make(["r"])}, language_profile_versions={"sql": "1"}
-    )
-    as_tuple = EngineConfig(
-        language_profiles={"sql": make(("r",))}, language_profile_versions={"sql": "1"}
-    )
-    assert fp(as_list) != fp(as_tuple)
-
-
-def test_profile_referencing_mutable_global_fails_closed_h3() -> None:
-    # Batch-7 H3: a profile that reads a mutable module global (a rule dict that could change
-    # without a version bump) is not bound by the fingerprint, so it fails closed.
-    from jev_kit.engine import EngineConfig, effective_contract
-    from jev_kit.errors import FailReason, ValidationError
-    from jev_kit.questionset import load_question_set
-
-    qset = load_question_set(question_set())
-    cfg = EngineConfig(
-        language_profiles={"sql": _GLOBAL_RULE_NORMALIZER},
-        language_profile_versions={"sql": "1"},
-    )
-    with pytest.raises(ValidationError) as exc:
-        effective_contract(qset, cfg)
-    assert exc.value.reason is FailReason.CONFIG
-
-
-_MUTABLE_RULES = {"x": "SELECT"}
-
-
-def _GLOBAL_RULE_NORMALIZER(text: str) -> str:
-    return _MUTABLE_RULES["x"]
-
-
 def test_pinned_model_rejects_trailing_newline_h22(tmp_path: Any) -> None:
     # Batch-7 H22: a versioned id with a trailing newline must not pass the pin.
     req = request("enforce")
     req["question_set"]["model"] = "jev-1.13.0\n"
     rec = only(decide(req, transport=reply(0.01), config=config(tmp_path)))
     assert rec["route"] == "ask"
-
-
-def test_fingerprint_sensitive_to_captured_dict_order_h3() -> None:
-    # Batch-8 H3: a dict's insertion order is behaviorally significant (a normalizer reading
-    # next(iter(rules.values())) depends on it), so two dicts with the same entries in different
-    # orders must not share a fingerprint.
-    from jev_kit.engine import EngineConfig, effective_contract
-    from jev_kit.fingerprint import question_fingerprint
-    from jev_kit.questionset import load_question_set
-
-    qset = load_question_set(question_set())
-
-    def make(rules: Any) -> Any:
-        def normalize(text: str) -> str:
-            return str(next(iter(rules.values())))
-        return normalize
-
-    def fp(cfg: EngineConfig) -> str:
-        return question_fingerprint(
-            instructions="x", criteria=None, question_type="noul", option_or_level_set=[],
-            model="jev-1.13.0", egress_contract=effective_contract(qset, cfg),
-        )
-
-    ab = EngineConfig(
-        language_profiles={"sql": make({"a": "SELECT", "b": "DELETE"})},
-        language_profile_versions={"sql": "1"},
-    )
-    ba = EngineConfig(
-        language_profiles={"sql": make({"b": "DELETE", "a": "SELECT"})},
-        language_profile_versions={"sql": "1"},
-    )
-    assert fp(ab) != fp(ba)
-
-
-def test_captured_set_fails_closed_h3() -> None:
-    # Batch-9 H3: a captured set/frozenset has no defined iteration order, so a normalizer that
-    # observes it cannot be bound to a behavior-preserving digest and must fail closed.
-    from jev_kit.engine import EngineConfig, effective_contract
-    from jev_kit.errors import FailReason, ValidationError
-    from jev_kit.questionset import load_question_set
-
-    qset = load_question_set(question_set())
-
-    def make(rules: Any) -> Any:
-        def normalize(text: str) -> str:
-            return "SELECT" if next(iter(rules)) == 1 else "DELETE"
-        return normalize
-
-    cfg = EngineConfig(
-        language_profiles={"sql": make({1, 9})}, language_profile_versions={"sql": "1"}
-    )
-    with pytest.raises(ValidationError) as exc:
-        effective_contract(qset, cfg)
-    assert exc.value.reason is FailReason.CONFIG
 
 
 def test_egress_transform_digest_changes_with_source_but_not_line_endings_h3() -> None:
@@ -836,9 +636,7 @@ qs = {"schema_version": 1, "id": "t", "version": "1", "model": "jev-1.13.0",
       "escalation_target": "g", "state_schema": {"cmd": {"kind": "command"}},
       "questions": {"d": {"type": "noul", "instructions": "x",
                           "kit": {"consequence": "advisory"}}}}
-def norm(s):
-    return "".join(c for c in s if c.isalnum())  # nested generator code object
-cfg = EngineConfig(language_profiles={"sql": norm}, language_profile_versions={"sql": "1"})
+cfg = EngineConfig()
 print(question_fingerprint(instructions="x", criteria=None, question_type="noul",
       option_or_level_set=[], model="jev-1.13.0",
       egress_contract=effective_contract(load_question_set(qs), cfg)))
@@ -866,32 +664,42 @@ def test_fingerprint_stable_across_fresh_processes_h3() -> None:
     assert len(outputs) == 1 and len(next(iter(outputs))) == 64
 
 
-_NESTED_RULES = {"replacement": "SELECT ?"}
+def test_any_language_profile_fails_closed_h3() -> None:
+    # Batch-13 H3: a Python callable cannot be bound to a fingerprint that captures its behavior
+    # (module attributes, substituted builtins, captured subclasses, hash-seeded iteration), so
+    # phase 0 rejects any configured language profile: config failure, zero sends, no receipt.
+    import os
+    import types
 
-
-def _nested_global_normalizer(text: str) -> str:
-    return next(_NESTED_RULES["replacement"] for _ in [0])
-
-
-def test_nested_code_global_dependency_fails_closed_h3() -> None:
-    # Batch-11 H3: a mutable global read only inside a nested generator is still a behavior
-    # dependency; every nested code object is walked, so this profile fails closed. A benign
-    # generator with no global dependency is still accepted.
     from jev_kit.engine import EngineConfig, effective_contract
     from jev_kit.errors import FailReason, ValidationError
     from jev_kit.questionset import load_question_set
 
-    qset = load_question_set(question_set())
-    bad = EngineConfig(
-        language_profiles={"sql": _nested_global_normalizer},
-        language_profile_versions={"sql": "1"},
+    def via_module_attribute(text: str) -> str:
+        return os.environ.get("RULE", text)
+
+    def plain(text: str) -> str:
+        return text.strip()
+
+    builtins_swap = types.FunctionType(
+        plain.__code__, {"__builtins__": {"len": lambda _: "SELECT ?"}}
     )
-    with pytest.raises(ValidationError) as exc:
-        effective_contract(qset, bad)
-    assert exc.value.reason is FailReason.CONFIG
+    qset = load_question_set(question_set())
+    for profile in (via_module_attribute, plain, builtins_swap):
+        cfg = EngineConfig(
+            language_profiles={"sql": profile}, language_profile_versions={"sql": "1"}
+        )
+        with pytest.raises(ValidationError) as exc:
+            effective_contract(qset, cfg)
+        assert exc.value.reason is FailReason.CONFIG
 
-    def benign(text: str) -> str:
-        return "".join(c for c in text if c.isalnum())
 
-    ok = EngineConfig(language_profiles={"sql": benign}, language_profile_versions={"sql": "1"})
-    assert "transform_digest" in effective_contract(qset, ok)
+def test_language_profile_rejected_through_public_decide_h3(tmp_path: Any) -> None:
+    transport = reply(0.1)
+    cfg = config(tmp_path)
+    cfg.language_profiles = {"sql": lambda text: text}
+    cfg.language_profile_versions = {"sql": "1"}
+    resp = decide(request("shadow"), transport=transport, config=cfg)
+    assert resp["status"] == "error" and resp["reason"] == "config"
+    assert transport.requests == []
+    assert list(tmp_path.glob("*.jsonl")) == []

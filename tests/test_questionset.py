@@ -180,3 +180,24 @@ def test_container_or_duplicate_credential_in_id_rejected_h15(bad_id: str) -> No
     with pytest.raises(ValidationError) as exc:
         load_question_set(obj)
     assert exc.value.reason is FailReason.CONFIG
+
+
+def test_json_encoded_credential_in_id_rejected_h15() -> None:
+    # Batch-12 H15: a double-encoded credential must not persist as question-set metadata.
+    import json
+
+    obj = base(_noul_q())
+    obj["id"] = json.dumps({"payload": json.dumps({" password ": "opensesame"})})
+    with pytest.raises(ValidationError) as exc:
+        load_question_set(obj)
+    assert exc.value.reason is FailReason.CONFIG
+
+
+def test_string_root_encoded_credential_in_id_rejected_h15() -> None:
+    import json
+
+    obj = base(_noul_q())
+    obj["id"] = json.dumps(json.dumps({" password ": "opensesame"}))
+    with pytest.raises(ValidationError) as exc:
+        load_question_set(obj)
+    assert exc.value.reason is FailReason.CONFIG

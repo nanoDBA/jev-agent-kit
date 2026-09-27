@@ -231,6 +231,7 @@ Receipts never contain your API key or the raw state. The full policy is in
 | `skills/jev-runtime/` | The agent skill and its question sets |
 | `src/jev_kit/` | The engine, egress checks, receipts, and host hook shims |
 | `docs/adr/`, `docs/specs/` | Design decisions and specifications |
+| `docs/evidence-backed-maintenance.md` | Offline evidence contracts, finding verification, and skill revision workflow |
 | `CLAUDE.md` | Rules for agents working on this repository |
 
 ## Development

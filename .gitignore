@@ -29,3 +29,6 @@ build/
 
 # Private values for scripts/prepare_public_history.py. Never commit.
 .public-release.local.json
+
+# Local skill-behavior comparison artifacts; reviewed summary lives under docs/reviews.
+eval-results/

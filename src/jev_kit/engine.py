@@ -635,7 +635,7 @@ def _safe_metadata(value: str | None) -> str | None:
     Metadata fields are a separate egress channel from the request body, so they are scanned
     and pattern-validated independently before being persisted or returned.
     """
-    if value is None:
+    if not value:  # absent (None) or an empty header is absent, not unsafe
         return None
     if validate_metadata_id(value, "metadata") is None:
         return None

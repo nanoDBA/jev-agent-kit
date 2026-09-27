@@ -143,7 +143,7 @@ def test_accept_path_through_fake_server(server: HTTPServer, tmp_path: Any) -> N
         "questions": {
             "destructive": {
                 "type": "noul", "instructions": "Destructive?",
-                "kit": {"consequence": "gate"},
+                "kit": {"consequence": "gate", "gate": {"allow_labels": ["no"]}},
             }
         },
         "state_schema": {"cmd": {"kind": "command"}},
@@ -159,7 +159,7 @@ def test_accept_path_through_fake_server(server: HTTPServer, tmp_path: Any) -> N
     )
     _Handler.behavior = "ok"
     _Handler.payload = json.dumps(
-        {"model": "jev-1.13.0", "answers": {"destructive": {"noul": 0.02}}}
+        {"model": "jev-1.13.0", "answers": {"destructive": {"type": "noul", "noul": 0.02}}}
     ).encode()
     transport = _HttpLiveTransport("SYNTHETIC_KEY", endpoint(server))
     config = EngineConfig(
@@ -183,6 +183,66 @@ def test_accept_path_through_fake_server(server: HTTPServer, tmp_path: Any) -> N
     assert rec["receipt_written"] is True
 
 
+def test_slow_receipt_write_suppresses_late_accept_h8(server: HTTPServer, tmp_path: Any) -> None:
+    # Finding H8: if the receipt write itself overruns the total deadline, the accept completed
+    # too late and must not be returned; the durable record carries a correction so the receipt
+    # and the returned route agree.
+    import time as _time
+
+    from jev_kit.engine import effective_contract
+    from jev_kit.fingerprint import question_fingerprint
+    from jev_kit.questionset import load_question_set
+
+    class _SlowWriter(ReceiptWriter):
+        def write_call(self, lines: Any) -> bool:
+            _time.sleep(0.5)  # overruns the 0.2 s deadline set below
+            return super().write_call(lines)
+
+    qset_obj = {
+        "schema_version": 1, "id": "triage", "version": "1", "model": "jev-1.13.0",
+        "escalation_target": "gpt-6",
+        "questions": {
+            "destructive": {
+                "type": "noul", "instructions": "Destructive?",
+                "kit": {"consequence": "gate", "gate": {"allow_labels": ["no"]}},
+            }
+        },
+        "state_schema": {"cmd": {"kind": "command"}},
+    }
+    qset = load_question_set(qset_obj)
+    fp = question_fingerprint(
+        instructions="Destructive?", criteria=None, question_type="noul",
+        option_or_level_set=[], model="jev-1.13.0",
+        egress_contract=effective_contract(qset, EngineConfig()),
+    )
+    _Handler.behavior = "ok"
+    _Handler.payload = json.dumps(
+        {"model": "jev-1.13.0", "answers": {"destructive": {"type": "noul", "noul": 0.02}}}
+    ).encode()
+    transport = _HttpLiveTransport("SYNTHETIC_KEY", endpoint(server))
+    config = EngineConfig(
+        hmac_key=HMAC_KEY,
+        writer=_SlowWriter(directory=tmp_path),
+        rate_budget=RateBudget(),
+        registry_path=_registry_file(tmp_path, fp),
+        attestation={"inventory": True, "inventory_date": "2026-09-25", "dpa": True},
+        deadline_seconds=0.2,
+        receipt_reserve=0.0,
+    )
+    request = {
+        "schema_version": 1, "question_set": qset_obj, "state": {"cmd": "ls -la"},
+        "mode": "enforce",
+    }
+    resp = decide(request, transport=transport, config=config)
+    rec = resp["records"][0]
+    # The accept became invalid once the slow write pushed past the deadline: returned as ask.
+    assert rec["route"] == "ask"
+    assert rec["fail_reason"] == "timeout"
+    # The durable receipt carries a route_correction whose final route matches the return.
+    text = next(tmp_path.glob("*.jsonl")).read_text(encoding="utf-8")
+    assert '"kind": "route_correction"' in text or '"kind":"route_correction"' in text
+
+
 def test_late_response_is_rejected(server: HTTPServer, tmp_path: Any) -> None:
     # Finding C02: evidence arriving after the deadline is discarded, not accepted.
     import time as _time
@@ -197,7 +257,7 @@ def test_late_response_is_rejected(server: HTTPServer, tmp_path: Any) -> None:
         "questions": {
             "d": {
                 "type": "noul", "instructions": "Destructive?",
-                "kit": {"consequence": "gate"},
+                "kit": {"consequence": "gate", "gate": {"allow_labels": ["no"]}},
             }
         },
         "state_schema": {"cmd": {"kind": "command"}},
@@ -209,7 +269,9 @@ def test_late_response_is_rejected(server: HTTPServer, tmp_path: Any) -> None:
             return TransportResponse(
                 200,
                 {},
-                json.dumps({"model": "jev-1.13.0", "answers": {"d": {"noul": 0.02}}}).encode(),
+                json.dumps(
+                    {"model": "jev-1.13.0", "answers": {"d": {"type": "noul", "noul": 0.02}}}
+                ).encode(),
             )
 
     qset = load_question_set(qset_obj)
@@ -260,7 +322,7 @@ def test_live_send_without_attestation_is_refused(server: HTTPServer, tmp_path: 
         "questions": {
             "d": {
                 "type": "noul", "instructions": "Destructive?",
-                "kit": {"consequence": "gate"},
+                "kit": {"consequence": "gate", "gate": {"allow_labels": ["no"]}},
             }
         },
         "state_schema": {"cmd": {"kind": "command"}},
@@ -273,7 +335,7 @@ def test_live_send_without_attestation_is_refused(server: HTTPServer, tmp_path: 
     )
     _Handler.behavior = "ok"
     _Handler.payload = json.dumps(
-        {"model": "jev-1.13.0", "answers": {"d": {"noul": 0.02}}}
+        {"model": "jev-1.13.0", "answers": {"d": {"type": "noul", "noul": 0.02}}}
     ).encode()
     cfg = EngineConfig(
         hmac_key=HMAC_KEY, writer=ReceiptWriter(directory=tmp_path), rate_budget=RateBudget(),

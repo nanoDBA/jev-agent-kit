@@ -79,10 +79,10 @@ def _require_answer_type(raw: Any, expected: QuestionType) -> dict[str, Any]:
     """The answer must be an object whose declared type matches the question (story 33)."""
     if not isinstance(raw, dict):
         raise ValidationError(FailReason.ANSWER_INVALID, "answer_not_object")
-    declared = raw.get("type")
-    if declared is not None and declared != expected.value:
-        # If the answer declares a type it must match; the API may omit it, and we already
-        # validate by the question's known type, so absence is allowed (see review C10 note).
+    # The answer must declare a type and it must match the question (finding H7/C10). A missing
+    # or null type is rejected: we do not infer it from shape. If the live API is later shown to
+    # omit type, relax this with that evidence from the smoke run.
+    if raw.get("type") != expected.value:
         raise ValidationError(FailReason.ANSWER_INVALID, "answer_type_mismatch")
     return raw
 

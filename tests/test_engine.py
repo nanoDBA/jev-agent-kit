@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from typing import Any, ClassVar
 
+import pytest
+
 from jev_kit.engine import EngineConfig, decide
 from jev_kit.errors import FailReason
 from jev_kit.ratebudget import RateBudget
@@ -31,7 +33,7 @@ def question_set() -> dict[str, Any]:
             "destructive": {
                 "type": "noul",
                 "instructions": "Is the command destructive?",
-                "kit": {"consequence": "gate"},
+                "kit": {"consequence": "gate", "gate": {"allow_labels": ["no"]}},
             }
         },
         "state_schema": {"cmd": {"kind": "command"}},
@@ -89,7 +91,8 @@ def test_shadow_gate_over_mock_is_ask(tmp_path: Any) -> None:
 
 def test_mock_advisory_is_no_advice(tmp_path: Any) -> None:
     req = request("enforce")
-    req["question_set"]["questions"]["destructive"]["kit"]["consequence"] = "advisory"
+    q = req["question_set"]["questions"]["destructive"]
+    q["kit"] = {"consequence": "advisory"}  # advisory has no gate.allow_labels
     rec = only(decide(req, transport=reply(0.99), config=config(tmp_path)))
     assert rec["route"] == "no_advice"
 
@@ -450,3 +453,253 @@ def test_decide_batch_shares_process_wide_cap(tmp_path: Any, monkeypatch: Any) -
     reasons = [r["records"][0]["fail_reason"] for r in results]
     # With a shared cap of 1, only one request can send; the others hit the rate budget.
     assert reasons.count("rate_budget") == 2
+
+
+# --- phase-0 hardening batch 2 (H3, H11, H12) -------------------------------
+
+
+def test_record_outcome_survives_across_processes(tmp_path: Any, monkeypatch: Any) -> None:
+    # H11: an outcome may reference a decision committed by a PRIOR process, via the durable
+    # receipt on disk, not only the in-memory set.
+    from jev_kit import engine
+    from jev_kit.receipts import ReceiptWriter
+
+    writer = ReceiptWriter(directory=tmp_path)
+    monkeypatch.setattr(engine, "get_writer", lambda: writer)
+    rec = only(decide(request("shadow"), transport=reply(0.5), config=EngineConfig(
+        hmac_key=HMAC_KEY, writer=writer, rate_budget=RateBudget())))
+    did = rec["decision_id"]
+    # Simulate a fresh process: clear the in-memory set, point the disk scan at tmp_path.
+    monkeypatch.setattr(engine, "_committed_decisions", set())
+    monkeypatch.setattr("jev_kit.receipts.receipts_dir", lambda: tmp_path)
+    assert engine.record_outcome(did, "applied") is True
+    assert engine.record_outcome("act_" + "0" * 32, "applied") is False  # unknown id
+
+
+def test_commit_marker_with_wrong_line_count_does_not_vouch_h11(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    # H11: a commit marker whose line count does not match the decision lines actually written
+    # for its call is a truncated or corrupt batch and must not count a decision as committed.
+    from jev_kit import engine
+    from jev_kit.receipts import ReceiptWriter
+
+    writer = ReceiptWriter(directory=tmp_path)
+    monkeypatch.setattr(engine, "get_writer", lambda: writer)
+    rec = only(decide(request("shadow"), transport=reply(0.5), config=EngineConfig(
+        hmac_key=HMAC_KEY, writer=writer, rate_budget=RateBudget())))
+    did = rec["decision_id"]
+
+    # Corrupt the commit marker's line count in the receipt file on disk.
+    path = next(tmp_path.glob("*.jsonl"))
+    lines = path.read_text(encoding="utf-8").splitlines()
+    rewritten = []
+    for raw in lines:
+        obj = json.loads(raw)
+        if obj.get("kind") == "commit":
+            obj["lines"] = obj.get("lines", 1) + 5  # claim more lines than exist
+        rewritten.append(json.dumps(obj))
+    path.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(engine, "_committed_decisions", set())
+    monkeypatch.setattr("jev_kit.receipts.receipts_dir", lambda: tmp_path)
+    assert engine.record_outcome(did, "applied") is False
+
+
+def test_unknown_field_and_bool_schema_version_rejected_h18(tmp_path: Any) -> None:
+    # H18: the engine boundary rejects an unknown request field and a schema_version that is not
+    # exactly the integer 1 (True == 1 in Python, so a bare != check would let it through).
+    unknown = request("shadow")
+    unknown["surprise"] = "ride-along"
+    resp = decide(unknown, transport=reply(0.1), config=config(tmp_path))
+    assert resp["status"] == "error" and resp["reason"] == "config"
+
+    boolv = request("shadow")
+    boolv["schema_version"] = True
+    resp2 = decide(boolv, transport=reply(0.1), config=config(tmp_path))
+    assert resp2["status"] == "error" and resp2["reason"] == "config"
+
+
+def test_raw_non_2xx_status_retries_like_typed_failure_h19() -> None:
+    # H19: a raw TransportResponse(429) must enter the same retry path as a typed rate-limit
+    # failure, so the following 200 response is used instead of stopping after one send.
+    from jev_kit.deadline import Deadline
+    from jev_kit.engine import _send_with_retries
+    from jev_kit.transport import MockTransport, TransportResponse
+
+    ok_body = json.dumps({"model": "jev-1.13.0", "answers": {}}).encode()
+    transport = MockTransport(
+        outcomes=[
+            TransportResponse(429, {"retry-after-ms": "0"}, b""),
+            TransportResponse(200, {}, ok_body),
+        ]
+    )
+    result, sends = _send_with_retries(
+        transport, b"{}", Deadline(10.0), RateBudget(), 1, 2
+    )
+    assert isinstance(result, TransportResponse) and result.status == 200
+    assert sends == 2  # the raw 429 was retried, not returned as a terminal failure
+
+
+def test_config_from_env_reads_source_allowlist(monkeypatch: Any) -> None:
+    # H12: the CLI/hook path picks up the owner's source allowlist from the environment.
+    from jev_kit import engine
+
+    monkeypatch.setenv("JEV_KIT_SOURCE_ALLOWLIST", "web, agent_context ,")
+    monkeypatch.setenv("JEV_KIT_PUBLIC_NAMES", "sys.tables")
+    cfg = engine._config_from_env()
+    assert cfg.source_allowlist == frozenset({"web", "agent_context"})
+    assert cfg.public_names == frozenset({"sys.tables"})
+
+
+def test_outcome_rejects_decision_in_truncated_batch(tmp_path: Any, monkeypatch: Any) -> None:
+    # H11 MAJOR-2: a decision whose own call was never committed must not be vouched for by a
+    # later unrelated commit marker in the same file.
+    from jev_kit import engine
+
+    f = tmp_path / "20260926T000000Z-1.jsonl"
+    f.write_text(
+        # call A: a decision line but NO commit (truncated)
+        json.dumps({"kind": "decision", "call_id": "callA", "decision_id": "act_truncated"}) + "\n"
+        # call B: an unrelated decision then its commit
+        + json.dumps({"kind": "decision", "call_id": "callB", "decision_id": "act_other"}) + "\n"
+        + json.dumps({"kind": "commit", "call_id": "callB", "lines": 1}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(engine, "_committed_decisions", set())
+    monkeypatch.setattr("jev_kit.receipts.receipts_dir", lambda: tmp_path)
+    assert engine.record_outcome("act_truncated", "applied") is False  # own call not committed
+    assert engine.record_outcome("act_other", "applied") is True  # own call committed
+
+
+def test_float_schema_version_rejected_h18(tmp_path: Any) -> None:
+    # H18: schema_version must be exactly int 1; 1.0 == 1 in Python, so a float must be rejected.
+    req = request("shadow")
+    req["schema_version"] = 1.0
+    resp = decide(req, transport=reply(0.1), config=config(tmp_path))
+    assert resp["status"] == "error" and resp["reason"] == "config"
+
+
+def test_batch_envelope_strict_h18() -> None:
+    # H18: a decide_batch envelope with a bad version or an unknown field must not dispatch.
+    from jev_kit.engine import run_json
+    from jev_kit.transport import MockTransport
+
+    bad_version = run_json(
+        {"op": "decide_batch", "schema_version": 999, "requests": []},
+        transport=MockTransport.replying(200, b"{}"),
+    )
+    assert bad_version["status"] == "error" and bad_version["reason"] == "config"
+    unknown_field = run_json(
+        {"op": "decide_batch", "schema_version": 1, "requests": [], "junk": 1},
+        transport=MockTransport.replying(200, b"{}"),
+    )
+    assert unknown_field["status"] == "error" and unknown_field["reason"] == "config"
+
+
+def test_unversioned_model_rejected_h22(tmp_path: Any) -> None:
+    # H22: only a pinned, fully versioned model id is allowed; a bare or partial id is refused,
+    # so a threshold can never bind to a model that changes under it.
+    for bad_model in ("jev", "jev-1", "jev-1.13", "gpt", "jev-latest"):
+        req = request("enforce")
+        req["question_set"]["model"] = bad_model
+        rec = only(decide(req, transport=reply(0.01), config=config(tmp_path)))
+        # A gate under a config failure asks; the point is it never proceeds on an unpinned model.
+        assert rec["route"] == "ask"
+        assert rec["fail_reason"] in ("config", None) or rec["is_mock"]
+
+
+def test_pinned_model_rejects_trailing_newline_h22(tmp_path: Any) -> None:
+    # Batch-7 H22: a versioned id with a trailing newline must not pass the pin.
+    req = request("enforce")
+    req["question_set"]["model"] = "jev-1.13.0\n"
+    rec = only(decide(req, transport=reply(0.01), config=config(tmp_path)))
+    assert rec["route"] == "ask"
+
+
+def test_egress_transform_digest_changes_with_source_but_not_line_endings_h3() -> None:
+    # Negative control (H3b): a change to the transform source changes the digest, so a registry
+    # calibrated under one transform never matches another. CRLF and LF checkouts of the SAME
+    # revision must agree.
+    from jev_kit.egress import _source_digest
+
+    base = b"def reduce(x):\n    return x.split()[0]\n"
+    assert _source_digest(base) == _source_digest(base.replace(b"\n", b"\r\n"))
+    assert _source_digest(base) != _source_digest(base.replace(b"[0]", b"[-1]"))
+
+
+_XPROC_SCRIPT = """
+from jev_kit.engine import EngineConfig, effective_contract
+from jev_kit.fingerprint import question_fingerprint
+from jev_kit.questionset import load_question_set
+qs = {"schema_version": 1, "id": "t", "version": "1", "model": "jev-1.13.0",
+      "escalation_target": "g", "state_schema": {"cmd": {"kind": "command"}},
+      "questions": {"d": {"type": "noul", "instructions": "x",
+                          "kit": {"consequence": "advisory"}}}}
+cfg = EngineConfig()
+print(question_fingerprint(instructions="x", criteria=None, question_type="noul",
+      option_or_level_set=[], model="jev-1.13.0",
+      egress_contract=effective_contract(load_question_set(qs), cfg)))
+"""
+
+
+def test_fingerprint_stable_across_fresh_processes_h3() -> None:
+    # Positive control (H3b): unchanged source and request must yield the SAME fingerprint in
+    # fresh processes, so a same-revision registry stays reusable. The earlier digest hashed
+    # repr(co_consts), which embeds per-process memory addresses and differed every run.
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    src = str(Path(__file__).resolve().parents[1] / "src")
+    env = {**os.environ, "PYTHONPATH": src}
+    outputs = {
+        subprocess.run(
+            [sys.executable, "-c", _XPROC_SCRIPT], env=env, capture_output=True, text=True,
+            check=True, timeout=60,
+        ).stdout.strip()
+        for _ in range(3)
+    }
+    assert len(outputs) == 1 and len(next(iter(outputs))) == 64
+
+
+def test_any_language_profile_fails_closed_h3() -> None:
+    # Batch-13 H3: a Python callable cannot be bound to a fingerprint that captures its behavior
+    # (module attributes, substituted builtins, captured subclasses, hash-seeded iteration), so
+    # phase 0 rejects any configured language profile: config failure, zero sends, no receipt.
+    import os
+    import types
+
+    from jev_kit.engine import EngineConfig, effective_contract
+    from jev_kit.errors import FailReason, ValidationError
+    from jev_kit.questionset import load_question_set
+
+    def via_module_attribute(text: str) -> str:
+        return os.environ.get("RULE", text)
+
+    def plain(text: str) -> str:
+        return text.strip()
+
+    builtins_swap = types.FunctionType(
+        plain.__code__, {"__builtins__": {"len": lambda _: "SELECT ?"}}
+    )
+    qset = load_question_set(question_set())
+    for profile in (via_module_attribute, plain, builtins_swap):
+        cfg = EngineConfig(
+            language_profiles={"sql": profile}, language_profile_versions={"sql": "1"}
+        )
+        with pytest.raises(ValidationError) as exc:
+            effective_contract(qset, cfg)
+        assert exc.value.reason is FailReason.CONFIG
+
+
+def test_language_profile_rejected_through_public_decide_h3(tmp_path: Any) -> None:
+    transport = reply(0.1)
+    cfg = config(tmp_path)
+    cfg.language_profiles = {"sql": lambda text: text}
+    cfg.language_profile_versions = {"sql": "1"}
+    resp = decide(request("shadow"), transport=transport, config=cfg)
+    assert resp["status"] == "error" and resp["reason"] == "config"
+    assert transport.requests == []
+    assert list(tmp_path.glob("*.jsonl")) == []

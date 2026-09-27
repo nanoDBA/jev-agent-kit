@@ -172,7 +172,9 @@ def test_read_receipts_empty_file(tmp_path: Path) -> None:
 
     stats: dict[str, int] = {}
     assert read_receipts(path, stats=stats) == []
-    assert stats == {"malformed_lines": 0, "dropped_batches": 0, "committed_calls": 0}
+    assert stats == {
+        "malformed_lines": 0, "dropped_batches": 0, "committed_calls": 0, "dropped_corrections": 0
+    }
 
 
 # --- summarize -----------------------------------------------------------------------------
@@ -296,3 +298,77 @@ def test_main_prints_json_summary_and_exits_zero(
     output = json.loads(capsys.readouterr().out)
     assert output["total"] == 1
     assert output["read_stats"]["committed_calls"] == 1
+
+
+def test_route_correction_supersedes_decision_route_h8(tmp_path: Any) -> None:
+    # A route_correction downgrades an already-committed accept (a late accept the engine
+    # reversed after a slow receipt write); the reader and summary must report the corrected
+    # route, not the stale accept (finding H8).
+    import json as _json
+
+    from tools.receipts_report import read_receipts, summarize
+
+    path = tmp_path / "r.jsonl"
+    lines = [
+        {"kind": "decision", "call_id": "c1", "decision_id": "d1", "route": "accept",
+         "fail_reason": None},
+        {"kind": "commit", "call_id": "c1", "lines": 1},
+        {"kind": "route_correction", "schema_version": 1, "call_id": "c1", "decision_id": "d1",
+         "route": "ask", "fail_reason": "timeout"},
+    ]
+    path.write_text("\n".join(_json.dumps(x) for x in lines) + "\n", encoding="utf-8")
+    stats: dict[str, int] = {}
+    decisions = read_receipts(path, stats=stats)
+    assert decisions[0]["route"] == "ask"
+    assert decisions[0]["fail_reason"] == "timeout"
+    assert decisions[0]["route_before_correction"] == "accept"
+    assert stats["malformed_lines"] == 0  # the correction line is a recognized kind
+    assert stats["dropped_corrections"] == 0
+    assert summarize(decisions)["by_route"] == {"ask": 1}
+
+
+def test_malformed_route_correction_is_not_applied_h8(tmp_path: Any) -> None:
+    # A correction is honored only when well-formed and permitted (finding H8): a wrong call_id,
+    # bad schema version, disallowed route/reason, or a non-accept target must NOT reverse the
+    # recorded route; it is counted as a dropped correction instead.
+    import json as _json
+
+    from tools.receipts_report import read_receipts
+
+    path = tmp_path / "r.jsonl"
+    lines = [
+        {"kind": "decision", "call_id": "c1", "decision_id": "d1", "route": "accept",
+         "fail_reason": None},
+        {"kind": "commit", "call_id": "c1", "lines": 1},
+        # wrong call_id + bad schema_version + arbitrary route: must be dropped, not applied.
+        {"kind": "route_correction", "schema_version": 999, "call_id": "OTHER",
+         "decision_id": "d1", "route": "accept", "fail_reason": "none"},
+    ]
+    path.write_text("\n".join(_json.dumps(x) for x in lines) + "\n", encoding="utf-8")
+    stats: dict[str, int] = {}
+    decisions = read_receipts(path, stats=stats)
+    assert decisions[0]["route"] == "accept"  # unchanged: the malformed correction was ignored
+    assert "route_before_correction" not in decisions[0]
+    assert stats["dropped_corrections"] == 1
+
+
+def test_correction_with_unhashable_route_is_dropped_not_crash_h8(tmp_path: Any) -> None:
+    # Batch-8 H8: a correction whose route/reason is a list or dict is unhashable; it must be
+    # dropped (counted) rather than raise TypeError and abort the whole report.
+    import json as _json
+
+    from tools.receipts_report import read_receipts
+
+    path = tmp_path / "r.jsonl"
+    lines = [
+        {"kind": "decision", "call_id": "c1", "decision_id": "d1", "route": "accept",
+         "fail_reason": None},
+        {"kind": "commit", "call_id": "c1", "lines": 1},
+        {"kind": "route_correction", "schema_version": 1, "call_id": "c1", "decision_id": "d1",
+         "route": ["ask"], "fail_reason": {}},
+    ]
+    path.write_text("\n".join(_json.dumps(x) for x in lines) + "\n", encoding="utf-8")
+    stats: dict[str, int] = {}
+    decisions = read_receipts(path, stats=stats)  # must not raise
+    assert decisions[0]["route"] == "accept"
+    assert stats["dropped_corrections"] == 1

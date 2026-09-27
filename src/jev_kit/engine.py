@@ -21,7 +21,9 @@ JSON response (schema_version 1):
 from __future__ import annotations
 
 import hashlib
+import json
 import random
+import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -70,7 +72,13 @@ from jev_kit.routing import (
     evaluate_candidate,
     resolve_route,
 )
-from jev_kit.transport import LiveTransport, Transport, TransportFailure, TransportResponse
+from jev_kit.transport import (
+    LiveTransport,
+    Transport,
+    TransportFailure,
+    TransportResponse,
+    parse_retry_after,
+)
 from jev_kit.types import (
     ChoiceAnswer,
     ChoiceQuestion,
@@ -107,7 +115,10 @@ class EngineConfig:
     max_retries: int = 2
     source_allowlist: frozenset[str] = frozenset()
     public_names: frozenset[str] = frozenset()
+    # Reserved. Any non-empty language_profiles is rejected in phase 0 (see effective_contract,
+    # finding H3); a declarative, data-only profile format is tracked as jak-t4l.
     language_profiles: Mapping[str, Callable[[str], str]] = field(default_factory=dict)
+    language_profile_versions: Mapping[str, str] = field(default_factory=dict)
     rate_budget: RateBudget | None = None
     writer: ReceiptWriter | None = None
     attestation_path: str | None = None
@@ -117,14 +128,42 @@ class EngineConfig:
     max_state_question_tokens: int = 12_000  # state plus the longest question (finding C13)
 
 
+def _config_from_env() -> EngineConfig:
+    """Build the engine config for the CLI/hook path from the owner's environment (finding H12).
+
+    A shipped hook needs a way to declare its source allowlist and public names without editing
+    code; without this, run_json always used empty allowlists and any free-text field was
+    egress-blocked, so a hook produced no evidence. Comma-separated lists; blanks are ignored.
+    """
+    import os
+
+    def _set(name: str) -> frozenset[str]:
+        raw = os.environ.get(name, "")
+        return frozenset(item.strip() for item in raw.split(",") if item.strip())
+
+    return EngineConfig(
+        source_allowlist=_set("JEV_KIT_SOURCE_ALLOWLIST"),
+        public_names=_set("JEV_KIT_PUBLIC_NAMES"),
+    )
+
+
 def effective_contract(qset: QuestionSet, config: EngineConfig) -> dict[str, Any]:
     """The full egress contract hashed into question fingerprints: the question set's declared
     schema plus the local effective allowlists and profile identities (finding C07)."""
     contract = egress_contract(qset)
+    # Language profiles (injected Python callables that normalize CODE fields) are not
+    # supported in phase 0. A Python callable cannot be bound to a fingerprint that captures its
+    # behavior: module attributes, substituted builtins, captured subclasses and hash-seeded
+    # iteration all change output without changing any inspectable identity, so a calibrated
+    # threshold could be silently reused after the behavior changed (finding H3). Any configured
+    # profile therefore fails closed. CODE fields stay blocked without a profile. A declarative,
+    # data-only profile format that can be bound by value is tracked as jak-t4l.
+    if config.language_profiles:
+        raise ValidationError(FailReason.CONFIG, "language_profiles_unsupported")
     contract["effective"] = {
         "public_names": sorted(config.public_names),
         "source_allowlist": sorted(config.source_allowlist),
-        "language_profiles": sorted(config.language_profiles),
+        "language_profiles": {},
     }
     return contract
 
@@ -188,6 +227,15 @@ def _send_with_retries(
             return TransportFailure(FailReason.RATE_BUDGET, "budget"), sends
         sends += 1
         result = transport.send(body, deadline)
+        if isinstance(result, TransportResponse) and not 200 <= result.status < 300:
+            # Normalize a raw non-2xx response into the typed failure path before the dispatch
+            # decision, so a raw TransportResponse(429/529/5xx) retries on the same terms as an
+            # equivalent typed rate-limit/overloaded/server failure (finding H19).
+            result = TransportFailure(
+                fail_reason_for_status(result.status),
+                f"http_{result.status}",
+                retry_after=parse_retry_after(result.headers),
+            )
         if isinstance(result, TransportResponse):
             return result, sends
         last = result
@@ -264,6 +312,7 @@ def _record(
         "decision_id": decision_id,
         "question_id": question.question_id,
         "consequence": question.consequence.value,
+        "allow_labels": sorted(question.gate_allow_labels) if question.gate_allow_labels else None,
         "fingerprint": fingerprint,
         "route": route.value,
         "would_route": would.value if would is not None else None,
@@ -307,7 +356,15 @@ def _decide(
     # Provenance is a property of the transport TYPE; an instance attribute cannot override it
     # to claim non-mock and reach accept (finding GATE-01).
     is_mock = type(transport).is_mock
-    if not isinstance(request, Mapping) or request.get("schema_version") != 1:
+    if not isinstance(request, Mapping):
+        return _error_envelope(FailReason.CONFIG)
+    # schema_version must be exactly the integer 1. A bare `!= 1` would accept True and 1.0,
+    # because True == 1 and 1.0 == 1 in Python (finding H18); require the int type exactly.
+    if not _is_schema_version_one(request.get("schema_version")):
+        return _error_envelope(FailReason.CONFIG)
+    # Reject any field the request contract does not define, so a typo or an injected field
+    # cannot ride along unnoticed into a call that then accepts (finding H18).
+    if not set(request.keys()) <= _DECIDE_ALLOWED_FIELDS:
         return _error_envelope(FailReason.CONFIG)
     mode_raw = request.get("mode", Mode.SHADOW.value)
     if mode_raw not in (Mode.SHADOW.value, Mode.ENFORCE.value):
@@ -356,8 +413,11 @@ def _decide(
     reported_tokens: int | None = None
     transforms = {name: spec.kind.value for name, spec in qset.schema.items()}
 
-    if qset.model in ("jev-latest", "jev-preview"):
-        whole_fail = FailReason.CONFIG  # aliases are refused (spec story 28)
+    if not _is_pinned_model(qset.model):
+        # A pinned, immutable, fully versioned model id is required. This refuses the moving
+        # aliases jev-latest/jev-preview AND a bare or partially versioned id like "jev" or
+        # "jev-1" that could resolve to different models over time (finding H22, spec story 28).
+        whole_fail = FailReason.CONFIG
 
     registry: dict[str, RegistryEntry] = {}
     if whole_fail is None:
@@ -437,16 +497,26 @@ def _decide(
                 # Evidence that arrived after the deadline is discarded (finding C02).
                 whole_fail = FailReason.TIMEOUT
             else:
-                server_request_id = validate_metadata_id(
-                    result.headers.get("x-typesafe-request-id", ""), "server_request_id"
+                # Remote metadata is a separate egress channel: scan it for secret shapes and
+                # drop anything unsafe before it can reach a record or receipt (finding H6). A
+                # charset-valid id (AKIA..., a JWT) would otherwise persist verbatim.
+                server_request_id = _safe_metadata(
+                    result.headers.get("x-typesafe-request-id", "")
                 )
                 body = _parse_response_body(result.body)
-                served_model = body.get("model") if isinstance(body, dict) else None
+                raw_served_model = body.get("model") if isinstance(body, dict) else None
                 usage = body.get("usage") if isinstance(body, dict) else None
                 tok = usage.get("input_tokens") if isinstance(usage, dict) else None
                 if isinstance(tok, int) and not isinstance(tok, bool):
                     reported_tokens = tok
-                if served_model != qset.model:
+                # The pin check compares the raw served model; a mismatch (including a
+                # secret-shaped value that can never equal the pinned id) fails the call. Either
+                # way the value stored/returned is the scanned, safe form, never the raw one
+                # (finding H6: a rejected served model must not appear in records).
+                served_model = _safe_metadata(
+                    raw_served_model if isinstance(raw_served_model, str) else None
+                )
+                if raw_served_model != qset.model:
                     whole_fail = FailReason.MODEL_MISMATCH
                 else:
                     answers = validate_answer_set(qset.questions, body.get("answers"))
@@ -506,10 +576,48 @@ def _decide(
             )
         )
 
+    # A decision that only became an accept after the deadline passed (for example because the
+    # response or receipt work overran) must not be returned as accept (finding H8/C02). Recheck
+    # expiry before receipts, so the downgraded route is what is both recorded and returned.
+    if deadline.expired():
+        for rec in records:
+            if rec["route"] == Route.ACCEPT.value:
+                is_gate = rec["consequence"] == ConsequenceClass.GATE.value
+                rec["route"] = Route.ASK.value if is_gate else Route.NO_ADVICE.value
+                rec["fail_reason"] = FailReason.TIMEOUT.value
+
     _write_receipts(
         writer, records, call_id, set_digest, qset, served_model, sent_digest, action_id,
         est_tokens, reported_tokens, server_request_id, transforms,
     )
+
+    # Re-check expiry AFTER the receipt write: the write itself can overrun the total deadline
+    # (a slow writer), and an accept that only completed past the deadline must not be returned
+    # (finding H8/C02). Downgrade any surviving accept and record a durable correction so the
+    # receipt's final state for that decision matches the returned route.
+    if deadline.expired():
+        for rec in records:
+            if rec["route"] == Route.ACCEPT.value:
+                is_gate = rec["consequence"] == ConsequenceClass.GATE.value
+                rec["route"] = Route.ASK.value if is_gate else Route.NO_ADVICE.value
+                rec["fail_reason"] = FailReason.TIMEOUT.value
+                corrected = writer.append_correction(
+                    {
+                        "kind": "route_correction",
+                        "schema_version": RECEIPT_SCHEMA_VERSION,
+                        "timestamp": _now_iso(),
+                        "call_id": call_id,
+                        "decision_id": rec["decision_id"],
+                        "route": rec["route"],
+                        "fail_reason": FailReason.TIMEOUT.value,
+                        "reason_detail": "deadline_expired_during_receipt_write",
+                    }
+                )
+                if not corrected:
+                    # The correction could not be persisted, so the durable record still shows
+                    # the original accept while we return a downgraded route. Report the receipt
+                    # as not written rather than claim a truthful record exists (finding H8).
+                    rec["receipt_written"] = False
     return {"schema_version": SCHEMA_VERSION, "status": "ok", "records": records}
 
 
@@ -613,10 +721,18 @@ def run_json(request: dict[str, Any], *, transport: Transport | None = None) -> 
     for runtime conditions; a caught exception becomes an internal error envelope.
     """
     try:
-        config = EngineConfig()
-        op = request.get("op", "decide") if isinstance(request, dict) else None
+        config = _config_from_env()
+        if not isinstance(request, dict):
+            return _error_envelope(FailReason.CONFIG)
+        op = request.get("op", "decide")
         if op == "record_outcome":
-            # An outcome operation needs no transport (finding C21).
+            # An outcome operation needs no transport (finding C21). Its envelope is validated
+            # on the same strict terms as a decide request (finding H18): exact integer version,
+            # allowed fields only, before anything is recorded.
+            if not _is_schema_version_one(request.get("schema_version")):
+                return _error_envelope(FailReason.CONFIG)
+            if not set(request.keys()) <= _OUTCOME_ALLOWED_FIELDS:
+                return _error_envelope(FailReason.CONFIG)
             ok = record_outcome(
                 str(request.get("decision_id", "")),
                 str(request.get("outcome", "")),
@@ -624,19 +740,33 @@ def run_json(request: dict[str, Any], *, transport: Transport | None = None) -> 
             )
             return {"schema_version": SCHEMA_VERSION, "status": "ok" if ok else "error",
                     "recorded": ok, "records": []}
+        if op == "decide_batch":
+            # Validate the batch envelope before dispatch, so a bad version or an unknown field
+            # cannot ride along and still send (finding H18). Each inner request is then
+            # validated by _decide on its own terms.
+            if not _is_schema_version_one(request.get("schema_version")):
+                return _error_envelope(FailReason.CONFIG)
+            if not set(request.keys()) <= _BATCH_ALLOWED_FIELDS:
+                return _error_envelope(FailReason.CONFIG)
+            reqs = request.get("requests")
+            if not isinstance(reqs, list):
+                return _error_envelope(FailReason.CONFIG)
+            if transport is None:
+                api_key = config.api_key or secrets.resolve_api_key(
+                    timeout=config.deadline_seconds
+                )
+                if api_key is None:
+                    return _error_envelope(FailReason.CONFIG)
+                transport = LiveTransport(api_key)
+            results = decide_batch(reqs, transport=transport, config=config)
+            return {"schema_version": SCHEMA_VERSION, "status": "ok", "results": results}
+        if op != "decide":
+            return _error_envelope(FailReason.CONFIG)
         if transport is None:
             api_key = config.api_key or secrets.resolve_api_key(timeout=config.deadline_seconds)
             if api_key is None:
                 return _error_envelope(FailReason.CONFIG)
             transport = LiveTransport(api_key)
-        if op == "decide_batch":
-            reqs = request.get("requests")
-            if not isinstance(reqs, list):
-                return _error_envelope(FailReason.CONFIG)
-            results = decide_batch(reqs, transport=transport, config=config)
-            return {"schema_version": SCHEMA_VERSION, "status": "ok", "results": results}
-        if op != "decide":
-            return _error_envelope(FailReason.CONFIG)
         return _decide(request, transport, config)
     except ValidationError as exc:
         return _error_envelope(exc.reason)
@@ -698,8 +828,9 @@ def record_outcome(decision_id: str, outcome_code: str, action_id: str | None = 
         validate_action_id(decision_id)
     except ValidationError:
         return False
-    if decision_id not in _committed_decisions:
-        # An outcome must reference a decision committed in this process (finding C16).
+    if decision_id not in _committed_decisions and not _decision_committed_on_disk(decision_id):
+        # An outcome must reference a decision with a committed receipt, in this process or a
+        # prior one (finding H11): the in-memory set is a fast path, disk is the durable check.
         return False
     line = {
         "kind": "outcome",
@@ -713,3 +844,74 @@ def record_outcome(decision_id: str, outcome_code: str, action_id: str | None = 
 
 
 _OUTCOME_CODES = frozenset({"applied", "not_applied", "overridden_by_host", "overridden_by_human"})
+
+# The fields a decide request may carry; anything else is rejected before egress (finding H18).
+_DECIDE_ALLOWED_FIELDS = frozenset(
+    {"schema_version", "op", "question_set", "question_set_path", "state", "mode", "action_id"}
+)
+_BATCH_ALLOWED_FIELDS = frozenset({"schema_version", "op", "requests"})
+_OUTCOME_ALLOWED_FIELDS = frozenset(
+    {"schema_version", "op", "decision_id", "outcome", "action_id"}
+)
+
+
+def _is_schema_version_one(value: Any) -> bool:
+    """True only for the exact integer 1. bool and float 1.0 are rejected (finding H18)."""
+    return type(value) is int and value == 1
+
+
+# A pinned, immutable, fully versioned Jev model id, e.g. "jev-1.13.0". Matched with fullmatch
+# over an ASCII-only grammar: `$` would accept a trailing newline and `\d` would admit non-ASCII
+# digits, either of which could smuggle a distinct id past the pin (finding H22, spec story 28).
+# A moving alias (jev-latest/jev-preview) or a partial id (jev, jev-1) is refused too.
+_PINNED_MODEL_RE = re.compile(r"jev-[0-9]+\.[0-9]+\.[0-9]+")
+
+
+def _is_pinned_model(model: str) -> bool:
+    return _PINNED_MODEL_RE.fullmatch(model) is not None
+
+
+def _decision_committed_on_disk(decision_id: str) -> bool:
+    """True if a committed decision receipt with this id exists in the receipts directory.
+
+    Scans this process's and prior processes' receipt files, honoring the per-call commit
+    marker so a decision in a truncated (uncommitted) batch does not count (finding H11).
+    """
+    from jev_kit.receipts import receipts_dir
+
+    try:
+        files = sorted(receipts_dir().glob("*.jsonl"))
+    except OSError:
+        return False
+    for path in files:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        target_call_ids: set[str] = set()
+        per_call_lines: dict[str, int] = {}
+        for raw in lines:
+            try:
+                rec = json.loads(raw)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            kind = rec.get("kind")
+            call_id = rec.get("call_id")
+            if kind == "decision" and isinstance(call_id, str):
+                per_call_lines[call_id] = per_call_lines.get(call_id, 0) + 1
+                if rec.get("decision_id") == decision_id:
+                    target_call_ids.add(call_id)
+            elif kind == "commit" and call_id in target_call_ids:
+                # The decision's own call must be committed AND the marker's line count must
+                # match the decision lines actually seen for that call; a malformed or wrong
+                # count is a truncated/corrupt batch and does not count (finding H11 MAJOR-2).
+                lines_field = rec.get("lines")
+                if (
+                    isinstance(lines_field, int)
+                    and not isinstance(lines_field, bool)
+                    and lines_field == per_call_lines.get(call_id, 0)
+                ):
+                    return True
+    return False

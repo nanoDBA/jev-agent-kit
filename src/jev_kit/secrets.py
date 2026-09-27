@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import json
 import os
 import subprocess
+import threading
+import time
 
 from jev_kit.errors import FailReason, ValidationError
 
@@ -27,6 +30,11 @@ def _run_key_command(spec: str, timeout: float) -> str:
         raise ValidationError(FailReason.CONFIG, "key_command_not_json") from None
     if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
         raise ValidationError(FailReason.CONFIG, "key_command_not_argv")
+    budget = max(0.1, timeout)
+    # One absolute monotonic deadline spans process start, the bounded read AND the exit wait, so
+    # a child that delays, closes stdout, then delays again cannot consume the budget twice and
+    # overrun it (finding H20). Each phase gets only the time left until this instant.
+    end = time.monotonic() + budget
     proc = None
     try:
         proc = subprocess.Popen(  # shell=False by construction; argv is a validated list
@@ -36,18 +44,44 @@ def _run_key_command(spec: str, timeout: float) -> str:
             shell=False,
         )
         assert proc.stdout is not None
-        # Read at most one byte past the cap, so an overflowing command is rejected rather
-        # than buffered without bound (finding C18).
-        raw: bytes = proc.stdout.read(_MAX_KEY_OUTPUT + 1)
-        proc.wait(timeout=max(0.1, timeout))
+        # The bounded read is itself run under the deadline. A plain proc.stdout.read() can
+        # block forever when the child writes less than the cap but never closes stdout (for
+        # example a lingering grandchild holding the pipe), so a later wait(timeout=...) would
+        # never be reached and the deadline would not bind (finding H20). Reading in a thread and
+        # joining until the shared deadline enforces the timeout across the read, while still
+        # capping the buffer at one byte past the limit.
+        stdout = proc.stdout
+        box: dict[str, bytes] = {}
+
+        def _read() -> None:
+            # errors are surfaced by an absent result key, never by leaking anything
+            with contextlib.suppress(OSError, ValueError):
+                box["raw"] = stdout.read(_MAX_KEY_OUTPUT + 1)
+
+        reader = threading.Thread(target=_read, daemon=True)
+        reader.start()
+        reader.join(max(0.0, end - time.monotonic()))
+        if reader.is_alive() or "raw" not in box:
+            raise subprocess.TimeoutExpired(argv[0], budget)
+        raw = box["raw"]
+        # Check the size cap before waiting for exit: a flooding child blocks on a full pipe once
+        # we stop reading and would never exit, so an unbounded command must be rejected here as
+        # too-large rather than masked as a wait timeout (finding H20).
+        if len(raw) > _MAX_KEY_OUTPUT:
+            _terminate(proc)
+            raise ValidationError(FailReason.CONFIG, "key_command_output_too_large")
+        proc.wait(timeout=max(0.0, end - time.monotonic()))
+        # Even when the read and wait each completed, they may have completed only AFTER the
+        # absolute deadline (a slow process start, or the reader thread scheduled late). A
+        # secret produced past the deadline must not be returned as a success (finding H20).
+        if time.monotonic() > end:
+            raise subprocess.TimeoutExpired(argv[0], budget)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         _terminate(proc)
         # No `from` clause: nothing about the command or its output reaches the error.
         raise ValidationError(FailReason.CONFIG, "key_command_failed") from None
     if proc.returncode != 0:
         raise ValidationError(FailReason.CONFIG, "key_command_exit")
-    if len(raw) > _MAX_KEY_OUTPUT:
-        raise ValidationError(FailReason.CONFIG, "key_command_output_too_large")
     out = raw.decode("utf-8", errors="replace").strip()
     if not out:
         raise ValidationError(FailReason.CONFIG, "key_command_empty")

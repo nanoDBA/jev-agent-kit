@@ -175,6 +175,27 @@ class ReceiptWriter:
             _best_effort_log("receipt append_outcome failed for %s", str(self.path))
             return False
 
+    def append_correction(self, correction_line: dict[str, Any]) -> bool:
+        """Append one route-correction line, durably (finding H8).
+
+        A correction supersedes an already-committed decision whose accept became invalid after
+        the total deadline passed (for example because the receipt write itself overran). The
+        durable file's final state for that decision is the correction, so the receipt and the
+        returned route stay in agreement. Returns ``False`` on any failure, like write_call.
+        """
+        try:
+            with self._lock:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                with self.path.open("a", encoding="utf-8") as handle:
+                    handle.write(_dump_line(correction_line))
+                    handle.write("\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            return True
+        except (OSError, ValueError):
+            _best_effort_log("receipt append_correction failed for %s", str(self.path))
+            return False
+
 
 _default_writer: ReceiptWriter | None = None
 _default_writer_lock = threading.Lock()

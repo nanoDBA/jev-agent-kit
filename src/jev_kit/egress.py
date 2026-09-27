@@ -23,10 +23,12 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 from jev_kit.errors import FailReason, ValidationError
@@ -121,52 +123,90 @@ def _mask_contacts(text: str) -> str:
     return text
 
 
-# Unquoted key=value pairs, e.g. "tenant=acme host=db01" (finding C05). Quoted spans are
-# already reduced to <v> above, so this only needs to catch what quoting missed. The value
-# side is an identifier token, never a literal 'v', so it is always masked (GATE-03).
-_KV_PATTERN = re.compile(r"(?<![\w.-])([A-Za-z_][\w.-]*)=(\S+)")
+# The only log tokens kept verbatim: recognized severity/level keywords. Everything else in a
+# free-form log line is a potential identifier (a hostname like db01, a username like JaneDoe, a
+# tenant, a path), and without a declared template we cannot tell a template word from data, so
+# it is masked rather than guessed at (finding H17; ADR 0002 Tier 2 / story 44). Richer log
+# support (declared safe templates / structured fields) is a separate, later capability.
+_LOG_LEVELS = frozenset(
+    {
+        "error", "err", "warn", "warning", "info", "information", "debug", "trace", "fatal",
+        "critical", "crit", "notice", "alert", "emerg", "emergency", "verbose", "log",
+    }
+)
 
-# A bare identifier with no key= prefix and no quoting, e.g. the hostname in "connect to
-# internal-db failed" (finding GATE-03). Logs are reduced to codes and templates, so any
-# hyphen-joined slug of two or more alphanumeric segments is masked even when nothing marks
-# it as a value.
-_BARE_IDENTIFIER = re.compile(r"\b[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+\b")
+
+def _is_log_safe_token(token: str) -> bool:
+    # Only already-inserted placeholders and recognized level keywords survive. A bare number is
+    # NOT presumed a safe code or count: a free-form log has no declared template telling a
+    # status code from a numeric password or account id, so numbers are masked too (finding
+    # H17). Numbers survive only through a future explicitly-safe structured/template contract.
+    if token in ("<v>", "<contact>"):
+        return True
+    core = token.strip(":=[](){}.,;\"'")
+    return core.lower() in _LOG_LEVELS
 
 
 def _reduce_log(text: str) -> str:
+    # First reduce the structured parts (quoted spans and contacts) to placeholders, then keep
+    # only safe tokens and mask every other token; runs of masked tokens collapse to one <v>.
     text = re.sub(r"'[^']*'", "<v>", text)
     text = re.sub(r'"[^"]*"', "<v>", text)
-    text = _KV_PATTERN.sub(r"\1=<v>", text)
-    text = _BARE_IDENTIFIER.sub("<v>", text)
-    return _mask_contacts(text)
+    text = _mask_contacts(text)
+    out: list[str] = []
+    for token in text.split():
+        masked = token if _is_log_safe_token(token) else "<v>"
+        if masked == "<v>" and out and out[-1] == "<v>":
+            continue  # collapse consecutive masked tokens
+        out.append(masked)
+    return " ".join(out)
 
 
-# A leading environment assignment before the command word, e.g. "REVIEW_TOKEN=PRIVATE tool"
-# (finding GATE-02). One or more of these are dropped in full, name and value alike.
-_ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# A leading variable assignment before the command word: a POSIX "REVIEW_TOKEN=PRIVATE tool"
+# (finding GATE-02) or a shell variable form ("$env:TOKEN=..." in PowerShell, "$TOKEN=..."). One
+# or more of these are dropped in full, name and value alike.
+_ENV_ASSIGNMENT = re.compile(r"^(?:\$env:|\$)?[A-Za-z_][A-Za-z0-9_]*=")
 
+# Compound, redirecting or substituting shell syntax: a semicolon, pipe, background/and/or,
+# redirect, backtick or "$(" substitution. Such a line names more than one command or a data
+# sink, so it cannot be reduced to a single safe command word and is blocked (finding H16). This
+# is dialect-neutral: it holds for POSIX shells, cmd.exe and PowerShell alike.
+_CMD_CONTROL = re.compile(r"[;&|<>`\n]|\$\(")
+
+# A backslash that escapes whitespace, or a trailing backslash (line continuation): both join
+# tokens across a whitespace split and are rejected (finding H16). A backslash followed by a
+# non-whitespace path character (a Windows path) does not match.
+_CMD_ESCAPE = re.compile(r"\\(\s|$)")
 
 def _reduce_command(text: str) -> str:
-    # Keep the command NAME and bare flag names only; nothing else survives (finding GATE-02):
-    # - leading "NAME=VALUE" environment assignments are dropped entirely, not just their value
-    # - the command word itself is reduced to its basename, dropping any directory path
-    # - a long flag ("--tenant=PRIVATE") keeps only its name, the '=value' is stripped
-    # - a short flag with an attached value ("-pPRIVATE") keeps only the flag letter
-    # - every positional argument token is dropped entirely rather than kept as-is
+    # Emit ONLY the command basename; every argument token is dropped (finding H16). Without a
+    # per-command option-arity grammar we cannot tell a flag name from an option's argument
+    # value: "git -C --PRIVATE_CUSTOMER ..." feeds --PRIVATE_CUSTOMER to -C as a directory, so a
+    # token starting with a dash is not proof of a flag. Rather than guess, we keep nothing after
+    # the command word. A declared safe option grammar that could retain known flags is deferred
+    # (tracked as a follow-up). Compound/redirecting, quoted and escaped inputs are rejected
+    # first, since even the command word cannot be located unambiguously in them.
+    if _CMD_CONTROL.search(text):
+        raise ValidationError(FailReason.EGRESS_BLOCKED, "command_compound_unsupported")
+    if '"' in text or "'" in text:
+        raise ValidationError(FailReason.EGRESS_BLOCKED, "command_quoting_unsupported")
+    # A backslash before whitespace (escaped space) or at end of a token (line continuation)
+    # joins tokens across the whitespace split, so it is rejected; a Windows path backslash
+    # (followed by a path character, not whitespace) is unaffected.
+    if _CMD_ESCAPE.search(text):
+        raise ValidationError(FailReason.EGRESS_BLOCKED, "command_escape_unsupported")
     tokens = text.split()
     idx = 0
     while idx < len(tokens) and _ENV_ASSIGNMENT.match(tokens[idx]):
         idx += 1
     if idx >= len(tokens):
         return ""
+    # Command word: basename only, dropping any POSIX or Windows directory path. If anything odd
+    # survives (a quote or '='), emit a placeholder rather than a guess.
     name = tokens[idx].replace("\\", "/").rsplit("/", 1)[-1]
-    kept = [name]
-    for tok in tokens[idx + 1 :]:
-        if tok.startswith("--"):
-            kept.append(tok.split("=", 1)[0])
-        elif tok.startswith("-") and len(tok) > 1:
-            kept.append(tok[:2])
-    return " ".join(kept)
+    if not name or any(ch in name for ch in "'\"="):
+        name = "<command>"
+    return name
 
 
 def _require_named_source(params: Mapping[str, Any], ctx: EgressContext) -> None:
@@ -246,19 +286,43 @@ def _transform_value(value: Any, spec: FieldSpec, ctx: EgressContext, depth: int
         if len(value) > MAX_POSITIONAL_LIST:
             # Positional arrays are capped tighter than keyed collections (finding C13).
             raise ValidationError(FailReason.EGRESS_BLOCKED, "positional_list_too_long")
-        return [_transform_value(item, spec, ctx, depth + 1) for item in value]
+        # Only a flat collection of scalars is allowed; a nested container would carry
+        # undeclared descendants (finding H4/C04). The schema is flat, so there is no path to
+        # declare them.
+        return [_transform_value(_reject_nested(item), spec, ctx, depth + 1) for item in value]
     if isinstance(value, dict):
         if spec.kind is ContentKind.METRIC:
             raise ValidationError(FailReason.EGRESS_BLOCKED, "metric_value")
+        # Only an IDENTIFIER field authorizes a keyed collection, because only there are the keys
+        # themselves transformed (tokenized). For any other kind the keys are undeclared
+        # descendants that no schema covers and would ship verbatim, so a keyed object is refused
+        # rather than best-effort masked (finding H4, story 40).
+        if spec.kind is not ContentKind.IDENTIFIER:
+            raise ValidationError(FailReason.EGRESS_BLOCKED, "undeclared_child_object")
         if len(value) > MAX_LIST:
             raise ValidationError(FailReason.EGRESS_BLOCKED, "object_too_large")
         out: dict[str, Any] = {}
         for key, item in value.items():
             if not isinstance(key, str) or not _SAFE_KEY.match(key):
                 raise ValidationError(FailReason.EGRESS_BLOCKED, "unsafe_object_key")
-            out[key] = _transform_value(item, spec, ctx, depth + 1)
+            # A collection key under an IDENTIFIER field is itself an identifier and would leak
+            # verbatim otherwise, so it is tokenized on the same terms as a value (finding H4).
+            # For other kinds the key is a structural label kept as a safe identifier.
+            out_key = (
+                _transform_scalar(ContentKind.IDENTIFIER, key, spec.params, ctx)
+                if spec.kind is ContentKind.IDENTIFIER
+                else key
+            )
+            out[out_key] = _transform_value(_reject_nested(item), spec, ctx, depth + 1)
         return out
     raise ValidationError(FailReason.EGRESS_BLOCKED, "unsupported_value_type")
+
+
+def _reject_nested(item: Any) -> Any:
+    """A collection element must be a scalar; an undeclared nested container is blocked (H4)."""
+    if isinstance(item, (dict, list)):
+        raise ValidationError(FailReason.EGRESS_BLOCKED, "undeclared_nested_container")
+    return item
 
 
 def transform_state(
@@ -322,7 +386,11 @@ _DETECTORS: list[tuple[str, re.Pattern[str]]] = [
     ("azure_sas", re.compile(r"[?&]sig=[A-Za-z0-9%/+]{20,}")),  # Purview: Azure SAS/storage key
     # Purview / gitleaks: bearer and basic HTTP Authorization headers (finding C06 extends
     # this from bearer-only to also match Basic).
-    ("authorization_header", re.compile(r"(?i)authorization\s*[:=]\s*(?:bearer|basic)\s+\S+")),
+    # The separator class tolerates the quotes/colon and any run of whitespace of JSON-embedded
+    # auth, e.g. {"Authorization":        "Basic dTpw"} (finding H15), as well as a plain header.
+    # It is a single character class with an unbounded but non-overlapping `+`, so there is no
+    # length cutoff to bypass and no backtracking ambiguity (linear scan).
+    ("authorization_header", re.compile(r"(?i)authorization[\"'\s:=]+(?:bearer|basic)\s+\S+")),
     # GATE-04: the same bearer/basic credential shape, but without requiring the literal word
     # "authorization" nearby. JSON serialization puts a quote between the key and its value
     # (e.g. {"authorization": "Basic <b64>"}), which breaks the rule above; scanning each
@@ -356,14 +424,166 @@ _DETECTORS: list[tuple[str, re.Pattern[str]]] = [
 _CONNSTR = re.compile(
     r"(?i)(?:password|pwd)\s*=\s*(?:'([^']*)'|\"([^\"]*)\"|([^;\"'\s]+))"
 )
+
+# The single authoritative set of STRONG-secret key names: a value under one of these is a leak
+# whatever its shape (finding H15). Both the JSON-text detector below and the structural pair
+# scan (_scan_auth_pairs, on real decoded dicts) derive from this one set so they can never
+# drift apart and leave a key covered by one but not the other.
+_STRONG_SECRET_NAMES = frozenset(
+    {
+        "password", "passwd", "pwd", "secret", "client_secret", "secret_key", "private_key",
+        "access_token", "id_token", "refresh_token", "api_key", "api-key", "apikey", "x-api-key",
+    }
+)
+
+# A structured (JSON-style) strong-secret key mapped to a value, e.g. {"password":"x"},
+# {"private_key":"..."} or a NUMERIC {"password":123456}, embedded in a free-text string that the
+# structural pair scan cannot look inside. Weak indicators (authorization, token) are NOT here:
+# they still need a credential shape and are handled by _scan_auth_pairs, so a benign
+# {"authorization":"none"} is not flagged. Group 1 (a quoted string value) is checked against the
+# placeholder set; group 2 (a numeric or true/false literal) is always a leak.
+_JSON_SECRET_KV = re.compile(
+    r'(?i)"(?:'
+    + "|".join(re.escape(k) for k in sorted(_STRONG_SECRET_NAMES, key=len, reverse=True))
+    + r')"\s*:\s*(?:"([^"]*)"|(-?[0-9][0-9.eE+-]*|true|false))'
+)
+
+# JSON string escapes that can obfuscate an embedded credential in a free-text value: a
+# \uXXXX unicode escape (e.g. "Authorization") or an escaped quote (e.g. \"password\").
+# scan_text scans a de-escaped copy so these forms are still caught (finding H15).
+_JSON_ESCAPE = re.compile(r'\\(["\\/bfnrt]|u[0-9a-fA-F]{4})')
+
+# Every JSON short escape (RFC 8259 section 7), so an escaped tab/newline separator between a
+# key and its value cannot hide an embedded credential (finding H15).
+_JSON_ESCAPE_SIMPLE = {
+    '"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t",
+}
+
+
+def _deescape_json(text: str) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        body = match.group(1)
+        if body[0] == "u":
+            return chr(int(body[1:], 16))
+        return _JSON_ESCAPE_SIMPLE.get(body, body)
+
+    return _JSON_ESCAPE.sub(_replace, text)
 _PAN_CANDIDATE = re.compile(r"\b(?:\d[ -]?){13,19}\b")  # PCI DSS v4.0.1 3.3.1: Luhn-valid PANs
+
+# A whole value that is an HTTP auth scheme plus a single credential token, e.g. "Basic dTpw",
+# "Bearer x" or "Bearer a~b". Matched as the ENTIRE string (scheme then exactly one non-space
+# token) so an ordinary sentence ("Bearer of bad news", several words) does not trip it, but any
+# single-token credential does, with no minimum length or charset loophole (finding H15).
+# scan_request scans each decoded value on its own, so {"Authorization": "Basic dTpw"} is caught
+# even when the key and value are separate JSON strings.
+_AUTH_SCHEME_VALUE = re.compile(r"(?i)^(?:basic|bearer)\s+\S+$")
 
 
 def scan_text(text: str) -> str | None:
-    """Return the id of the first Tier 1 rule that matches, or None."""
+    """Return the id of the first Tier 1 rule that matches, or None.
+
+    The text is scanned as given and, when it contains JSON unicode escapes, also in a
+    de-escaped form so an obfuscated credential key or scheme cannot slip past (finding H15).
+    """
+    return _scan_text(text, 0)
+
+
+def _scan_text(text: str, depth: int) -> str | None:
+    hit = _scan_text_once(text)
+    if hit is not None:
+        return hit
+    candidates = [text]
+    if "\\" in text:
+        deescaped = _deescape_json(text)
+        if deescaped != text:
+            hit = _scan_text_once(deescaped)
+            if hit is not None:
+                return hit
+            candidates.append(deescaped)
+    # Structural pass: a value that is itself a JSON document is parsed (bounded) and checked
+    # with the same structural credential rules as real request objects, so any JSON
+    # representation (signed/exponent numbers, escapes, arbitrary whitespace) is judged by
+    # meaning rather than by one regex spelling (finding H15).
+    for candidate in candidates:
+        hit = _scan_embedded_json(candidate, depth)
+        if hit is not None:
+            return hit
+    return None
+
+
+_MAX_EMBEDDED_JSON = 65_536
+
+# How many layers of JSON-inside-a-JSON-string the scanner decodes. Deeper encoding fails
+# closed rather than being passed unscanned (finding H15).
+_MAX_JSON_LAYERS = 4
+
+
+def _scan_embedded_json(text: str, depth: int = 0) -> str | None:
+    stripped = text.strip()
+    # A JSON document can have an object, array OR string root. A string root ("...") is itself
+    # an encoding layer (json.dumps of a JSON document), so it is decoded and rescanned under
+    # the same layer budget rather than skipped (finding H15).
+    if not stripped or stripped[0] not in '{["' or len(stripped) > _MAX_EMBEDDED_JSON:
+        return None
+    if depth >= _MAX_JSON_LAYERS:
+        return "embedded_json_too_deep"
+    if stripped[0] == '"':
+        try:
+            inner = json.loads(stripped)
+        except (ValueError, RecursionError):
+            return None
+        return _scan_text(inner, depth + 1) if isinstance(inner, str) else None
+    try:
+        parsed = json.loads(stripped, object_pairs_hook=_pairs_rejecting_duplicates)
+    except _DuplicateEmbeddedKey:
+        # Ordinary json.loads keeps only the LAST duplicate member, so an earlier credential
+        # hidden behind a padded duplicate key would be scanned away while the outgoing string
+        # still carries it. A duplicate (after trimming/case-folding) fails closed (H15).
+        return "embedded_json_duplicate_key"
+    except (ValueError, RecursionError):
+        return None
+    try:
+        hit = _scan_auth_pairs(parsed)
+        if hit is not None:
+            return hit
+        # A string leaf may itself be JSON-encoded ({"payload": "{\" password \": \"x\"}"}),
+        # which the structural pass above sees only as an opaque string. Every decoded key and
+        # string leaf is rescanned one layer deeper, under the shared layer limit (H15).
+        for leaf in _walk_strings(parsed):
+            hit = _scan_text(leaf, depth + 1)
+            if hit is not None:
+                return hit
+        return None
+    except RecursionError:
+        return "embedded_json_too_deep"  # fail closed on pathological nesting
+
+
+class _DuplicateEmbeddedKey(Exception):
+    pass
+
+
+def _pairs_rejecting_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    seen: set[str] = set()
+    for key, _ in pairs:
+        normalized = key.strip().lower()
+        if normalized in seen:
+            raise _DuplicateEmbeddedKey
+        seen.add(normalized)
+    return dict(pairs)
+
+
+def _scan_text_once(text: str) -> str | None:
     for rule_id, pattern in _DETECTORS:
         if pattern.search(text):
             return rule_id
+    if _AUTH_SCHEME_VALUE.match(text.strip()):
+        return "authorization_scheme_value"
+    for match in _JSON_SECRET_KV.finditer(text):
+        string_value, literal_value = match.group(1), match.group(2)
+        if literal_value is not None:  # a numeric or true/false value is always a leak
+            return "structured_credential"
+        if string_value is not None and not _is_placeholder(string_value):
+            return "structured_credential"
     for match in _CONNSTR.finditer(text):
         value = next((g for g in match.groups() if g is not None), "")
         if not _is_placeholder(value):
@@ -394,19 +614,20 @@ def _walk_strings(obj: Any) -> list[str]:
 # single string contains both the auth indicator and the token. These names mark either side of
 # that split: a dict key equal to one of them, or a sibling string value equal to one of them
 # (e.g. {"h": "Authorization", "v": "<token>"}, where "h"'s value names the header generically).
-_AUTH_INDICATOR_NAMES = frozenset(
+# Strong indicators name a field whose value IS the secret: a value paired with one of these is
+# blocked whatever its shape, because a password or client secret can be short, lowercase, or an
+# ordinary word and would slip past the token-shape heuristic (finding H15). Only a documented
+# redaction placeholder is exempt.
+# Weak indicators name a field that often but not always carries a token, so a value there is
+# blocked only when it also has a credential shape (finding GATE-04). _STRONG_SECRET_NAMES (the
+# authoritative set) is defined once with the JSON-text detector above.
+_AUTH_INDICATOR_NAMES = _STRONG_SECRET_NAMES | frozenset(
     {
         "authorization",
         "auth",
         "bearer",
         "basic",
         "token",
-        "access_token",
-        "id_token",
-        "refresh_token",
-        "api_key",
-        "apikey",
-        "x-api-key",
         "credential",
         "credentials",
     }
@@ -429,9 +650,40 @@ def _looks_like_credential(value: str) -> bool:
     return has_digit or has_mixed_case or has_symbol
 
 
+def _is_nonempty_secret_scalar(value: Any) -> bool:
+    """True for a non-empty, non-placeholder scalar value under a strong-secret key (H15).
+
+    Covers strings and numbers (bool included): a numeric password is still a secret. None,
+    empty/whitespace strings and documented redaction placeholders are not treated as leaks.
+    """
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, (int, float)):
+        return True
+    if isinstance(value, str):
+        return value.strip() != "" and not _is_placeholder(value)
+    if isinstance(value, (list, tuple, dict)):
+        # A container under a strong-secret key ({"password": ["x"]} or {"password": {"v": "x"}})
+        # carries the secret one level down; recursion alone would lose the parent's secret
+        # context, so any non-empty container here is a leak (finding H15).
+        return len(value) > 0
+    return False
+
+
 def _scan_auth_pairs(obj: Any) -> str | None:
-    """Find a high-entropy token adjacent to an auth indicator key (finding GATE-04)."""
+    """Find a secret adjacent to an auth indicator key (findings GATE-04, H15)."""
     if isinstance(obj, dict):
+        # A value directly under a strong-secret key is blocked whatever its shape (H15): a
+        # short or lowercase password, or a NUMERIC one (e.g. {"password": 123456}), would pass
+        # the string-only / credential-shape heuristics otherwise. Any non-empty, non-placeholder
+        # scalar value counts.
+        for key, value in obj.items():
+            if (
+                isinstance(key, str)
+                and key.strip().lower() in _STRONG_SECRET_NAMES
+                and _is_nonempty_secret_scalar(value)
+            ):
+                return "auth_credential"
         has_indicator_key = any(
             isinstance(key, str) and key.strip().lower() in _AUTH_INDICATOR_NAMES
             for key in obj
@@ -472,3 +724,60 @@ def scan_request(serialized: bytes, decoded: Any) -> str | None:
         if hit is not None:
             return hit
     return _scan_auth_pairs(decoded)
+
+
+# --------------------------------------------------------------------------- policy identity
+
+
+def _compute_transform_digest() -> str:
+    """A deterministic digest of the shipped egress transform/detector implementation (H3).
+
+    The fingerprint that thresholds calibrate against must change whenever transform or
+    detection logic changes (story 69), AND must stay identical for unchanged code across
+    processes, or a same-revision registry would never match again. We therefore hash the
+    shipped source artifact itself, with line endings normalized so CRLF and LF checkouts of the
+    same revision agree. It is deliberately conservative: any edit to this module (even a
+    comment) invalidates prior calibration, which is safe. If the source is unavailable (a
+    bytecode-only install) we fall back to a canonical, address-free walk of the code objects.
+    """
+    try:
+        source = Path(__file__).read_bytes()
+    except OSError:
+        return _canonical_module_code_digest()
+    return _source_digest(source)
+
+
+def _source_digest(source: bytes) -> str:
+    normalized = source.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return "src:" + hashlib.sha256(normalized).hexdigest()[:28]
+
+
+def _canonical_code(code: Any, digest: Any) -> None:
+    # Bytecode, names and constants, recursing into nested code objects instead of using their
+    # repr (which embeds a memory address and the checkout filename and so differs per process).
+    digest.update(code.co_code)
+    digest.update(repr(code.co_names).encode("utf-8"))
+    for const in code.co_consts:
+        if hasattr(const, "co_code"):
+            _canonical_code(const, digest)
+        elif isinstance(const, frozenset):
+            digest.update(repr(sorted(const, key=repr)).encode("utf-8"))
+        else:
+            digest.update(repr(const).encode("utf-8"))
+
+
+def _canonical_module_code_digest() -> str:
+    import types
+
+    digest = hashlib.sha256()
+    for name in sorted(globals()):
+        obj = globals()[name]
+        if isinstance(obj, types.FunctionType) and obj.__module__ == __name__:
+            digest.update(name.encode("utf-8"))
+            _canonical_code(obj.__code__, digest)
+        elif isinstance(obj, re.Pattern):
+            digest.update(name.encode("utf-8") + obj.pattern.encode("utf-8"))
+    return "code:" + digest.hexdigest()[:27]
+
+
+EGRESS_TRANSFORM_DIGEST = _compute_transform_digest()

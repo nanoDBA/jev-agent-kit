@@ -107,7 +107,7 @@ def _question_spec(question_type: str) -> dict[str, Any]:
             "type": "choice",
             "instructions": "[SMOKE FIXTURE] Which synthetic option applies?",
             "criteria": {"yes": "The synthetic condition holds.", "no": "It does not."},
-            "kit": {"consequence": "gate"},
+            "kit": {"consequence": "gate", "gate": {"allow_labels": ["no"]}},
         }
     if question_type == "score":
         return {

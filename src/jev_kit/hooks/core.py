@@ -132,13 +132,26 @@ def _map_response(response: dict[str, Any], mode: Mode) -> HookResult:
 
     # Enforce: any gate not clearing to accept means ask (fail closed). The tool-call-gate set
     # is all gate questions, so a single non-accept route escalates.
-    routes = [r.get("route") for r in records if isinstance(r, dict)]
-    # `routes` must be non-empty: an all-non-dict records list would make all() vacuously true
-    # and allow in enforce (finding Phase3/4 MAJOR-1). No route may be missing either.
-    if routes and len(routes) == len(records) and all(route == "accept" for route in routes):
+    # ALLOW only if EVERY record is a clean accept whose accepted label is explicitly listed
+    # safe (kit.gate.allow_labels). accept alone is calibrated-and-clear, not permission; a
+    # confident dangerous answer (label not in allow_labels) escalates (finding H1). Missing
+    # allow_labels on an accept is a fail-closed backstop (asks).
+    dict_records = [r for r in records if isinstance(r, dict)]
+    if len(dict_records) != len(records) or not dict_records:
+        return _fail_closed(mode, "malformed_records")
+
+    def _may_allow(rec: dict[str, Any]) -> bool:
+        if rec.get("route") != "accept":
+            return False
+        allow_labels = rec.get("allow_labels")
+        if not isinstance(allow_labels, list):
+            return False  # backstop: an accept without a declared allow-list never allows
+        return rec.get("label") in allow_labels
+
+    if all(_may_allow(rec) for rec in dict_records):
         return HookResult(HookOutcome.ALLOW, "accept", None, is_mock)
     reason = next(
-        (r.get("fail_reason") for r in records if isinstance(r, dict) and r.get("fail_reason")),
+        (r.get("fail_reason") for r in dict_records if r.get("fail_reason")),
         None,
     )
     return HookResult(HookOutcome.ASK, "ask", reason, is_mock)

@@ -12,6 +12,7 @@ never enables enforce. Promoting a gate to enforce against real traffic is owner
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -52,6 +53,13 @@ def select_bounds(
     """
     if not fit_samples or not confirm_samples:
         return PromotionResult(False, "insufficient_data")
+    for value in (reference_accuracy, tolerance):
+        # NaN or an out-of-range input must not slip through the comparisons (finding H14).
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value)):
+            return PromotionResult(False, "invalid_criteria")
+    if not 0.0 <= reference_accuracy <= 1.0 or tolerance < 0.0:
+        return PromotionResult(False, "invalid_criteria")
     floor = reference_accuracy - tolerance
     best: tuple[float, float, float] | None = None  # (coverage, no_bound, yes_bound)
     for no_bound in _GRID:

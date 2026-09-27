@@ -8,6 +8,7 @@ by regex, never passed to a shell, subprocess, or interpreter.
 from __future__ import annotations
 
 import subprocess
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -162,6 +163,35 @@ def test_audit_path_skips_file_over_size_cap(tmp_path: Path) -> None:
     assert "small.md" in rel_paths
 
 
+# --------------------------------------------------------------------------- H10: ReDoS
+
+def test_audit_text_dangerous_command_scan_is_linear_time_on_adversarial_flag_string() -> None:
+    """A ~100 KB `rm` flag string must scan in well under a second (H10 ReDoS regression).
+
+    The old dangerous-command regexes had overlapping repetition (for example
+    `\\brm\\s+(?:-\\w+\\s+)*-[a-z]*r[a-z]*f[a-z]*\\b`) that a crafted long flag string could drive
+    into quadratic scanning time; a real report saw a ~100 KB `rm` flag string exceed a 2-second
+    scan. Detection is now linear token scanning (see `jev_kit.audit._find_dangerous_commands`),
+    so this must complete almost instantly regardless of how long the single flag token is.
+    """
+    adversarial_line = "rm " + "-" * 100_000
+
+    start = time.monotonic()
+    audit_text(adversarial_line)
+    elapsed = time.monotonic() - start
+
+    # The linear scan runs in a few milliseconds; the whole audit_text pass over 100 KB is well
+    # under a second. The bound is set at 2 seconds to stay clear of scheduling jitter under a
+    # loaded parallel test run while still failing loudly on a quadratic regression, which on a
+    # 100 KB input would take tens of seconds, not a fraction of one.
+    assert elapsed < 2.0
+
+    # The fast path must not have traded away detection: a real "rm -rf /" still gets flagged.
+    findings = audit_text("rm -rf /")
+    dangerous = [f for f in findings if f.category == "dangerous_command"]
+    assert any(f.rule_id == "dangerous_command.rm_rf" for f in dangerous)
+
+
 # --------------------------------------------------------------------------- never executed
 
 
@@ -186,3 +216,16 @@ def test_dangerous_command_is_only_matched_as_text_never_run(tmp_path: Path) -> 
         findings = audit_path(tmp_path)
 
     assert any(f.category == "dangerous_command" for f in findings)
+
+
+# --------------------------------------------------------------------------- H10: wrapped commands
+
+
+def test_dangerous_command_detected_inside_markdown_and_json_h10() -> None:
+    # A dangerous command wrapped in Markdown backticks or JSON punctuation must still tokenize
+    # and be flagged; the tokenizer treats surrounding punctuation as separators (finding H10).
+    for wrapped in ("Run `rm -rf /` now", '{"command":"rm -rf /"}', "steps: (rm -rf /);"):
+        findings = audit_text(wrapped)
+        assert any(
+            f.rule_id == "dangerous_command.rm_rf" for f in findings
+        ), f"not flagged: {wrapped!r}"

@@ -269,3 +269,53 @@ def test_receipts_dir_keeps_a_pre_rename_folder(
     assert receipts.receipts_dir() == legacy
     (tmp_path / "jev-agent-kit" / "receipts").mkdir(parents=True)
     assert receipts.receipts_dir() == tmp_path / "jev-agent-kit" / "receipts"
+
+
+def test_receipts_dir_ignores_a_relative_localappdata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("JEV_KIT_RECEIPTS_DIR", raising=False)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", "relative-state")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+
+    assert receipts.receipts_dir() == (
+        tmp_path / "home" / "AppData" / "Local" / "jev-agent-kit" / "receipts"
+    )
+
+
+def test_default_receipts_never_land_in_the_working_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Public path: decide() with no receipt directory, run from inside a repository, with
+    # a relative LOCALAPPDATA (Windows) or XDG_STATE_HOME (Linux).
+    from jev_kit.engine import EngineConfig, decide
+    from jev_kit.transport import MockTransport
+
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    monkeypatch.chdir(repo)
+    monkeypatch.delenv("JEV_KIT_RECEIPTS_DIR", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", "relative-state")
+    monkeypatch.setenv("XDG_STATE_HOME", "relative-state")
+    monkeypatch.setattr(receipts, "_default_writer", None)  # resolve the default afresh
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    question_set = (
+        Path(__file__).resolve().parents[1]
+        / "skills" / "jev-runtime" / "questions" / "preflight-route.json"
+    )
+    reply = {"model": "jev-1.13.0", "answers": {"route": {
+        "type": "choice", "choice": "human", "confidence": 0.9,
+        "probabilities": {"deterministic": 0.05, "specialist_llm": 0.05, "human": 0.9},
+    }}}
+
+    response = decide(
+        {"schema_version": 1, "question_set_path": str(question_set), "mode": "shadow",
+         "state": {"request": "hello"}},
+        transport=MockTransport.replying(200, json.dumps(reply).encode(), {}),
+        config=EngineConfig(source_allowlist=frozenset({"agent_request"})),
+    )
+
+    assert response["records"][0]["receipt_written"] is True
+    assert sorted(p.name for p in repo.iterdir()) == [".git"]
+    assert list((tmp_path / "home").rglob("*.jsonl"))

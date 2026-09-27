@@ -103,8 +103,12 @@ def receipts_dir() -> Path:
 def _state_base() -> Path:
     """The per-user state directory for this platform, without the app folder."""
     if sys.platform == "win32":
+        # A relative LOCALAPPDATA would resolve against the working directory, which may be a
+        # repository; ignore it, as a relative XDG_STATE_HOME is ignored below.
         local_app_data = os.environ.get("LOCALAPPDATA")
-        return Path(local_app_data) if local_app_data else Path.home() / "AppData" / "Local"
+        if local_app_data and Path(local_app_data).is_absolute():
+            return Path(local_app_data)
+        return Path.home() / "AppData" / "Local"
 
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support"

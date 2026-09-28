@@ -202,7 +202,8 @@ def test_ordinary_numbers_in_metric_pass(tmp_path: Any, value: Any) -> None:
 @pytest.mark.parametrize(
     "text",
     ["elapsed {n}ms", "id{n} seen", "id{n}", "{n}ms", "{n}{m}", "a {n}{m} b", "x9{n}",
-     "{n}7 x"],
+     "{n}7 x", "code_{n} {m}", "{n}_x", "x-{n}", "{n}-{m}", "{n}.{m}", "{n}:{m}", "x/{n}",
+     "({n})", "[{n}]", "x={n}", "{n}, {m}", "x '{n}'", "{n}%", "#{n}"],
 )
 def test_slot_adjacent_to_letter_digit_or_slot_rejected(tmp_path: Any, text: str) -> None:
     params = {"n": {"kind": "metric"}}
@@ -215,6 +216,78 @@ def test_slot_adjacent_to_letter_digit_or_slot_rejected(tmp_path: Any, text: str
                                                 "params": {k: 1 for k in params}}}, bad)
     assert resp["status"] == "error" and resp["reason"] == "config"
     assert transport.requests == []
+
+
+@pytest.mark.parametrize(
+    "text", ["code {a} {b} {c} {d}", "{a} {b} {c} {d} ms", "x {a} {b} {c} {d} y"],
+)
+def test_split_pan_with_prefix_or_suffix_blocked(tmp_path: Any, text: str) -> None:
+    params = {k: {"kind": "metric"} for k in "abcd"}
+    qs = qset(templates={"t": {"text": text, "params": params}})
+    parts = {"a": "4111", "b": "1111", "c": "1111", "d": "1111"}
+    blocked(tmp_path, {"events": {"level": "info", "template_id": "t", "params": parts}}, qs)
+    clean = {"a": "1", "b": "2", "c": "3", "d": "4"}
+    wire = sent(tmp_path, {"events": {"level": "info", "template_id": "t", "params": clean}}, qs)
+    assert "1 2 3 4" in wire["state"]["events"]["message"]
+
+
+def test_codex_underscore_split_pan_case_refused(tmp_path: Any) -> None:
+    # The exact Codex L01 residual: "code_4111 1111 1111 1111" hid the card from both scans.
+    params = {k: {"kind": "metric"} for k in "abcd"}
+    qs = qset(templates={"t": {"text": "code_{a} {b} {c} {d}", "params": params}})
+    parts = {"a": "4111", "b": "1111", "c": "1111", "d": "1111"}
+    resp, transport = run(tmp_path, {"events": {"level": "info", "template_id": "t",
+                                                "params": parts}}, qs)
+    assert resp["status"] == "error" and resp["reason"] == "config"
+    assert transport.requests == []
+
+
+def _spy_final_scan(monkeypatch: pytest.MonkeyPatch) -> list[bytes]:
+    import jev_kit.engine as engine_mod
+
+    calls: list[bytes] = []
+    from jev_kit.egress import scan_request as real
+
+    def spy(serialized: bytes, decoded: Any) -> str | None:
+        calls.append(serialized)
+        return real(serialized, decoded)
+
+    monkeypatch.setattr(engine_mod, "scan_request", spy)
+    return calls
+
+
+@pytest.mark.parametrize("pan", [4111111111111111, "4111111111111111"])
+def test_per_slot_scan_blocks_before_final_scan(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch, pan: Any
+) -> None:
+    # Proves the per-slot scan acts on its own (Codex L04): the PAN is refused while rendering,
+    # so the final whole-request scan is never reached. With the per-slot scan disabled, the
+    # final scan would be called (and block), and this test fails.
+    calls = _spy_final_scan(monkeypatch)
+    blocked(tmp_path, {"events": [rec(host="db01", attempts=pan, reason="timeout")]})
+    assert calls == []
+
+
+def test_clean_number_reaches_final_scan(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _spy_final_scan(monkeypatch)
+    sent(tmp_path, {"events": [rec(host="db01", attempts=42, reason="timeout")]})
+    assert len(calls) == 1
+
+
+def test_disabling_per_slot_scan_defers_to_final_scan(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Control for the test above: with the per-slot scan patched out, the final scan is reached
+    # and still blocks, so "final scan not called" really measures the per-slot scan.
+    import jev_kit.log_templates as lt
+
+    monkeypatch.setattr(lt, "scan_text", lambda _text: None)
+    calls = _spy_final_scan(monkeypatch)
+    blocked(tmp_path, {"events": [rec(host="db01", attempts=4111111111111111,
+                                      reason="timeout")]})
+    assert len(calls) == 1
 
 
 def test_pan_split_across_slots_blocked_by_final_scan(tmp_path: Any) -> None:

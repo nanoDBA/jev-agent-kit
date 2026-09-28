@@ -153,16 +153,20 @@ def _parse_template(template_id: Any, spec: Any) -> LogTemplate:
     for literal in pieces:
         if literal is not None and not _LITERAL.fullmatch(literal):
             raise _config("log_template_text_charset")
-    # A slot may not touch a letter, digit or another slot: "elapsed {n}ms" would glue a value to
-    # template text and could defeat boundary-anchored detectors such as the card-number scan
-    # (Codex L01). Each rendered value is also scanned on its own before concatenation.
+    # Every slot must be delimited by whitespace or the template edge on both sides (Codex L01).
+    # Any other neighbor can glue a value to template text or to another slot in a form a
+    # boundary-anchored detector does not bridge: a word character ("code_{a}", "id{n}"), or a
+    # joiner such as "-", ".", ":" or "/" ("{a}.{b}" renders "4111.1111"). Whitespace is the one
+    # separator the card-number rule bridges, so a card split across adjacent slots stays
+    # visible to the final scan. Each rendered value is also scanned alone before concatenation.
     for index, piece in enumerate(pieces):
         if piece is not None:
             continue
-        before, after = pieces[index - 1], pieces[index + 1]
-        if (not before and index > 1) or (not after and index + 2 < len(pieces)):
-            raise _config("log_template_slot_adjacent")
-        if (before and before[-1].isalnum()) or (after and after[0].isalnum()):
+        before, after = pieces[index - 1] or "", pieces[index + 1] or ""
+        at_start, at_end = index == 1, index == len(pieces) - 2
+        before_ok = (at_start and before == "") or (before != "" and before[-1] == " ")
+        after_ok = (at_end and after == "") or (after != "" and after[0] == " ")
+        if not (before_ok and after_ok):
             raise _config("log_template_slot_adjacent")
     # Each declared slot appears exactly once, and no undeclared slot appears.
     if len(order) != len(set(order)) or set(order) != set(slots):

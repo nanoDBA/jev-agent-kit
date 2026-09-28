@@ -83,10 +83,14 @@ contains `{host}` or other template-looking text cannot expand or forge a slot.
   supplies only a `template_id` and params.
 - At load, template text is restricted to a narrow charset (letters, digits, space and
   `. , : ; ( ) [ ] / _ + # % = ' -`), capped at 240 characters, must name each declared slot
-  exactly once and no other, and is refused if any Tier 1 detector matches it. A slot may not
-  directly touch a letter, a digit or another slot (`elapsed {n}ms`, `id{n}` and `{a}{b}` are
-  refused), so a rendered value keeps a word boundary that boundary-anchored detectors such as
-  the card-number rule rely on. Template ids and enum values must be safe identifiers and also
+  exactly once and no other, and is refused if any Tier 1 detector matches it. Every slot must be
+  delimited by a space or the template edge on both sides. `elapsed {n}ms`, `code_{a}`,
+  `{a}{b}`, `x-{n}`, `{a}.{b}`, `{a}:{b}` and `({n})` are all refused. A word character
+  (including underscore) or a joiner such as `-`, `.`, `:` or `/` can glue a value to template
+  text, or two slots into one token, in a form a boundary-anchored detector does not bridge
+  (`code_4111 1111 1111 1111` and `4111.1111.1111.1111` both evade the card-number rule).
+  Space is the separator that rule bridges, so a card split across adjacent slots stays
+  visible to the final scan. Template ids and enum values must be safe identifiers and also
   pass the detectors. Every validator matches the whole string (`fullmatch`), so a terminal
   newline cannot slip past an anchored pattern.
 - Each rendered slot value, of every kind, is checked on its own before concatenation: it must
@@ -156,6 +160,10 @@ existing fingerprint. A test pins a pre-existing fingerprint to prove this.
 - A numeric metric slot still sends the number verbatim. A number can itself be sensitive (an
   account or PIN-length value); authors should declare metric slots only for counts, sizes,
   durations and codes. Card-number-shaped values are still caught by the final scan.
+- A template author can still separate numeric slots with literal words (`{a} and {b}`), so a
+  host could split a card number across slots in a way no detector reassembles. Authors should
+  not declare several adjacent numeric slots without need; this is covered by the trusted
+  definitions precondition.
 - Plain `metric` state fields keep the existing 64-character token behavior; this ADR does not
   change them.
 - An `identifier` token is linkable and still personal data (ADR 0002). A `log` field is a

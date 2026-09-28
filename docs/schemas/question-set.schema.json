@@ -63,6 +63,81 @@
         }
       }
     },
+    "log_templates": {
+      "description": "ADR 0004: declared log templates. A log field opts in with params.format = \"template\" and then accepts only records {level, template_id, params}.",
+      "type": "object",
+      "maxProperties": 256,
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9_.:-]{1,64}$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240,
+            "description": "Literal text with {slot} placeholders; each declared slot exactly once."
+          },
+          "params": {
+            "type": "object",
+            "maxProperties": 16,
+            "propertyNames": {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,31}$"
+            },
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "identifier",
+                        "contact",
+                        "path",
+                        "command",
+                        "metric"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "kind",
+                    "values"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "enum"
+                    },
+                    "values": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 64,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_.:-]{1,64}$"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
     "questions": {
       "type": "object",
       "minProperties": 1,

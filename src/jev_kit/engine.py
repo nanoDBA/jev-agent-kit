@@ -39,7 +39,6 @@ from jev_kit.egress import (
     personal_kinds_present,
     scan_request,
     scan_text,
-    transform_state,
 )
 from jev_kit.errors import FailReason, ValidationError, fail_reason_for_status
 from jev_kit.fingerprint import (
@@ -48,6 +47,7 @@ from jev_kit.fingerprint import (
     question_fingerprint,
     question_set_digest,
 )
+from jev_kit.log_templates import transform_state_with_templates
 from jev_kit.questionset import (
     QuestionSet,
     egress_contract,
@@ -455,7 +455,9 @@ def _decide(
                 transcript_enabled=qset.transcripts_enabled,
                 transcript_cap=qset.transcripts_cap,
             )
-            outgoing_state = transform_state(state, qset.schema, ctx)
+            outgoing_state = transform_state_with_templates(
+                state, qset.schema, qset.log_templates, ctx
+            )
             wire_questions: dict[str, Any] = {
                 qid: _wire_question(q) for qid, q in qset.questions.items()
             }

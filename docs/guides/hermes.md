@@ -56,7 +56,7 @@ The plugin reads its settings from the environment when Hermes loads it:
 | `JEV_KIT_HOOK_MODE` | `shadow` (default) or `enforce` |
 | `JEV_KIT_HOOK_QUESTION_SET_PATH` | Absolute path to `skills/jev-runtime/questions/tool-call-gate.json` |
 
-Set the question-set path. The Claude Code and Codex hooks read the same variable.
+Set the question-set path to an absolute path. The Claude Code and Codex hooks read the same variable.
 `JEV_KIT_QUESTION_SET_PATH` is an older name that all three hooks still accept; when both are
 set, `JEV_KIT_HOOK_QUESTION_SET_PATH` wins.
 
@@ -65,6 +65,11 @@ of the repository the `jev_kit` code was loaded from, found from the module's ow
 never from Hermes' working directory. A plain wheel install does not ship that folder, so the
 gate then has no question set and fails the normal way: no decision in shadow, block in
 enforce.
+
+The question-set path must be absolute, whether it comes from `--question-set-path` or an
+environment variable. A relative path is rejected, never resolved against the working
+directory: the gate treats it like a missing question set (no decision in shadow, fail
+closed in enforce).
 
 ## 4. Try it without Hermes
 

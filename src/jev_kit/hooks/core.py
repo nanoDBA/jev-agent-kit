@@ -135,6 +135,11 @@ def decide_tool_call(
         # Without an identity the call cannot be bound to its calibration; never send it
         # unbound (that would silently change the fingerprint) and never crash the host.
         return _fail_closed(mode, "producer_unavailable")
+    if not Path(question_set_path).is_absolute():
+        # A relative path would resolve against the host's working directory, letting the
+        # project a hook runs in pick its own question and egress rules. Reject it through the
+        # normal config-failure path; never resolve it and never fall back to the default.
+        return _fail_closed(mode, "config")
     request = {
         "schema_version": 1,
         "op": "decide",

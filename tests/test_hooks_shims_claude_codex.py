@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -19,7 +20,13 @@ from jev_kit.hooks import claude as claude_shim
 from jev_kit.hooks import codex as codex_shim
 from jev_kit.types import Mode
 
-_QUESTION_SET_PATH = "skills/jev-runtime/questions/tool-call-gate.json"
+_QUESTION_SET_PATH = str(
+    Path(__file__).resolve().parents[1]
+    / "skills"
+    / "jev-runtime"
+    / "questions"
+    / "tool-call-gate.json"
+)
 
 _CLAUDE_EVENT: dict[str, Any] = {
     "hook_event_name": "PreToolUse",

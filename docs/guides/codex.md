@@ -62,7 +62,12 @@ the `jev_kit` code was loaded from, found from the module's own location and nev
 working directory. That default only exists when `jev_kit` runs from a checkout of this
 repository (for example `pip install -e .`); a plain wheel install does not ship the skill
 folder, so the gate then has no question set and fails the normal way: no decision in
-shadow, and ask (Codex: deny) in enforce.
+shadow, and deny in enforce.
+
+The question-set path must be absolute, whether it comes from `--question-set-path` or an
+environment variable. A relative path is rejected, never resolved against the working
+directory: the gate treats it like a missing question set (no decision in shadow, fail
+closed in enforce).
 
 On Windows, Codex can run a different command through `commandWindows`. Point it at the
 same module with your Windows Python.

@@ -5,12 +5,19 @@ use an injected fake runner (via the core's `runner` param); no engine, no netwo
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Any
 
 from jev_kit.hooks import hermes
 from jev_kit.types import Mode
 
-QS = "skills/jev-runtime/questions/tool-call-gate.json"
+QS = str(
+    Path(__file__).resolve().parents[1]
+    / "skills"
+    / "jev-runtime"
+    / "questions"
+    / "tool-call-gate.json"
+)
 
 TOOL_CALL: dict[str, Any] = {
     "tool_name": "terminal",

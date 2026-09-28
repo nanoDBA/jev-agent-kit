@@ -29,7 +29,6 @@ string input.
 
 from __future__ import annotations
 
-import posixpath
 import re
 from dataclasses import dataclass
 
@@ -172,6 +171,11 @@ def extract_command_properties(command: object) -> CommandProperties:
         _analyze(command, found)
     except Exception:  # a bug here must mean unknown, never a crash or a False
         found.unsure("internal_error")
+    if "package_install" in found.true:
+        # Every package install is also a download (ADR 0005), and installs run package
+        # scripts (postinstall, setup.py, maintainer scripts) this module cannot see.
+        found.hit("network_download")
+        found.unsure("package_scripts")
     confident = found.unconfident_reason is None
     values: dict[str, bool | None] = {}
     for name in PROPERTY_NAMES:
@@ -229,7 +233,10 @@ def _analyze_tokens(tokens: list[str], found: _Found, depth: int) -> None:
     if idx >= len(tokens):
         found.unsure("no_command_word")
         return
-    readings = _program_readings(tokens[idx])
+    word = tokens[idx]
+    if word.startswith(("./", ".\\", "../", "..\\")) or word.lower().endswith(_SCRIPT_SUFFIXES):
+        found.unsure("runs_unseen_code")  # a local script: its contents are not inspected
+    readings = _program_readings(word)
     if not readings:
         found.unsure("program_unreadable")
     # Every argument, under both a literal and a POSIX-unescaped reading.
@@ -298,6 +305,11 @@ def _analyze_program(program: str, args: list[str], found: _Found, depth: int) -
     if program in _INDIRECT:
         found.unsure("indirect_execution")
         return
+    if program in _RUNNERS or program.startswith("python"):
+        # Interpreters, build tools, test runners and package runners execute code (a script,
+        # a module, a make target, a package script) that this module cannot see. Positive
+        # detections below still count; nothing undetected may be reported as false.
+        found.unsure("runs_unseen_code")
     if program == "find":
         _find(args, found)
         return
@@ -589,10 +601,21 @@ def _check_path_token(token: str, found: _Found) -> None:
             found.hit("targets_home_directory")
         if (cand.startswith("\\\\") or cand.startswith("//")) and _segments(cand):
             found.unsure("unc_or_network_path")
-        climb = _segments(cand)
-        if len(climb) >= 3 and all(seg == ".." for seg in climb[:3]):
+        if _absolute(cand) is None and _net_climb(cand) >= 3:
             # Without the working directory, a path this far up may be the home or root.
             found.unsure("relative_path_climbs")
+
+
+def _net_climb(path: str) -> int:
+    """How many levels above its start a relative path ends up (`a/../../..` climbs 2)."""
+    depth = lowest = 0
+    for seg in _segments(path):
+        if seg == "..":
+            depth -= 1
+            lowest = min(lowest, depth)
+        elif seg != ".":
+            depth += 1
+    return -lowest
 
 
 def _segments(path: str) -> list[str]:
@@ -603,55 +626,68 @@ def _has_glob(text: str) -> bool:
     return any(ch in text for ch in _GLOB)
 
 
-def _is_root_or_system(token: str) -> bool:
-    low = token.lower()
+def _resolve(segs: list[str]) -> list[str]:
+    """Lexically resolve `.` and `..`; `..` at the top stays at the top, as the OS does."""
+    out: list[str] = []
+    for seg in segs:
+        if seg in {"", "."}:
+            continue
+        if seg == "..":
+            if out:
+                out.pop()
+            continue
+        out.append(seg)
+    return out
+
+
+def _absolute(token: str) -> tuple[str, list[str]] | None:
+    """An absolute path as (flavor, resolved lower-case segments), or None if relative.
+
+    Both separators are accepted. Flavors: "posix" for `/x` and a leading-backslash `\\x`,
+    "windows" for a drive form (`C:`, `C:\\x`, `C:/x`). A tilde path is mapped onto the home
+    base (`~` -> /home/~, `~user` -> /home/user) before resolving, so `~/project/../.ssh` and
+    `~/..` are judged where they land. UNC paths are marked unknown by the caller.
+    """
+    low = token.lower().replace("\\", "/")
+    if low.startswith("~"):
+        first, _, rest = low.partition("/")
+        return "posix", _resolve(["home", first, *rest.split("/")])
     if low.startswith("/"):
-        norm = posixpath.normpath(low)
-        segs = _segments(norm)
-        if not segs:
-            return True  # "/" itself
-        first = segs[0]
-        if _has_glob(first) or first in {".", ".."}:
-            return True  # "/*", "/e?c" and the like can match system directories
-        return first in _SYSTEM_POSIX
-    drive = _DRIVE.match(token)
-    if drive or low.startswith("\\"):
-        rest = low[2:] if drive else low
-        segs = _segments(posixpath.normpath(rest.replace("\\", "/")) if rest else "")
-        if not segs or segs == ["."]:
-            return True  # "C:", "C:\", "\"
-        first = segs[0]
-        if _has_glob(first) or first == "..":
-            return True
-        if first in _SYSTEM_WINDOWS or first.startswith("progra"):  # also 8.3 PROGRA~1
-            return True
-        if first == "windows" or "system32" in segs:
-            return True
-    return "system32" in _segments(low)
+        return "posix", _resolve(low.split("/"))
+    if _DRIVE.match(low):
+        return "windows", _resolve(low[2:].split("/"))
+    return None
+
+
+def _is_root_or_system(token: str) -> bool:
+    resolved = _absolute(token)
+    if resolved is None:
+        return "system32" in _segments(token.lower())
+    flavor, segs = resolved
+    if not segs:
+        return True  # "/", "C:", "C:\", "\", "/usr/.."
+    first = segs[0]
+    if _has_glob(first) or "system32" in segs:
+        return True  # "/*", "/e?c" and the like can match system directories
+    if flavor == "posix" and first in _SYSTEM_POSIX:
+        return True
+    # A leading-backslash path is posix-flavored after the separator swap, so the Windows
+    # names are checked for both flavors.
+    return first in _SYSTEM_WINDOWS or first.startswith("progra")  # also 8.3 PROGRA~1
 
 
 def _is_home(token: str) -> bool:
-    low = token.lower()
-    if low == "~" or low.startswith("~"):
-        # "~", "~/", "~user", "~/*", "~/.ssh": the home root, a wildcard over it, or a hidden
-        # entry directly under it. "~/project/file" is not the home directory.
-        segs = _segments(low)
-        if len(segs) <= 1:
-            return True
-        return len(segs) == 2 and (segs[1].startswith(".") or _has_glob(segs[1]))
-    segs = _segments(low[2:] if _DRIVE.match(low) else low)
-    if not (low.startswith("/") or _DRIVE.match(low) or low.startswith("\\")):
+    """The home base, one home directory, a wildcard over it, or a hidden entry directly under
+    it, judged after lexical `.`/`..` resolution. An ordinary project child is not home."""
+    resolved = _absolute(token)
+    if resolved is None:
         return False
-    if len(segs) >= 1 and segs[0] in _HOME_BASES_POSIX:
-        if len(segs) == 1:
-            return True  # /home or C:\Users itself: every home directory
-        if _has_glob(segs[1]):
-            return True
-        if len(segs) == 2:
-            return True
-        if len(segs) == 3 and (segs[2].startswith(".") or _has_glob(segs[2])):
-            return True
-    return False
+    _, segs = resolved
+    if not segs or segs[0] not in _HOME_BASES_POSIX:
+        return False
+    if len(segs) <= 2 or _has_glob(segs[1]):
+        return True
+    return len(segs) == 3 and (segs[2].startswith(".") or _has_glob(segs[2]))
 
 
 # --------------------------------------------------------------------------- raw scan
@@ -754,3 +790,15 @@ _KNOWN_PROGRAMS = (
     | frozenset({"git", "find", "cp", "mv", "ln", "net", "certutil", "npx", "pnpx", "bunx",
                  "pacman", "uv", "uvx", "python", "python3", "py"})
 )
+
+_RUNNERS = frozenset({
+    "py", "node", "nodejs", "deno", "bun", "bunx", "ruby", "perl", "php", "lua", "java",
+    "dotnet", "go", "cargo", "rustc", "make", "gmake", "nmake", "just", "rake", "ant", "gradle",
+    "gradlew", "mvn", "mvnw", "cmake", "ninja", "meson", "npm", "pnpm", "yarn", "npx", "pnpx",
+    "uv", "uvx", "pipx", "poetry", "pdm", "hatch", "tox", "nox", "pytest", "jest", "vitest",
+    "mocha", "docker", "podman", "kubectl", "helm", "terraform", "ansible", "ansible-playbook",
+    "rscript", "julia", "swift", "kotlin", "scala", "groovy", "elixir", "mix", "erl", "tsx",
+    "ts-node", "composer", "bundle", "gem", "conda", "mamba", "micromamba", "invoke", "task",
+})
+_SCRIPT_SUFFIXES = (".sh", ".bash", ".zsh", ".ps1", ".psm1", ".py", ".js", ".mjs", ".cjs",
+                    ".ts", ".rb", ".pl", ".php", ".bat", ".cmd", ".vbs", ".jar", ".lua")

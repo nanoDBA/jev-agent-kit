@@ -45,6 +45,13 @@ hooks deliberately never send or use (folder names often name a client).
 ### How values are computed
 
 - Each property is `true`, `false`, or `null` (unknown).
+- Paths are judged where they land lexically: `.` and `..` are resolved for POSIX, tilde and
+  drive-letter forms with either separator, so `/home/alice/project/..`, `~/project/../.ssh`
+  and `C:\Users\Alice\project\..` count as home, and `/usr/../etc` and
+  `C:\Windows\..\Windows` count as system paths. A tilde path is judged as a path under the
+  home base. Symlinks are not resolved (no filesystem access). A relative path whose net climb
+  is three or more levels, and a UNC path, make the parse not confident.
+- Every package install also sets `cmd_network_download`.
 - Detection is biased toward `true`. Where a word could be a flag or an option's argument, it is
   read as the flag. That is exactly the ambiguity that forced H16, but here it is harmless: a
   wrong `true` adds friction, and only a wrong `false` could hide danger. Per-command knowledge
@@ -75,6 +82,17 @@ or when the program runs something this parser cannot see (`bash`, `sh`, `pwsh`,
 `eval`, `source`, `xargs`, `find -exec`, `ssh`, `timeout`, `Start-Process`, `iex`,
 `Invoke-Command`, `python -c` and similar), or an assignment that cmd could read as a command
 (`rd=/s`). An internal error in the extractor also gives "not confident", never `false`.
+
+Confident is reserved for commands whose effects this module fully models. So the parse is
+also not confident when the command runs code it cannot see: interpreters and their script or
+module operands (`python x.py`, `python -m mod`, `node`, `deno`, `bun`, `ruby`, `perl`, `php`,
+`java`, `dotnet`), build tools and task runners (`make`, `just`, `cargo`, `go`, `gradle`,
+`mvn`, `rake`), test runners (`pytest`, `jest`, `tox`), package managers and package runners
+(`npm`, `pnpm`, `yarn`, `npx`, `uvx`, `pipx`, `uv`, `poetry`), container and cluster tools
+(`docker`, `podman`, `kubectl`, `helm`, `terraform`), a local script (`./x`, `..\x`, or a
+command word ending in `.sh`, `.ps1`, `.py`, `.js`, `.bat`, `.cmd` and similar), and every
+package install, since installs run package scripts (postinstall, setup.py, maintainer
+scripts). Positive detections for these still count.
 
 For an unconfident line, pattern checks over the raw text and a per-piece analysis of the text
 between control operators can still set properties to `true`; they never set `false`.
@@ -117,6 +135,8 @@ name. Eleven bits per call cannot carry a secret the way a raw argument can.
   core, so any change to the extractor changes every gate fingerprint.
 - The question-set version, schema and instructions changed, which changes gate fingerprints
   again.
+- Open PR #16 (log templates) does not change `egress.py`, so this is the only pending change
+  that moves the pinned producer-free fingerprint; merge order does not force a second re-pin.
 
 ## Consequences
 

@@ -270,12 +270,12 @@ widens_permission  p(yes)=0.04  -> ask
 
 Jev sees `rm`, the agent's description, and yes/no facts the kit worked out locally from the
 full command line, but no flags, arguments or readable path. The `cmd_*` facts say this is a
-recursive, forced delete that does not aim at the system or home directory, so `rm file` and
-`rm -rf /` no longer look the same. They are heuristic: a command the kit cannot read with
-confidence (pipes, quoting, variables, `bash -c`, and similar) gets `null` for "unknown" and
-`cmd_parse_confident: false`, and in enforce mode such a command always asks. See
-[ADR 0005](docs/adr/0005-command-properties.md). All three answers come back as `ask` because a
-replayed answer can never clear a check.
+recursive, forced delete that does not aim at the system or home directory, so `rm file` and `rm
+-rf /` no longer look the same. They are heuristic: a command the kit cannot read with
+confidence (pipes, quoting, variables, `bash -c`, scripts, interpreters, package installs, and
+similar) gets `null` for "unknown" and `cmd_parse_confident: false`, and in enforce mode such a
+command always asks. See [ADR 0005](docs/adr/0005-command-properties.md). All three answers come
+back as `ask` because a replayed answer can never clear a check.
 
 `context` is plain text and needs an explicit opt-in for live calls. The hooks do not add the
 working directory to it, but a description can still name a folder.

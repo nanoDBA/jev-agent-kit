@@ -26,6 +26,7 @@ from jev_kit.errors import ValidationError
 from jev_kit.hooks import claude as claude_shim
 from jev_kit.hooks import codex, core, hermes
 from jev_kit.hooks.core import HookOutcome, ToolCall, decide_tool_call
+from jev_kit.ratebudget import RateBudget
 from jev_kit.receipts import ReceiptWriter
 from jev_kit.transport import MockTransport
 from jev_kit.types import Mode
@@ -54,6 +55,7 @@ def _engine_runner(tmp_path: Path, sent: list[bytes]) -> Any:
             hmac_key=KEY,
             source_allowlist=frozenset({"agent_context"}),
             writer=ReceiptWriter(directory=tmp_path / "receipts"),
+            rate_budget=RateBudget(),  # fresh: never drain the process-wide cap other tests use
         )
         response = decide(request, transport=mock, config=config)
         sent.extend(mock.requests)
@@ -295,3 +297,75 @@ def test_shipped_gate_declares_every_property_as_a_flag() -> None:
     schema = obj["state_schema"]
     for name in (CONFIDENT_KEY, *(STATE_PREFIX + n for n in PROPERTY_NAMES)):
         assert schema[name] == {"kind": "flag"}
+
+
+# --------------------------------------------------------------------------- review fixes
+
+
+def _outgoing_state(host: str, command: str, tmp_path: Path) -> dict[str, Any]:
+    sent: list[bytes] = []
+    _run_host(host, command, Mode.SHADOW, _engine_runner(tmp_path, sent))
+    assert len(sent) == 1
+    state: dict[str, Any] = json.loads(sent[0])["state"]
+    return state
+
+
+@pytest.mark.parametrize("host", HOSTS)
+@pytest.mark.parametrize(
+    "command",
+    ["python cleanup.py", "python -m cleanup", "node build.js", "make clean", "./deploy",
+     "npm test", "pytest -q", "cargo build", "docker run alpine"],
+)
+def test_unseen_code_is_sent_as_unknown(host: str, command: str, tmp_path: Path) -> None:
+    # C01: an interpreter or runner executes code the extractor cannot see. The outgoing
+    # state must say unknown (null), never a confident all-false.
+    state = _outgoing_state(host, command, tmp_path)
+    assert state[CONFIDENT_KEY] is False
+    for name in PROPERTY_NAMES:
+        assert state[STATE_PREFIX + name] is not False
+    assert _run_host(host, command, Mode.ENFORCE, _all_accept) is HookOutcome.ASK
+
+
+@pytest.mark.parametrize("host", HOSTS)
+@pytest.mark.parametrize(
+    ("command", "field", "expected"),
+    [
+        ("rm -rf /home/alice/project/..", "targets_home_directory", True),
+        ("rm -rf ~/project/../.ssh", "targets_home_directory", True),
+        ("Remove-Item -Recurse C:\\Users\\Alice\\project\\..", "targets_home_directory", True),
+        ("Remove-Item -Recurse C:\\Windows\\..\\Windows", "targets_root_or_system_path", True),
+        ("rm -rf /usr/../etc", "targets_root_or_system_path", True),
+        ("rm -rf /home/alice/project/./src", "targets_home_directory", False),
+        ("Remove-Item C:\\Users\\Alice\\project\\src", "targets_home_directory", False),
+    ],
+)
+def test_dot_segments_are_resolved_in_outgoing_state(
+    host: str, command: str, field: str, expected: bool, tmp_path: Path
+) -> None:
+    # C02: home and system detection judge where a path lands after `.` and `..`.
+    state = _outgoing_state(host, command, tmp_path)
+    assert state[CONFIDENT_KEY] is True
+    assert state[STATE_PREFIX + field] is expected
+
+
+@pytest.mark.parametrize("host", HOSTS)
+@pytest.mark.parametrize(
+    "command",
+    ["Install-Module Pester", "pacman -S sample", "npm install sample", "dpkg -i x.deb",
+     "pip install sample"],
+)
+def test_every_package_install_is_also_a_download(
+    host: str, command: str, tmp_path: Path
+) -> None:
+    # C03: ADR 0005 counts any package install as a download.
+    state = _outgoing_state(host, command, tmp_path)
+    assert state[STATE_PREFIX + "package_install"] is True
+    assert state[STATE_PREFIX + "network_download"] is True
+    assert state[CONFIDENT_KEY] is False  # install scripts are unseen code
+
+
+@pytest.mark.parametrize("host", HOSTS)
+def test_plain_command_control_stays_confident_and_false(host: str, tmp_path: Path) -> None:
+    state = _outgoing_state(host, "ls -la", tmp_path)
+    assert state[CONFIDENT_KEY] is True
+    assert all(state[STATE_PREFIX + n] is False for n in PROPERTY_NAMES)

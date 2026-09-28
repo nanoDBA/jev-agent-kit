@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import hashlib
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -26,6 +27,38 @@ from jev_kit.types import Mode
 
 # The default self-deadline, chosen to sit well under Hermes' 30s fail-closed hook timeout.
 DEFAULT_SELF_DEADLINE_S = 8.0
+
+#: Canonical environment variable naming the question set a hook uses. Matches the
+#: `JEV_KIT_HOOK_MODE` prefix.
+QUESTION_SET_PATH_ENV_VAR = "JEV_KIT_HOOK_QUESTION_SET_PATH"
+
+#: Deprecated alias for QUESTION_SET_PATH_ENV_VAR, still read by every shim. When both are
+#: set to a non-empty value, the canonical name wins.
+QUESTION_SET_PATH_ENV_VAR_ALIAS = "JEV_KIT_QUESTION_SET_PATH"
+
+# The skill's gate question set lives in the repository (it is not packaged into the wheel),
+# at <repo>/skills/jev-runtime/questions/tool-call-gate.json, where this module sits at
+# <repo>/src/jev_kit/hooks/core.py. Resolved from this module's own path, never from the
+# host's working directory. If the file is not there (for example, an installed wheel without
+# the repository), the path simply does not exist and the call fails the normal way: no
+# decision in shadow, ask in enforce.
+DEFAULT_QUESTION_SET_PATH = str(
+    Path(__file__).resolve().parents[3]
+    / "skills"
+    / "jev-runtime"
+    / "questions"
+    / "tool-call-gate.json"
+)
+
+
+def question_set_path_from_env() -> str:
+    """The hook question-set path: canonical env var, then the alias, then the default."""
+    for name in (QUESTION_SET_PATH_ENV_VAR, QUESTION_SET_PATH_ENV_VAR_ALIAS):
+        raw = os.environ.get(name, "").strip()
+        if raw:
+            return raw
+    return DEFAULT_QUESTION_SET_PATH
+
 
 # A runner takes a JSON decision request and returns a JSON response. The default is a
 # child-process runner (watchdog); tests inject a fake.
@@ -102,6 +135,11 @@ def decide_tool_call(
         # Without an identity the call cannot be bound to its calibration; never send it
         # unbound (that would silently change the fingerprint) and never crash the host.
         return _fail_closed(mode, "producer_unavailable")
+    if not Path(question_set_path).is_absolute():
+        # A relative path would resolve against the host's working directory, letting the
+        # project a hook runs in pick its own question and egress rules. Reject it through the
+        # normal config-failure path; never resolve it and never fall back to the default.
+        return _fail_closed(mode, "config")
     request = {
         "schema_version": 1,
         "op": "decide",

@@ -4,13 +4,20 @@ owns its own deadline. All use an injected fake runner; no engine, no network.""
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Any
 
 from jev_kit.hooks.core import HookOutcome, ToolCall, decide_tool_call
 from jev_kit.types import Mode
 
 CALL = ToolCall(command="rm -rf /data", target="db01", context="prod")
-QS = "skills/jev-runtime/questions/tool-call-gate.json"
+QS = str(
+    Path(__file__).resolve().parents[1]
+    / "skills"
+    / "jev-runtime"
+    / "questions"
+    / "tool-call-gate.json"
+)
 
 
 def ok(records: list[dict[str, Any]]) -> Any:

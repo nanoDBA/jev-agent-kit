@@ -55,8 +55,19 @@ timeout = 30
 ```
 
 Keep the quotes around the path so a folder name with spaces stays one argument, and always
-use an absolute path. Without `--question-set-path`, the hook looks for the question set
-relative to the directory Codex is working in.
+use an absolute path. Without `--question-set-path`, the hook uses `JEV_KIT_HOOK_QUESTION_SET_PATH` if it is set (the older name
+`JEV_KIT_QUESTION_SET_PATH` still works, but the new name wins when both are set). With
+neither, it uses the `skills/jev-runtime/questions/tool-call-gate.json` of the repository
+the `jev_kit` code was loaded from, found from the module's own location and never from the
+working directory. That default only exists when `jev_kit` runs from a checkout of this
+repository (for example `pip install -e .`); a plain wheel install does not ship the skill
+folder, so the gate then has no question set and fails the normal way: no decision in
+shadow, and deny in enforce.
+
+The question-set path must be absolute, whether it comes from `--question-set-path` or an
+environment variable. A relative path is rejected, never resolved against the working
+directory: the gate treats it like a missing question set (no decision in shadow, fail
+closed in enforce).
 
 On Windows, Codex can run a different command through `commandWindows`. Point it at the
 same module with your Windows Python.

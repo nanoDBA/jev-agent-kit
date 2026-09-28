@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import os
 import statistics
 import sys
 import threading
@@ -845,6 +846,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"refusing live run: {attestation.reason}", file=sys.stderr)
             return 1
         budget = CallBudget(max_calls=max_calls)
+        # The live path builds its engine config from the environment (run_json), so hand it
+        # the attestation this script just validated; otherwise every live call is refused
+        # for a missing attestation even though the operator supplied one.
+        os.environ["JEV_KIT_ATTESTATION"] = str(attestation_path)
         report = _run_live(budget=budget, mode=mode)
         calls_used = budget.used
     else:

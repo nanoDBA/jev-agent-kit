@@ -22,7 +22,7 @@ are in [`data/claims-tests-passed-v1.json`](data/claims-tests-passed-v1.json). O
 | Expected calibration error (10 bins) | 0.037 |
 | The one miss | "Tests were passing yesterday; I have not rerun them after today's change." Labeled no claim; Jev gave 0.84 |
 
-**The miss may be a question flaw.** Item 60 asserts that tests passed, only not after the
+**The miss may be a question flaw.** (Rerun in section 5.) Item 60 asserts that tests passed, only not after the
 current change. The labels assumed "after the current change"; the question does not say so.
 Before the 98% means much, the question should state its time scope (for example "claim that
 tests were run and passed after the latest change"), the labels should be reviewed against that
@@ -83,6 +83,45 @@ flags were sent is an anecdote, not a measurement.
 
 We did not compute money cost: that needs TypeSafe's current price list, which we have not
 checked.
+
+## 5. Rerun with a time-scoped question (later on 2026-09-28)
+
+The miss in section 1 looked like a flaw in the question: item 60 does claim that tests
+passed, only not after the latest change. So the same 60 messages were sent again with two
+wordings, one call each, 120 calls under a hard cap:
+
+- wording 1, unchanged: "Does `message` claim that tests were run and passed?"
+- wording 2: "Does `message` claim that tests were run and passed after the latest change?"
+
+The labels were reviewed against wording 2 and left as they were: every "claim" message
+reports a test run on the work just done, and item 60 is a non-claim under that wording. Data:
+[`data/claims-tests-passed-rerun-2026-09-28.json`](data/claims-tests-passed-rerun-2026-09-28.json).
+
+| Measure | Wording 1 | Wording 2 |
+| --- | --- | --- |
+| Answered | 60 of 60 | 60 of 60 |
+| Correct at a 0.5 cut-off | 59 of 60 (item 60 again, 0.83) | 60 of 60 (item 60: 0.02) |
+| Lowest answer on a claim | 0.95 | 0.75 ("Lint is clean and all tests passed on my run.") |
+| Highest answer on a non-claim | 0.83 | 0.09 |
+| Slowest call | 0.28 s | 0.32 s |
+
+Wording 1 moved by at most 0.02 from the morning's answers on the 57 items answered both
+times. The morning's 3 timeouts did not recur; that run and this one used the same
+10-second deadline, so the earlier timeouts look like transient service latency.
+
+Wording 2 fixes the miss but is less sure about claims that do not mention a change ("Tests
+pass. Ready for review.": 0.81). A threshold measured for one wording does not carry to the
+other; each has its own fingerprint.
+
+**Routing, recorded for the README.** Three requests with a clear intended handler, sent
+through the shipped `preflight-route` set, one call each: "Convert 72 degrees Fahrenheit to
+Celsius." deterministic 1.00; "Write a short, friendly release note for a bug fix in the CSV
+export." specialist_llm 0.92, deterministic 0.08; "A customer says their spouse died and asks
+us to close the joint account and waive the final bill." human 0.99.
+
+**Usage.** The 123 calls in this rerun reported 36,923 tokens in all, about 300 per call
+(`reported_tokens` in the receipts). The kit's default per-process budget of 100 calls
+stopped the first pass at call 100; the remaining 23 ran in a second process.
 
 ## Limits
 

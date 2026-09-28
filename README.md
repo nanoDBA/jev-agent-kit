@@ -123,7 +123,17 @@ they cover the change.
 
 ## Why routing needs a policy and evaluation
 
-A support request arrives: should code handle it, a specialist model, or a person?
+Given clear cases, the shipped `preflight-route` set answers the way you would expect.
+These are live answers, one call each:
+
+| Request | Jev's answer |
+| --- | --- |
+| "Convert 72 degrees Fahrenheit to Celsius." | deterministic 1.00 |
+| "Write a short, friendly release note for a bug fix in the CSV export." | specialist_llm 0.92 |
+| "A customer says their spouse died and asks us to close the joint account and waive the final bill." | human 0.99 |
+
+Harder cases show why the kit waits for a measured threshold. A support request arrives:
+should code handle it, a specialist model, or a person?
 
 ```sh
 python examples/route_request.py
@@ -397,25 +407,26 @@ rules apply.
 
 ## What we measured
 
-Our own first live evaluation, 2026-09-28, on `jev-1.13.0`: about 175 calls with synthetic
+Our own live evaluation, 2026-09-28, on `jev-1.13.0`: about 300 calls with synthetic
 inputs. It is small, and the test messages and their labels were written by Claude, the AI
 assistant that develops this kit, not checked by a person. The method, data and every result
 are in [research note 12](docs/research/12-live-evaluation.md).
 
 | What | Result |
 | --- | --- |
-| "Does this message claim the tests passed?" on 60 messages | 56 of 57 answered correctly at a 0.5 cut-off; 3 timed out |
+| "Does this message claim the tests passed?" on 60 messages | First run: 56 of 57 answered correctly at a 0.5 cut-off; 3 timed out. Rerun: 59 of 60, no timeouts |
+| The same, worded "…after the latest change?" | 60 of 60 correct; claims 0.75 to 0.99, non-claims 0.01 to 0.09 |
 | The same question asked 8 times | Answers moved by at most 0.01 |
 | The four shipped question sets and all three hooks | Worked end to end, live |
-| Tokens per call | About 340 to 390 in, 43 to 61 out |
-| Jev call latency | Usually 0.17 to 0.31 seconds; occasionally 4 to 7 seconds; 3 of 60 calls hit the 10-second deadline |
+| Tokens per call | About 300 to 390 in all; the 123-call rerun used 36,923 tokens |
+| Jev call latency | Usually 0.17 to 0.31 seconds; in the first run, occasional 4 to 7 second calls and 3 of 60 over the 10-second deadline; none in the 123-call rerun (slowest 0.32 s) |
 | Hook overhead, end to end | About 2.3 seconds per tool call in each host, including starting the hook process and fetching the key through `TYPESAFE_API_KEY_COMMAND`; one run per host |
 
-The one miss: "Tests were passing yesterday; I have not rerun them after today's change."
-It was labeled no claim; Jev gave 0.84. The message does claim that tests passed, just not
-after the current change, and the question never says "after the current change". So this may
-be a flaw in the question as much as in the answer; the wording and labels need tightening and
-a rerun before the error rate means much.
+The one miss, both times: "Tests were passing yesterday; I have not rerun them after today's
+change." It was labeled no claim; Jev gave 0.84, then 0.83. The message does claim that tests
+passed, just not after the change, and the question never said "after the change". Adding
+those words fixed it (0.02) and cost some confidence on terse claims ("Tests pass. Ready for
+review.": 0.81). Wording is part of the question: each wording gets its own threshold.
 
 These numbers are for one configuration on one day. A hook check adds its full end-to-end time
 to every tool call it sees, and it saves nothing unless it replaces work you would otherwise do.

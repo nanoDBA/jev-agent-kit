@@ -43,7 +43,8 @@ python examples/gate_walkthrough.py       # Jev + code facts: how risky is rm -r
 python examples/show_receipt.py           # the record every decision leaves
 ```
 
-Each demo asks Jev live and makes one to four calls. It sends only the sample text written in
+Each demo asks Jev live and makes one to four calls, a small fraction of a cent in all at
+TypeSafe's listed price (as of 2026-09-28). It sends only the sample text written in
 the demo, never your files. No key? Add `--offline` to any demo to replay the answers Jev gave
 to the same inputs on 2026-09-28. The outputs shown below are those recorded answers; a live
 run usually differs by a few hundredths, sometimes more on an ambiguous request (see
@@ -428,6 +429,7 @@ are in [research note 12](docs/research/12-live-evaluation.md).
 | The same question asked 8 times | Clear yes/no messages: moved by at most 0.01. An ambiguous routing request: the top option ranged 0.53 to 0.61 over 8 calls, against 0.68 in one call that morning |
 | The four shipped question sets and all three hooks | Worked end to end, live |
 | Tokens per call | First run: 340 to 391 input, 43 to 61 output. Rerun: 291 to 372 input, 36,923 over 123 calls (output not recorded) |
+| Money cost | About $0.000015 per call, roughly $15 per million calls, at TypeSafe's listed $0.042 per million input tokens with output free (price as of 2026-09-28) |
 | Jev call latency | Usually 0.17 to 0.31 seconds; in the first run, occasional 4 to 7 second calls and 3 of 60 over the 10-second deadline; none in the 123-call rerun (slowest 0.32 s) |
 | Hook overhead, end to end | About 2.3 seconds per tool call in each host, including starting the hook process and fetching the key through `TYPESAFE_API_KEY_COMMAND`; one run per host |
 

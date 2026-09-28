@@ -127,10 +127,10 @@ _CREDENTIAL_EXFIL_SEVERITY = "high"
 
 _CREDENTIAL_LOCATION_RE = re.compile(
     r"(?i)"
-    # ~/.ssh and .env paths are handled by _SSH_PATH_RE and _ENV_FILE_RE below, which need
-    # a per-path check (public keys and template env files are excluded).
-    r"\bid_(?:rsa|dsa|ecdsa|ed25519)\b(?!\.pub)"
-    r"|(?<![\w.])\.aws\b"
+    # ~/.ssh paths, bare id_* key filenames and .env paths are handled by _SSH_PATH_RE,
+    # _KEY_FILE_RE and _ENV_FILE_RE below, which need a per-name check (public keys,
+    # certificates and template env files are excluded).
+    r"(?<![\w.])\.aws\b"
     r"|\baws_secret_access_key\b"
     r"|(?<![\w.])\.netrc\b"
     r"|(?<![\w.])\.git-credentials\b"
@@ -167,9 +167,19 @@ _REMOTE_DESTINATION_RE = re.compile(
 )
 
 
-# A ~/.ssh path with up to 8 bounded segments (nested dirs and globs such as ~/.ssh/*.pub or
-# ~/.ssh/work/id_ed25519.pub). The whole path is captured so its last segment can be checked.
-_SSH_PATH_RE = re.compile(r"(?i)(?<![\w.])\.ssh((?:[/\\][\w.*?-]{1,64}){0,8})(?![\w-])")
+# A ~/.ssh reference, then (matched separately at its end) the path below it: up to 8 bounded
+# segments (nested dirs and globs such as ~/.ssh/*.pub or ~/.ssh/work/id_ed25519.pub) and an
+# optional trailing separator. The tail must be COMPLETE: no further filename character or
+# separator may follow. A tail that cannot be read completely (a segment over the cap, a
+# deeper path) does not match, and an unproven path is treated as private.
+_SSH_DIR_RE = re.compile(r"(?i)(?<![\w.])\.ssh(?![\w-])")
+_SSH_TAIL_RE = re.compile(r"((?:[/\\][\w.*?~-]{1,64}){0,8}[/\\]?)(?![\w.*?~/\\-])")
+# A bare id_* key filename, captured whole (id_ed25519, id_rsa-cert.pub, id_ecdsa_sk) so a
+# public key or certificate is judged by its complete name, not by its id_* prefix.
+_KEY_FILE_RE = re.compile(r"(?i)\bid_(?:rsa|dsa|ecdsa|ed25519)(?![a-z0-9])[\w.~-]{0,64}")
+# One filename character, read with the same Unicode \w semantics as _KEY_FILE_RE itself.
+_FILENAME_CHAR_RE = re.compile(r"[\w.~-]")
+
 _SSH_NON_SECRET_NAMES = frozenset({"config", "known_hosts", "known_hosts.old", "authorized_keys"})
 
 # A .env file with any chain of up to 8 ".word" suffixes (.env.production.local). The chain is
@@ -182,10 +192,15 @@ _ENV_TEMPLATE_SEGMENTS = frozenset(
 
 def _ssh_path_is_secret(tail: str) -> bool:
     """True unless the ~/.ssh path names only a public key, config, or known_hosts file."""
-    if not tail:
-        return True  # the whole ~/.ssh directory
-    last = tail.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].lower()
-    return not (last.endswith(".pub") or last in _SSH_NON_SECRET_NAMES)
+    if not tail or tail[-1] in "/\\":
+        return True  # the whole ~/.ssh directory, or a directory below it
+    last = tail.replace("\\", "/").rsplit("/", 1)[-1]
+    return not (_is_public_file(last) or last.rstrip(".").lower() in _SSH_NON_SECRET_NAMES)
+
+
+def _is_public_file(name: str) -> bool:
+    """True if a filename is a public key or certificate (*.pub, including *-cert.pub)."""
+    return name.rstrip(".").lower().endswith(".pub")
 
 
 def _env_file_is_secret(chain: str) -> bool:
@@ -198,8 +213,16 @@ def _has_credential_location(line: str) -> bool:
     """True if *line* names at least one private credential location."""
     if _CREDENTIAL_LOCATION_RE.search(line):
         return True
-    if any(_ssh_path_is_secret(m.group(1)) for m in _SSH_PATH_RE.finditer(line)):
-        return True
+    for m in _KEY_FILE_RE.finditer(line):
+        # A name longer than the cap continues past the match; its real final extension is
+        # unknown, so it is conservatively NOT public (a truncated "...pub.backup" must flag).
+        truncated = _FILENAME_CHAR_RE.match(line, m.end()) is not None
+        if truncated or not _is_public_file(m.group(0)):
+            return True
+    for m in _SSH_DIR_RE.finditer(line):
+        tail = _SSH_TAIL_RE.match(line, m.end())
+        if tail is None or _ssh_path_is_secret(tail.group(1)):
+            return True
     return any(_env_file_is_secret(m.group(1)) for m in _ENV_FILE_RE.finditer(line))
 
 

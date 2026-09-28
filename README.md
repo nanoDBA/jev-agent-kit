@@ -2,9 +2,9 @@
 
 Typed decisions for agent workflows, using [TypeSafe's Jev](https://typesafe.ai).
 
-**Stop recognized secrets from reaching the model, audit skills before your agent installs
-them, and check "all tests pass" against real test reports, in Claude Code, Codex and Hermes
-Agent.**
+**Give Claude Code, Codex and Hermes Agent a structured way to make narrow judgment calls:
+route ambiguous requests, verify claims, review tool calls, and inspect skills before
+installation.**
 
 Your coding agent writes code, but it also makes judgment calls along the way. Did its final
 message claim the tests passed? Should a support request go to a person? Jev is a model for
@@ -17,7 +17,7 @@ optional hooks that check tool calls before they run.
 
 ## Quick start
 
-Three catches, offline, in about a minute. You need Python 3.11 or later; no account or API
+Three demos, offline, in about a minute. You need Python 3.11 or later; no account or API
 key.
 
 ```sh
@@ -25,9 +25,9 @@ git clone https://github.com/nanoDBA/jev-agent-kit.git
 cd jev-agent-kit
 python -m pip install -e .
 
-jev-kit audit examples/suspicious-skill   # a malicious skill: 3 high-severity findings
-python examples/leak_check.py             # a leaked AWS key: blocked, 0 requests sent
-python examples/verify_claim.py           # "All tests pass" with no test report: caught
+python examples/verify_claim.py           # check "All tests pass" against the test reports
+jev-kit audit examples/suspicious-skill   # inspect a skill before installing it
+python examples/leak_check.py             # keep a leaked AWS key out of the request
 ```
 
 Where a demo needs a Jev answer, it uses a fixed, scripted one instead of calling the
@@ -89,6 +89,8 @@ Set it up for your agent: [Claude Code](docs/guides/claude-code.md) ·
   parsing in code.
 - Each answer is recorded in a receipt, so you can review it and measure how well Jev works
   on your own tasks.
+- Requests are trimmed to the fields a question declares, and a request that matches a
+  recognized credential pattern is refused before it leaves your machine.
 
 ## One example: "all tests pass"
 

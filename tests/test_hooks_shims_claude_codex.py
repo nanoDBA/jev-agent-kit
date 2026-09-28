@@ -369,3 +369,30 @@ def test_hooks_declare_a_producer_bound_to_their_source(tmp_path: Any) -> None:
     assert changed != source
     edited.write_text(changed, encoding="utf-8")
     assert producer_id("claude", str(edited)) != captured[0]["producer"]
+
+
+@pytest.mark.parametrize(
+    ("mode", "expect_ask"), [(Mode.SHADOW, False), (Mode.ENFORCE, True)]
+)
+def test_unreadable_hook_source_fails_through_the_normal_path(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch, mode: Mode, expect_ask: bool
+) -> None:
+    # If a hook cannot compute its identity, it must not crash the host, must not send the
+    # call unbound, and must answer like any other failure (P04).
+    from jev_kit.hooks.core import PRODUCER_UNAVAILABLE, producer_id
+
+    assert producer_id("claude", str(tmp_path / "missing.py")) == PRODUCER_UNAVAILABLE
+    monkeypatch.setattr(claude_shim, "_PRODUCER", PRODUCER_UNAVAILABLE)
+    calls: list[dict[str, Any]] = []
+
+    def _runner(request: dict[str, Any]) -> dict[str, Any]:
+        calls.append(request)
+        return {"status": "ok", "records": [{"route": "ask", "is_mock": True}]}
+
+    event = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "ls"}}
+    response = claude_shim.handle_claude_event(
+        event, mode=mode, question_set_path=_QUESTION_SET_PATH, runner=_runner
+    )
+    assert calls == []
+    decision = response.get("hookSpecificOutput", {}).get("permissionDecision")
+    assert (decision == "ask") is expect_ask

@@ -783,9 +783,35 @@ def test_state_producer_is_part_of_calibration_identity(
     assert (rec["threshold_status"] == "calibrated") is calibrated
 
 
-@pytest.mark.parametrize("producer", ["", "Hook@src:x", "hook.claude", 7, "a@src:" + "g" * 28])
-def test_malformed_producer_is_a_config_error(tmp_path: Any, producer: Any) -> None:
+@pytest.mark.parametrize(
+    "producer", [None, "", "Hook@src:x", "hook.claude", 7, "a@src:" + "g" * 28]
+)
+def test_malformed_producer_is_a_config_error(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch, producer: Any
+) -> None:
+    from jev_kit.engine import run_json
+
+    monkeypatch.setenv("JEV_KIT_RECEIPTS_DIR", str(tmp_path))
+
     req = request("shadow")
-    req["producer"] = producer
+    req["producer"] = producer  # None is an explicit null, which the schema does not allow
     resp = decide(req, transport=reply(0.1), config=config(tmp_path))
     assert resp["status"] == "error" and resp["reason"] == "config"
+    via_json = run_json(req, transport=reply(0.1))
+    assert via_json["status"] == "error" and via_json["reason"] == "config"
+
+
+def test_producer_free_fingerprints_match_the_previous_release() -> None:
+    # Pinned from main at 25a15f0 (before producers existed). Requests without a producer must
+    # keep their fingerprints so existing calibration still applies. If a deliberate egress
+    # change moves this value, update it and say in the change that calibration is invalidated.
+    from jev_kit.engine import effective_contract
+    from jev_kit.fingerprint import question_fingerprint
+    from jev_kit.questionset import load_question_set
+
+    fp = question_fingerprint(
+        instructions="Is the command destructive?", criteria=None, question_type="noul",
+        option_or_level_set=[], model="jev-1.13.0",
+        egress_contract=effective_contract(load_question_set(question_set()), EngineConfig()),
+    )
+    assert fp == "7d8c07ad92a31d0fb7ddc30066000eb578e3028961d04c7f5ba7a84ba3755e82"

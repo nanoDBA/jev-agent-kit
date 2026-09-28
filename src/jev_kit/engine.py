@@ -394,7 +394,8 @@ def _decide(
         return _error_envelope(FailReason.CONFIG)
 
     producer = request.get("producer")
-    if producer is not None and not (
+    # Present means a valid string; an explicit null is malformed, as in the published schema.
+    if "producer" in request and not (
         isinstance(producer, str) and _PRODUCER_PATTERN.fullmatch(producer)
     ):
         return _error_envelope(FailReason.CONFIG)

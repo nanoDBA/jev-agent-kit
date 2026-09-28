@@ -15,13 +15,13 @@ every host shim inherits them:
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from jev_kit.egress import source_digest
 from jev_kit.types import Mode
 
 # The default self-deadline, chosen to sit well under Hermes' 30s fail-closed hook timeout.
@@ -68,16 +68,24 @@ def _fail_closed(
     return HookResult(outcome, None, reason, is_mock, timed_out)
 
 
+PRODUCER_UNAVAILABLE = "unavailable"
+
+
 def producer_id(name: str, shim_file: str) -> str:
     """Identity of a hook's state preprocessing: its own source plus this module's.
 
     Sent as the request's `producer`, which the engine binds into every fingerprint, so any
-    change to how a hook builds state invalidates calibration made with the old code.
+    change to how a hook builds state invalidates calibration made with the old code. Never
+    raises: if the source cannot be read, returns PRODUCER_UNAVAILABLE, and the hook then
+    fails the call through its normal path (allow in shadow, ask in enforce).
     """
-    shim = Path(shim_file).read_bytes()
-    core = Path(__file__).read_bytes()
-    digest = source_digest(shim + bytes(1) + core)
-    return f"hook.{name}@{digest}"
+    try:
+        source = Path(shim_file).read_bytes() + bytes(1) + Path(__file__).read_bytes()
+    except OSError:
+        return PRODUCER_UNAVAILABLE
+    # Normalize line endings so CRLF and LF checkouts of the same revision agree.
+    normalized = source.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return f"hook.{name}@src:{hashlib.sha256(normalized).hexdigest()[:28]}"
 
 
 def decide_tool_call(
@@ -90,6 +98,10 @@ def decide_tool_call(
     self_deadline_s: float = DEFAULT_SELF_DEADLINE_S,
 ) -> HookResult:
     """Judge one tool call. Returns ALLOW or ASK; never raises for runtime conditions."""
+    if producer == PRODUCER_UNAVAILABLE:
+        # Without an identity the call cannot be bound to its calibration; never send it
+        # unbound (that would silently change the fingerprint) and never crash the host.
+        return _fail_closed(mode, "producer_unavailable")
     request = {
         "schema_version": 1,
         "op": "decide",

@@ -58,7 +58,7 @@ def handle(request: str) -> str:
     )
     rec = response["records"][0]
     print(f"request: {request!r}")
-    print("Which handler should take it?")
+    print("Which handler should take it?  (scripted demo answer)")
     for option, p in rec["distribution"].items():
         bar = "#" * round(p * 20)
         print(f"  {option:<15} {bar:<20} {p:.2f}")

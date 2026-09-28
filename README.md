@@ -27,23 +27,29 @@ optional hooks that check tool calls before they run.
 
 ## One example: "all tests pass"
 
-Agents sometimes finish with "All tests pass" when no test ran. Here the kit catches it:
+Agents sometimes finish with "All tests pass" when no test ran. This is how the kit checks:
 
 ```text
-Agent says:    'Refactored the parser and cleaned up the imports. All tests pass.'
-Commands run:  git diff --stat, ruff check src, git add -A
-Test reports:  0  (0 tests passed, counted in code)
-Jev:           does the message claim the tests passed?  p(yes)=0.96
-Verdict:       the claim is not backed by a test report; ask the agent to run them
+Agent says:     'Refactored the parser and cleaned up the imports. All tests pass.'
+Commands run:   git diff --stat, ruff check src, git add -A
+Test reports:   0  (0 tests passed, counted in code)
+Jev (scripted): does the message claim the tests passed?  p(yes)=0.96
+Verdict:        the claim is not backed by a test report; ask the agent to run them
 ```
 
-Two things happened. Code looked for test reports from this session and found none. Jev read
-the agent's final message and judged that it claims the tests passed. Put together, the claim
-has nothing behind it, so the agent is asked to run the tests.
+The work is split. Code looks for test reports from this session; here it found none. Jev's
+job is to read the agent's final message and judge whether it claims the tests passed. Code
+then combines the two: a claim with no test report behind it means the agent is asked to run
+the tests.
 
 Neither part could do this alone. Code can count test reports but cannot reliably tell
 whether a sentence claims success; Jev can read the sentence but should not be trusted to
-count. Run it yourself in the next section.
+count.
+
+In this demo, Jev's answer is scripted so it runs offline, and the kit does not act on it
+yet: until you measure a threshold for this question, code treats every message as a claim.
+The verdict here is the same either way. A trusted answer matters for the other case: it lets
+code skip the check when the agent made no such claim. Run it yourself in the next section.
 
 ## Try it in a minute
 
@@ -156,8 +162,10 @@ a call, but they never tell your agent to skip its own approval rules.
 **Nothing is trusted until you measure it.** A Jev answer comes with probabilities, and how
 far to trust a given probability depends on the question and your data. The kit acts on an
 answer only when you have a threshold for that exact question, measured on your own labeled
-examples. None ship with the kit. Until you add one, the kit reports "no advice" and your
-code keeps its normal path, which is why the demos above end the way they do.
+examples. None ship with the kit. Until you add one, an advisory question (such as routing)
+comes back as `no_advice`, and your code keeps its normal path. A gate (such as the tool-call
+checks) comes back as `ask`, meaning the call needs a person or another check before it goes
+ahead.
 
 **Demo answers can never approve anything.** The scripted answers in the demos are marked
 as mock answers everywhere they appear, including the receipts, and the kit refuses to act on
@@ -177,8 +185,9 @@ agent behaves exactly as before, and you collect evidence about how Jev would ha
 **Enforce mode** lets the hooks act on their checks. Turn it on only with the environment
 owner's approval, after measuring thresholds on labeled data. Two stops work without any
 calibration: a request containing a credential, and a command that cannot be safely
-summarized. Everything else, with today's uncalibrated question sets, is sent to you, even
-harmless calls such as `ls`.
+summarized. With today's uncalibrated question sets, every other checked call is also
+stopped for review, even harmless ones such as `ls`: Claude Code asks you, while Codex and
+Hermes block the call.
 
 | Host | What the hook returns when a check does not pass in enforce mode |
 | --- | --- |
@@ -201,7 +210,7 @@ python examples/route_request.py
 
 ```text
 request: 'Customer says order 1182 was charged twice and asks for a refund.'
-Which handler should take it?
+Which handler should take it?  (scripted demo answer)
   deterministic   #                    0.05
   specialist_llm  #####                0.24
   human           ##############       0.71

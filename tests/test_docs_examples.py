@@ -66,8 +66,7 @@ def test_route_request_matches_readme() -> None:
     out = _run_example("route_request.py")
     assert "route:   no_advice" in out
     assert "handled: specialist_llm" in out
-    # The README labels the scripted answer right after the output.
-    assert "The answer in this demo is scripted" in README
+    assert "(scripted demo answer)" in out  # labelled in the output itself
     for line in out.splitlines():
         assert line in README, line
 
@@ -317,7 +316,8 @@ def test_new_examples_match_readme(example: str) -> None:
 
 def test_verify_claim_keeps_counting_in_code_and_stays_cautious() -> None:
     out = _run_example("verify_claim.py")
-    assert "Test reports:  0  (0 tests passed, counted in code)" in out
+    assert "Test reports:   0  (0 tests passed, counted in code)" in out
+    assert "Jev (scripted):" in out  # the scripted answer is labelled in the output
     assert "not backed by a test report" in out
 
 
@@ -391,7 +391,7 @@ def test_verify_claim_rejects_reports_that_show_no_pass(
     assert module.passed_tests(report) == 0
     module.main([report])
     out = capsys.readouterr().out
-    assert "Test reports:  1  (0 tests passed" in out
+    assert "Test reports:   1  (0 tests passed" in out
     assert "not backed by a test report" in out
 
 

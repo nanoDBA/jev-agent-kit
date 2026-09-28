@@ -10,6 +10,9 @@ every host shim inherits them:
   and abandons a result that misses the deadline, synthesizing the fail-closed outcome, so it
   never depends on a host hook timeout to fail closed (Codex fails open at 600s).
 - Enforce fails closed to ASK on any failure, timeout, or gate that did not clear.
+- Command properties (ADR 0005) are computed here, in code, and added to state as keyed
+  booleans. They are evidence only and can never allow a call. When the command cannot be
+  parsed confidently, enforce never allows: unknown is treated as risky.
 """
 
 from __future__ import annotations
@@ -23,6 +26,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from jev_kit import command_properties
+from jev_kit.command_properties import extract_command_properties
 from jev_kit.types import Mode
 
 # The default self-deadline, chosen to sit well under Hermes' 30s fail-closed hook timeout.
@@ -105,7 +110,8 @@ PRODUCER_UNAVAILABLE = "unavailable"
 
 
 def producer_id(name: str, shim_file: str) -> str:
-    """Identity of a hook's state preprocessing: its own source plus this module's.
+    """Identity of a hook's state preprocessing: its own source, this module's, and the
+    command-property extractor's (ADR 0005).
 
     Sent as the request's `producer`, which the engine binds into every fingerprint, so any
     change to how a hook builds state invalidates calibration made with the old code. Never
@@ -113,7 +119,14 @@ def producer_id(name: str, shim_file: str) -> str:
     fails the call through its normal path (allow in shadow, ask in enforce).
     """
     try:
-        source = Path(shim_file).read_bytes() + bytes(1) + Path(__file__).read_bytes()
+        source = (
+            Path(shim_file).read_bytes()
+            + bytes(1)
+            + Path(__file__).read_bytes()
+            # The property extractor shapes state too, so its source is part of the identity.
+            + bytes(1)
+            + Path(command_properties.__file__).read_bytes()
+        )
     except OSError:
         return PRODUCER_UNAVAILABLE
     # Normalize line endings so CRLF and LF checkouts of the same revision agree.
@@ -140,6 +153,9 @@ def decide_tool_call(
         # project a hook runs in pick its own question and egress rules. Reject it through the
         # normal config-failure path; never resolve it and never fall back to the default.
         return _fail_closed(mode, "config")
+    # Facts about the full command line, computed locally (ADR 0005). Only a question set that
+    # declares these fields (kind `flag`) sends them; others drop them as undeclared.
+    properties = extract_command_properties(call.command)
     request = {
         "schema_version": 1,
         "op": "decide",
@@ -150,6 +166,7 @@ def decide_tool_call(
             "command": call.command,
             "target": call.target,
             "context": call.context,
+            **properties.as_state(),
         },
     }
     run: Callable[[dict[str, Any]], dict[str, Any]]
@@ -174,7 +191,15 @@ def decide_tool_call(
         # Do not block on a still-running worker; a hung runner must not hang the hook.
         pool.shutdown(wait=False, cancel_futures=True)
 
-    return _map_response(response, mode)
+    result = _map_response(response, mode)
+    if mode is Mode.ENFORCE and not properties.parse_confident and result.outcome is not (
+        HookOutcome.ASK
+    ):
+        # Unknown is risky, never safe: a command the property parser could not read never
+        # reaches ALLOW in enforce, whatever the gate answered. The call still runs so the
+        # decision leaves its receipt. Shadow never changes host behavior.
+        return HookResult(HookOutcome.ASK, "ask", "command_parse_unconfident", result.is_mock)
+    return result
 
 
 def _map_response(response: dict[str, Any], mode: Mode) -> HookResult:

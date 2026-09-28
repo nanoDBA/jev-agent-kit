@@ -53,6 +53,7 @@ class ContentKind(StrEnum):
     CODE = "code"  # normalized by a language profile
     FREE_TEXT = "free_text"  # only from a named source type
     TRANSCRIPT = "transcript"  # off unless enabled
+    FLAG = "flag"  # a JSON boolean or null computed in code, never text (ADR 0005)
 
 
 # Kinds that may carry personal data, so a live call needs an affirmative DPA (spec story 52).
@@ -268,6 +269,12 @@ def _transform_value(value: Any, spec: FieldSpec, ctx: EgressContext, depth: int
         raise ValidationError(FailReason.EGRESS_BLOCKED, "max_depth")
     if value is None:
         return None
+    if spec.kind is ContentKind.FLAG:
+        # A flag field carries only a boolean (or null for unknown) that code computed. Any
+        # other value is refused rather than coerced, so a flag can never carry text (ADR 0005).
+        if isinstance(value, bool):
+            return value
+        raise ValidationError(FailReason.EGRESS_BLOCKED, "flag_not_boolean")
     if isinstance(value, str):
         return _transform_scalar(spec.kind, value, spec.params, ctx)
     if isinstance(value, bool):

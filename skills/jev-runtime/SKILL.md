@@ -32,7 +32,9 @@ do not load the whole repository, research archive, or every reference into cont
    inventing support outside the task's authorization.
 5. Check sufficiency again against what survives permitted transforms and size limits. A
    command field reaches Jev as the executable's basename only, with no subcommand, flags, or
-   arguments, so Jev cannot tell `rm file` from `rm -rf /`. If essential evidence is lost or
+   arguments. The hooks add `cmd_*` facts computed in code (for example
+   `cmd_recursive_delete`), which let Jev tell `rm file` from `rm -rf /`; `null` there means
+   unknown, never false. If essential evidence is lost or
    cannot fit the selected schema, skip that inference: advisory work continues with
    `no_advice`; a gate goes to `ask`. Gather authorized evidence, use a deterministic check,
    or ask a human. Confidence cannot repair an evidence gap.

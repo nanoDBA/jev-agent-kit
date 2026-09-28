@@ -164,7 +164,8 @@ the CLI or the engine's defaults, which still require a real attestation file. E
 rule of this ADR still applies to those requests: declared fields, transforms, the Tier 1
 scan of the final bytes, and the pinned model.
 
-Tests never take the live path: they run every example with `--offline`.
+Tests never take the live path: they run every example that can call Jev with `--offline`,
+and the examples that never call Jev use a mock transport directly.
 
 ## Implementation rules
 

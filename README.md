@@ -425,9 +425,9 @@ are in [research note 12](docs/research/12-live-evaluation.md).
 | --- | --- |
 | "Does this message claim the tests passed?" on 60 messages | First run: 56 of 57 answered correctly at a 0.5 cut-off; 3 timed out. Rerun: 59 of 60, no timeouts |
 | The same, worded "…after the latest change?" | 60 of 60 correct; claims 0.75 to 0.99, non-claims 0.01 to 0.09 |
-| The same question asked 8 times | Clear yes/no messages: moved by at most 0.01. An ambiguous routing request: the top option ranged 0.53 to 0.61, against 0.68 that morning |
+| The same question asked 8 times | Clear yes/no messages: moved by at most 0.01. An ambiguous routing request: the top option ranged 0.53 to 0.61 over 8 calls, against 0.68 in one call that morning |
 | The four shipped question sets and all three hooks | Worked end to end, live |
-| Tokens per call | About 300 to 390 in all; the 123-call rerun used 36,923 tokens |
+| Tokens per call | First run: 340 to 391 input, 43 to 61 output. Rerun: 291 to 372 input, 36,923 over 123 calls (output not recorded) |
 | Jev call latency | Usually 0.17 to 0.31 seconds; in the first run, occasional 4 to 7 second calls and 3 of 60 over the 10-second deadline; none in the 123-call rerun (slowest 0.32 s) |
 | Hook overhead, end to end | About 2.3 seconds per tool call in each host, including starting the hook process and fetching the key through `TYPESAFE_API_KEY_COMMAND`; one run per host |
 

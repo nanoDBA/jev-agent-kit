@@ -122,12 +122,13 @@ us to close the joint account and waive the final bill." human 0.99.
 
 **Routing repeatability.** The refund request, asked 8 more times that afternoon:
 `deterministic` 0.53 to 0.61, `human` 0.35 to 0.42, `specialist_llm` 0.04 to 0.05; the
-morning's single answer was 0.68 and 0.25. The Fahrenheit request gave `deterministic` 1.00
-all 8 times. So the 0.01 repeatability measured on clear yes/no messages (section 1) does not
+morning's single answer was 0.68 and 0.25 (section 2a). The Fahrenheit request gave
+`deterministic` 1.00 all 8 times. Every answer is in the data file's `routing_repeats`. So the 0.01 repeatability measured on clear yes/no messages (section 1) does not
 carry over to an ambiguous Choice: there the top answer moved by up to 0.15 in one day.
 
-**Usage.** The 123 calls in this rerun reported 36,923 tokens in all, about 300 per call
-(`reported_tokens` in the receipts). The kit's default per-process budget of 100 calls
+**Usage.** The 123 calls in this rerun reported 36,923 input tokens in all, 291 to 372 per
+call (`reported_tokens` in the receipts, which is the service's `usage.input_tokens`; each
+call's count is in the data file's `input_tokens`). Receipts do not record output tokens. The kit's default per-process budget of 100 calls
 stopped the first pass at call 100; the remaining 23 ran in a second process.
 
 ## Limits

@@ -871,5 +871,589 @@
     "human": 0.99
    }
   }
- ]
+ ],
+ "input_tokens": {
+  "_note": "reported_tokens (the service's usage.input_tokens) from each live receipt of this rerun, in call order. Output tokens are not recorded in receipts.",
+  "calls": [
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 299
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 293
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 299
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 294
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 294
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 295
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 293
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 301
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 291
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 295
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 294
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 308
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 301
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 295
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 295
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 291
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 294
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 297
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 295
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 294
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 295
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 293
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 303
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 293
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 292
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 302
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 292
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 294
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 293
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 305
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 295
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 301
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 292
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 294
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 292
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 301
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 294
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 304
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 303
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 304
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 302
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 297
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 303
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 299
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 297
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 305
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 295
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 299
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 312
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 305
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 299
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 299
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 295
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 301
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 299
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 302
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 299
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 297
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 307
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 297
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 304
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 306
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 304
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 302
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 297
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 309
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 299
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 305
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 302
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 305
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 302
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 308
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 304
+   },
+   {
+    "question_set": "preflight-route v1",
+    "input_tokens": 361
+   },
+   {
+    "question_set": "preflight-route v1",
+    "input_tokens": 368
+   },
+   {
+    "question_set": "preflight-route v1",
+    "input_tokens": 372
+   }
+  ]
+ },
+ "routing_repeats": {
+  "_note": "8 more live calls per request through preflight-route v1, later on 2026-09-28, in call order.",
+  "Customer says order 1182 was charged twice and asks for a refund.": [
+   {
+    "deterministic": 0.56,
+    "specialist_llm": 0.05,
+    "human": 0.39
+   },
+   {
+    "deterministic": 0.58,
+    "specialist_llm": 0.04,
+    "human": 0.38
+   },
+   {
+    "deterministic": 0.61,
+    "specialist_llm": 0.04,
+    "human": 0.35
+   },
+   {
+    "deterministic": 0.55,
+    "specialist_llm": 0.05,
+    "human": 0.4
+   },
+   {
+    "deterministic": 0.53,
+    "specialist_llm": 0.05,
+    "human": 0.42
+   },
+   {
+    "deterministic": 0.6,
+    "specialist_llm": 0.04,
+    "human": 0.36
+   },
+   {
+    "deterministic": 0.53,
+    "specialist_llm": 0.05,
+    "human": 0.42
+   },
+   {
+    "deterministic": 0.6,
+    "specialist_llm": 0.04,
+    "human": 0.36
+   }
+  ],
+  "Convert 72 degrees Fahrenheit to Celsius.": [
+   {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0
+   },
+   {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0
+   },
+   {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0
+   },
+   {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0
+   },
+   {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0
+   },
+   {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0
+   },
+   {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0
+   },
+   {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0
+   }
+  ]
+ }
 }

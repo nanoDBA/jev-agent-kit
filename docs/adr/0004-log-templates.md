@@ -93,6 +93,16 @@ contains `{host}` or other template-looking text cannot expand or forge a slot.
   visible to the final scan. Template ids and enum values must be safe identifiers and also
   pass the detectors. Every validator matches the whole string (`fullmatch`), so a terminal
   newline cannot slip past an anchored pattern.
+- Template text uses single ASCII spaces only: no runs of spaces, no leading or trailing space,
+  and no tab, non-breaking space or other whitespace (the charset refuses them).
+- **Digit-stream card check.** After a record's slots are transformed, the digits of every
+  `metric` and `enum` slot value are concatenated in template order, ignoring the literal
+  text, spaces, signs and decimal points between them, and every 13 to 19 digit window is
+  Luhn-checked. Any hit refuses the record. This does not depend on how the Tier 1 card rule
+  bridges separators, so spellings such as `4111  1111 1111 1111` (a double space),
+  `4111 -1111 -1111 -1111` (signed values), `4111 1111 1111 1111 0` (a trailing slot that
+  pushes the run past a Luhn-valid length) or a card split by literal words are all caught.
+  Signs are kept on metric values because the stream ignores them.
 - Each rendered slot value, of every kind, is checked on its own before concatenation: it must
   contain no newline, control character or brace, and the same Tier 1 detectors the final scan
   uses (`egress.scan_text`) must not match it.
@@ -160,10 +170,17 @@ existing fingerprint. A test pins a pre-existing fingerprint to prove this.
 - A numeric metric slot still sends the number verbatim. A number can itself be sensitive (an
   account or PIN-length value); authors should declare metric slots only for counts, sizes,
   durations and codes. Card-number-shaped values are still caught by the final scan.
-- A template author can still separate numeric slots with literal words (`{a} and {b}`), so a
-  host could split a card number across slots in a way no detector reassembles. Authors should
-  not declare several adjacent numeric slots without need; this is covered by the trusted
-  definitions precondition.
+- The digit-stream check fails closed and has false positives: about one random 13 to 19 digit
+  window in ten is Luhn-valid, so a record whose numeric slots together carry 13 or more
+  digits is often refused. Authors should keep numeric slots few and small (counts, codes,
+  durations), and use `enum` for anything else.
+- Digits inside `identifier` (HMAC tokens), `command`, `contact` and `path` slots are not part
+  of the stream: those values are tokens or placeholders produced locally, not host digits.
+  A card number cannot reach them unmasked except through a public-names allowlist entry or a
+  command basename, both of which still pass the per-slot and final scans.
+- Card numbers are the only Tier 1 class that is reassembled across slots. Other classes split
+  across several numeric slots (for example an SSN as `123 45 6789`) are caught only if the
+  final scan's pattern bridges the rendered form.
 - Plain `metric` state fields keep the existing 64-character token behavior; this ADR does not
   change them.
 - An `identifier` token is linkable and still personal data (ADR 0002). A `log` field is a

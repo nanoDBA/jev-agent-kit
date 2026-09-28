@@ -133,6 +133,10 @@ def _parse_template(template_id: Any, spec: Any) -> LogTemplate:
     text = spec["text"]
     if not isinstance(text, str) or not 1 <= len(text) <= MAX_TEMPLATE_TEXT:
         raise _config("log_template_text")
+    # Whitespace is normalized: single ASCII spaces only (the charset already refuses tabs and
+    # other whitespace), no runs and no leading or trailing space.
+    if "  " in text or text != text.strip(" "):
+        raise _config("log_template_whitespace")
     raw_params = spec.get("params", {})
     if not isinstance(raw_params, dict) or len(raw_params) > MAX_SLOTS:
         raise _config("log_template_params")
@@ -240,6 +244,42 @@ def _slot_value(slot: Slot, value: Any, ctx: EgressContext) -> str:
     return str(out)
 
 
+_DIGIT_SLOT_KINDS = frozenset({"metric", _ENUM})
+_PAN_MIN, _PAN_MAX = 13, 19
+
+
+def _luhn(digits: str) -> bool:
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        d = ord(ch) - 48
+        if i % 2 == 1:
+            d = d * 2 - 9 if d > 4 else d * 2
+        total += d
+    return total % 10 == 0
+
+
+def _check_digit_stream(template: LogTemplate, values: Mapping[str, str]) -> None:
+    """Refuse a record whose numeric slots could spell a card number in any spelling.
+
+    The digits of every metric and enum slot value are concatenated in template order, ignoring
+    whatever literal text, spaces or signs sit between them, and every 13 to 19 digit window is
+    Luhn-checked (the windows of each single value are a subset). This does not depend on how the
+    Tier 1 card rule bridges separators (reviewer finding L01). It fails closed: roughly one in ten
+    random windows is Luhn-valid, so records with 13 or more slot digits are sometimes refused.
+    """
+    stream = "".join(
+        ch
+        for name in template.slot_order
+        if template.slots[name].kind in _DIGIT_SLOT_KINDS
+        for ch in values[name]
+        if "0" <= ch <= "9"
+    )
+    for size in range(_PAN_MIN, min(_PAN_MAX, len(stream)) + 1):
+        for start in range(len(stream) - size + 1):
+            if _luhn(stream[start : start + size]):
+                raise _blocked("log_digit_stream_card")
+
+
 def _render_record(
     record: Any, templates: Mapping[str, LogTemplate], ctx: EgressContext
 ) -> dict[str, str]:
@@ -258,6 +298,7 @@ def _render_record(
     if not isinstance(params, Mapping) or set(params) != set(template.slots):
         raise _blocked("log_params_mismatch")
     values = {name: _transform_param(template.slots[name], params[name], ctx) for name in params}
+    _check_digit_stream(template, values)
     out: list[str] = []
     slot_iter = iter(template.slot_order)
     for piece in template.pieces:

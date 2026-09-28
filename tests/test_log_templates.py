@@ -262,7 +262,11 @@ def test_per_slot_scan_blocks_before_final_scan(
 ) -> None:
     # Proves the per-slot scan acts on its own (Codex L04): the PAN is refused while rendering,
     # so the final whole-request scan is never reached. With the per-slot scan disabled, the
-    # final scan would be called (and block), and this test fails.
+    # final scan would be called (and block), and this test fails. The digit-stream check is
+    # patched out here so only the per-slot scan can stop the value.
+    import jev_kit.log_templates as lt
+
+    monkeypatch.setattr(lt, "_check_digit_stream", lambda _t, _v: None)
     calls = _spy_final_scan(monkeypatch)
     blocked(tmp_path, {"events": [rec(host="db01", attempts=pan, reason="timeout")]})
     assert calls == []
@@ -284,6 +288,7 @@ def test_disabling_per_slot_scan_defers_to_final_scan(
     import jev_kit.log_templates as lt
 
     monkeypatch.setattr(lt, "scan_text", lambda _text: None)
+    monkeypatch.setattr(lt, "_check_digit_stream", lambda _t, _v: None)
     calls = _spy_final_scan(monkeypatch)
     blocked(tmp_path, {"events": [rec(host="db01", attempts=4111111111111111,
                                       reason="timeout")]})
@@ -449,3 +454,93 @@ def test_plain_metric_field_behavior_unchanged(tmp_path: Any) -> None:
     obj["state_schema"]["version"] = {"kind": "metric"}
     wire = sent(tmp_path, {"version": "python 3.11.4"}, obj)
     assert wire["state"]["version"] == "python 3.11.4"
+
+
+# --------------------------------------------------------------------------- digit stream (L01)
+
+
+def _luhn_ok(digits: str) -> bool:
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        d = int(ch) * (2 if i % 2 else 1)
+        total += d - 9 if d > 9 else d
+    return total % 10 == 0
+
+
+def _luhn_complete(prefix: str) -> str:
+    return next(prefix + c for c in "0123456789" if _luhn_ok(prefix + c))
+
+
+PAN16 = "4111111111111111"
+PAN13 = _luhn_complete("422222222222")
+PAN19 = _luhn_complete("622222222222222222")
+
+
+def _slots_qs(n: int, text: str | None = None) -> dict[str, Any]:
+    names = [f"s{i}" for i in range(n)]
+    body = text if text is not None else "v " + " ".join("{" + x + "}" for x in names) + " end"
+    return qset(templates={"t": {"text": body, "params": {x: {"kind": "metric"} for x in names}}})
+
+
+def _slots_state(parts: list[Any]) -> dict[str, Any]:
+    params = {f"s{i}": v for i, v in enumerate(parts)}
+    return {"events": {"level": "info", "template_id": "t", "params": params}}
+
+
+def _split(pan: str, ways: int) -> list[str]:
+    size = -(-len(pan) // ways)
+    return [pan[i : i + size] for i in range(0, len(pan), size)]
+
+
+def test_pan_constants_are_luhn_valid() -> None:
+    assert len(PAN13) == 13 and len(PAN19) == 19
+    assert all(_luhn_ok(p) for p in (PAN16, PAN13, PAN19))
+
+
+@pytest.mark.parametrize(
+    "parts",
+    [
+        ["4111", "-1111", "-1111", "-1111"],  # reviewer: signed values
+        ["+4111", "-1111", "+1111", "1111"],  # mixed signs
+        ["4111", "1111", "1111", "1111", "0"],  # reviewer: trailing extra slot, 17-digit run
+        ["7", "4111", "1111", "1111", "1111"],  # leading extra slot
+        ["04111", "1111", "1111", "1111"],  # leading zeros
+        ["0004111111111111111"],  # leading zeros in one value
+        [4111, 1111, 1111, 1111],  # ints
+        [-4111, 1111, -1111, 1111],
+        _split(PAN16, 2), _split(PAN16, 3), _split(PAN16, 4), _split(PAN16, 5),
+        _split(PAN13, 2), _split(PAN13, 3), _split(PAN19, 4), _split(PAN19, 5),
+        ["4111.1111", "1111.1111"],  # decimal points ignored by the digit stream
+    ],
+)
+def test_digit_stream_card_blocked(tmp_path: Any, parts: list[Any]) -> None:
+    blocked(tmp_path, _slots_state(parts), _slots_qs(len(parts)))
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["{s0}  {s1} {s2} {s3}",  # reviewer: double space
+     "{s0}\t{s1} {s2} {s3}",  # tab
+     "{s0}\u00a0{s1} {s2} {s3}",  # non-breaking space
+     " {s0} {s1} {s2} {s3}", "{s0} {s1} {s2} {s3} "],
+)
+def test_template_whitespace_normalized(tmp_path: Any, text: str) -> None:
+    qs = _slots_qs(4, text)
+    with pytest.raises(ValidationError):
+        load_question_set(qs)
+    resp, transport = run(tmp_path, _slots_state(["4111", "1111", "1111", "1111"]), qs)
+    assert resp["status"] == "error" and resp["reason"] == "config"
+    assert transport.requests == []
+
+
+@pytest.mark.parametrize(
+    "parts",
+    [["1", "2", "3", "4"], ["12", "345", "6789"], [200, 404, 3, 17], ["-5", "+7", "0.25"],
+     ["12345", "67890", "123"], ["1001", "2000", "3000", "4000"]],
+)
+def test_clean_numbers_across_slots_pass(tmp_path: Any, parts: list[Any]) -> None:
+    digits = "".join(ch for p in parts for ch in str(p) if ch.isdigit())
+    windows = [digits[i : i + n] for n in range(13, 20) for i in range(len(digits) - n + 1)]
+    assert not any(_luhn_ok(w) for w in windows)  # precondition: really clean
+    wire = sent(tmp_path, _slots_state(parts), _slots_qs(len(parts)))
+    assert wire["state"]["events"]["message"].startswith("v ")

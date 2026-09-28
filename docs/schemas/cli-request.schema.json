@@ -36,6 +36,11 @@
     "action_id": {
       "type": "string"
     },
+    "producer": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._-]{0,39}@src:[0-9a-f]{28}$",
+      "description": "Identity of the code that built the state, such as a hook. Bound into fingerprints."
+    },
     "requests": {
       "type": "array",
       "items": {

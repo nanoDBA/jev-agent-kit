@@ -31,8 +31,8 @@ Mapping to `ToolCall` mirrors the Claude Code shim:
   the command text there); otherwise the tool name itself.
 - `target`: the first of `tool_input["file_path"]`, `["path"]`, `["url"]`, `["notebook_path"]`
   that is a non-empty string, else `None`.
-- `context`: "key=value; ..." carrying the tool name, the event's `cwd`, and `turn_id` when
-  present.
+- `context`: "key=value; ..." carrying the tool name and `turn_id` when present. The event's
+  `cwd` is never sent: folder names often name a project or client.
 
 Note on `commandWindows` / `command_windows`: that field configures which command Codex itself
 runs to invoke *this hook program* on Windows (a `hooks.json` / `config.toml` concern owned by
@@ -61,6 +61,7 @@ from jev_kit.hooks.core import (
     Runner,
     ToolCall,
     decide_tool_call,
+    producer_id,
 )
 from jev_kit.types import Mode
 
@@ -74,6 +75,9 @@ _TARGET_FIELDS = ("file_path", "path", "url", "notebook_path")
 # Codex documents exit code 2 as a hard block regardless of JSON output (the same convention
 # Claude Code uses). Used as a fail-closed backstop for ASK/deny; never relied on alone.
 _EXIT_DENY = 2
+
+# Identity of this hook's state preprocessing; part of every gate fingerprint.
+_PRODUCER = producer_id("codex", __file__)
 
 
 def _mode_from_env() -> Mode:
@@ -112,9 +116,6 @@ def _extract_codex_call(event: dict[str, Any]) -> ToolCall | None:
     target = _first_str(tool_input, _TARGET_FIELDS)
 
     context_parts = [f"tool={tool_name}"]
-    cwd = event.get("cwd")
-    if isinstance(cwd, str) and cwd:
-        context_parts.append(f"cwd={cwd}")
     turn_id = event.get("turn_id")
     if isinstance(turn_id, str) and turn_id:
         context_parts.append(f"turn_id={turn_id}")
@@ -169,6 +170,7 @@ def handle_codex_event(
         call,
         mode=resolved_mode,
         question_set_path=resolved_question_set_path,
+        producer=_PRODUCER,
         runner=runner,
         self_deadline_s=self_deadline_s,
     )

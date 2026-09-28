@@ -303,3 +303,96 @@ def test_codex_main_enforce_via_argv_denies_and_exits_nonzero(
     out = json.loads(captured.out)
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert captured.err.strip() != ""
+
+
+@pytest.mark.parametrize(
+    ("handle", "event"),
+    [
+        (claude_shim.handle_claude_event, {
+            "hook_event_name": "PreToolUse", "tool_name": "Bash",
+            "tool_input": {"command": "ls", "description": "List files"},
+            "cwd": "/home/alice/acme-client-secret-project",
+        }),
+        (codex_shim.handle_codex_event, {
+            "hook_event_name": "PreToolUse", "tool_name": "shell", "turn_id": "t1",
+            "tool_input": {"command": "ls"},
+            "cwd": "/home/alice/acme-client-secret-project",
+        }),
+    ],
+)
+def test_working_directory_never_reaches_the_gate(handle: Any, event: dict[str, Any]) -> None:
+    # Folder names often name a project or client; the gate request must not carry them
+    # in any field (jak-y49).
+    captured: list[dict[str, Any]] = []
+
+    def _capturing_runner(request: dict[str, Any]) -> dict[str, Any]:
+        captured.append(request)
+        return {"status": "ok", "records": [{"route": "ask", "is_mock": True}]}
+
+    for mode in (Mode.SHADOW, Mode.ENFORCE):
+        handle(event, mode=mode, question_set_path=_QUESTION_SET_PATH, runner=_capturing_runner)
+
+    assert len(captured) == 2
+    for request in captured:
+        assert "acme-client-secret-project" not in json.dumps(request)
+        assert "cwd" not in request["state"].get("context", "")
+
+
+def test_hooks_declare_a_producer_bound_to_their_source(tmp_path: Any) -> None:
+    # Any change to a hook's state preprocessing must change its producer, and so every
+    # gate fingerprint it produces (jak-y49 P02).
+    from pathlib import Path
+
+    from jev_kit.hooks.core import producer_id
+
+    captured: list[dict[str, Any]] = []
+
+    def _capturing_runner(request: dict[str, Any]) -> dict[str, Any]:
+        captured.append(request)
+        return {"status": "ok", "records": [{"route": "ask", "is_mock": True}]}
+
+    event = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "ls"}}
+    claude_shim.handle_claude_event(
+        event, mode=Mode.SHADOW, question_set_path=_QUESTION_SET_PATH, runner=_capturing_runner
+    )
+    codex_shim.handle_codex_event(
+        {**event, "tool_name": "shell"}, mode=Mode.SHADOW,
+        question_set_path=_QUESTION_SET_PATH, runner=_capturing_runner,
+    )
+    assert captured[0]["producer"] == producer_id("claude", claude_shim.__file__)
+    assert captured[1]["producer"] == producer_id("codex", codex_shim.__file__)
+    assert captured[0]["producer"] != captured[1]["producer"]
+
+    edited = tmp_path / "claude.py"
+    source = Path(claude_shim.__file__).read_text(encoding="utf-8")
+    changed = source.replace('f"tool={tool_name}"', 'f"tool:{tool_name}"')
+    assert changed != source
+    edited.write_text(changed, encoding="utf-8")
+    assert producer_id("claude", str(edited)) != captured[0]["producer"]
+
+
+@pytest.mark.parametrize(
+    ("mode", "expect_ask"), [(Mode.SHADOW, False), (Mode.ENFORCE, True)]
+)
+def test_unreadable_hook_source_fails_through_the_normal_path(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch, mode: Mode, expect_ask: bool
+) -> None:
+    # If a hook cannot compute its identity, it must not crash the host, must not send the
+    # call unbound, and must answer like any other failure (P04).
+    from jev_kit.hooks.core import PRODUCER_UNAVAILABLE, producer_id
+
+    assert producer_id("claude", str(tmp_path / "missing.py")) == PRODUCER_UNAVAILABLE
+    monkeypatch.setattr(claude_shim, "_PRODUCER", PRODUCER_UNAVAILABLE)
+    calls: list[dict[str, Any]] = []
+
+    def _runner(request: dict[str, Any]) -> dict[str, Any]:
+        calls.append(request)
+        return {"status": "ok", "records": [{"route": "ask", "is_mock": True}]}
+
+    event = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "ls"}}
+    response = claude_shim.handle_claude_event(
+        event, mode=mode, question_set_path=_QUESTION_SET_PATH, runner=_runner
+    )
+    assert calls == []
+    decision = response.get("hookSpecificOutput", {}).get("permissionDecision")
+    assert (decision == "ask") is expect_ask

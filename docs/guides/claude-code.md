@@ -45,9 +45,14 @@ The same snippet is in [`examples/hosts/claude-code/settings.json`](../../exampl
 Keep the escaped quotes (`\"`) around the path so a folder name with spaces stays one
 argument. If your Python path has spaces, quote it the same way.
 
-Always pass `--question-set-path` as an absolute path. Without it, the hook looks for
-`skills/jev-runtime/questions/tool-call-gate.json` relative to the directory Claude Code is
-working in, which only exists inside this repository.
+Pass `--question-set-path` as an absolute path. Without it, the hook uses `JEV_KIT_HOOK_QUESTION_SET_PATH` if it is set (the older name
+`JEV_KIT_QUESTION_SET_PATH` still works, but the new name wins when both are set). With
+neither, it uses the `skills/jev-runtime/questions/tool-call-gate.json` of the repository
+the `jev_kit` code was loaded from, found from the module's own location and never from the
+working directory. That default only exists when `jev_kit` runs from a checkout of this
+repository (for example `pip install -e .`); a plain wheel install does not ship the skill
+folder, so the gate then has no question set and fails the normal way: no decision in
+shadow, and ask (Codex: deny) in enforce.
 
 ## 3. Try it without Claude Code
 

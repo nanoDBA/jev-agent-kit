@@ -29,19 +29,20 @@ import os
 from typing import Any, Protocol
 
 from jev_kit.hooks.core import (
+    DEFAULT_QUESTION_SET_PATH as DEFAULT_QUESTION_SET_PATH,
+)
+from jev_kit.hooks.core import (
     DEFAULT_SELF_DEADLINE_S,
     HookOutcome,
     Runner,
     ToolCall,
     decide_tool_call,
     producer_id,
+    question_set_path_from_env,
 )
 from jev_kit.types import Mode
 
-DEFAULT_QUESTION_SET_PATH = "skills/jev-runtime/questions/tool-call-gate.json"
-
 _MODE_ENV_VAR = "JEV_KIT_HOOK_MODE"
-_QUESTION_SET_ENV_VAR = "JEV_KIT_HOOK_QUESTION_SET_PATH"
 
 _BLOCK_MESSAGE = "jev-kit gate: blocked for human review."
 
@@ -64,14 +65,12 @@ def _mode_from_env() -> Mode:
         return Mode.SHADOW
 
 
-def _question_set_path_from_env() -> str:
-    return os.environ.get(_QUESTION_SET_ENV_VAR, DEFAULT_QUESTION_SET_PATH)
 
 
 def _resolve(mode: Mode | None, question_set_path: str | None) -> tuple[Mode, str]:
     resolved_mode = mode if mode is not None else _mode_from_env()
     resolved_path = (
-        question_set_path if question_set_path is not None else _question_set_path_from_env()
+        question_set_path if question_set_path is not None else question_set_path_from_env()
     )
     return resolved_mode, resolved_path
 
@@ -139,7 +138,8 @@ def pre_tool_call(
     `ctx` is accepted but unused beyond being part of the Hermes callback shape; this shim keeps
     no state on it. All decision logic lives in `hooks.core.decide_tool_call`. `mode` and
     `question_set_path` default from the environment when not given (`JEV_KIT_HOOK_MODE`,
-    default shadow; `JEV_KIT_HOOK_QUESTION_SET_PATH`, default the tool-call-gate set).
+    default shadow; `JEV_KIT_HOOK_QUESTION_SET_PATH` or its deprecated alias
+    `JEV_KIT_QUESTION_SET_PATH`, default the tool-call-gate set).
 
     Never raises: an unparseable event or any internal failure fails closed to a block in
     enforce and to allow in shadow, matching the core's own fail-closed behavior.

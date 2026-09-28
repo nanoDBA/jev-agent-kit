@@ -52,19 +52,20 @@ from collections.abc import Sequence
 from typing import Any
 
 from jev_kit.hooks.core import (
+    DEFAULT_QUESTION_SET_PATH as DEFAULT_QUESTION_SET_PATH,
+)
+from jev_kit.hooks.core import (
     DEFAULT_SELF_DEADLINE_S,
     HookOutcome,
     Runner,
     ToolCall,
     decide_tool_call,
     producer_id,
+    question_set_path_from_env,
 )
 from jev_kit.types import Mode
 
-DEFAULT_QUESTION_SET_PATH = "skills/jev-runtime/questions/tool-call-gate.json"
-
 _MODE_ENV_VAR = "JEV_KIT_HOOK_MODE"
-_QUESTION_SET_PATH_ENV_VAR = "JEV_KIT_QUESTION_SET_PATH"
 
 _TARGET_FIELDS = ("file_path", "path", "url", "notebook_path")
 
@@ -87,9 +88,6 @@ def _mode_from_env() -> Mode:
     return Mode.SHADOW
 
 
-def _question_set_path_from_env() -> str:
-    raw = os.environ.get(_QUESTION_SET_PATH_ENV_VAR, "").strip()
-    return raw or DEFAULT_QUESTION_SET_PATH
 
 
 def _first_str(mapping: dict[str, Any], keys: tuple[str, ...]) -> str | None:
@@ -143,7 +141,8 @@ def handle_claude_event(
     """Decide one Claude Code `PreToolUse` event and return its JSON hook response.
 
     `mode` and `question_set_path` fall back to environment variables
-    (`JEV_KIT_HOOK_MODE`, `JEV_KIT_QUESTION_SET_PATH`) and then to shadow mode and
+    (`JEV_KIT_HOOK_MODE`, `JEV_KIT_HOOK_QUESTION_SET_PATH` or its deprecated alias
+    `JEV_KIT_QUESTION_SET_PATH`) and then to shadow mode and
     `DEFAULT_QUESTION_SET_PATH` when neither is given. `self_deadline_s` defaults to the core's
     own `DEFAULT_SELF_DEADLINE_S` so this shim owns its deadline rather than trusting a host
     timeout (phase-3-4-plan.md safety amendment 1).
@@ -153,7 +152,7 @@ def handle_claude_event(
     """
     resolved_mode = mode if mode is not None else _mode_from_env()
     resolved_question_set_path = (
-        question_set_path if question_set_path is not None else _question_set_path_from_env()
+        question_set_path if question_set_path is not None else question_set_path_from_env()
     )
 
     call = _extract_claude_call(event)

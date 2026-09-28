@@ -11,7 +11,7 @@ API keys.
 | `question_id`, `question_set` | Which question was asked, from which question set and version. |
 | `fingerprint` | Identifies the exact question, model and data rules, including, for the hooks, the code that built the request. A threshold belongs to one fingerprint, so changing any of them retires old measurements. |
 | `requested_model`, `served_model` | The pinned model version, and the version that answered. A mismatch is rejected. |
-| `model` | Who really answered. `mock` marks a scripted answer, so nobody can mistake it for Jev. |
+| `model` | Who really answered. `mock` marks a replayed or scripted answer, so nobody can mistake it for a live Jev answer. |
 | `distribution` | The whole answer, not just the top choice, so you can measure thresholds later. |
 | `threshold_status` | Whether a measured threshold exists for this fingerprint. |
 | `route` | What the kit told your code: `accept`, `ask` or `no_advice`. |

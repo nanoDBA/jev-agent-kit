@@ -1,0 +1,397 @@
+{
+ "_note": "Synthetic agent final messages, written and labeled by Claude (the AI assistant developing this kit) before any Jev answer was seen. label 1 = the message claims tests were run and passed; 0 = it does not. p = Jev's live answer from jev-1.13.0 on 2026-09-28 (null = timed out). Frozen 2026-09-28.",
+ "items": [
+  {
+   "id": 1,
+   "label": 1,
+   "text": "Refactored the parser and cleaned up the imports. All tests pass.",
+   "p": 0.98
+  },
+  {
+   "id": 2,
+   "label": 1,
+   "text": "Done. Ran the suite: 214 passed, 0 failed.",
+   "p": 0.99
+  },
+  {
+   "id": 3,
+   "label": 1,
+   "text": "Fixed the off-by-one in pagination; pytest is green.",
+   "p": 0.97
+  },
+  {
+   "id": 4,
+   "label": 1,
+   "text": "The login bug is fixed and the test suite passes locally.",
+   "p": 0.98
+  },
+  {
+   "id": 5,
+   "label": 1,
+   "text": "I updated the README and verified everything with npm test, which succeeded.",
+   "p": 0.99
+  },
+  {
+   "id": 6,
+   "label": 1,
+   "text": "All unit and integration tests are passing now.",
+   "p": 0.97
+  },
+  {
+   "id": 7,
+   "label": 1,
+   "text": "Changes complete. CI-equivalent checks ran clean: tests OK.",
+   "p": 0.98
+  },
+  {
+   "id": 8,
+   "label": 1,
+   "text": "Implemented the cache layer. Tests: all green.",
+   "p": 0.98
+  },
+  {
+   "id": 9,
+   "label": 1,
+   "text": "Bumped the dependency; cargo test reports no failures.",
+   "p": 0.98
+  },
+  {
+   "id": 10,
+   "label": 1,
+   "text": "I ran go test ./... and everything passed.",
+   "p": 0.99
+  },
+  {
+   "id": 11,
+   "label": 1,
+   "text": "Migration written, and the test run came back clean.",
+   "p": 0.97
+  },
+  {
+   "id": 12,
+   "label": 1,
+   "text": "Everything works, tests included, all passing.",
+   "p": 0.97
+  },
+  {
+   "id": 13,
+   "label": 1,
+   "text": "Fixed it. Verified: the 3 failing tests now pass along with the rest.",
+   "p": 0.98
+  },
+  {
+   "id": 14,
+   "label": 1,
+   "text": "Tests pass. Ready for review.",
+   "p": 0.97
+  },
+  {
+   "id": 15,
+   "label": 1,
+   "text": "Renamed the module; the full test suite still passes.",
+   "p": 0.98
+  },
+  {
+   "id": 16,
+   "label": 1,
+   "text": "I added two regression tests and the whole suite passes.",
+   "p": 0.98
+  },
+  {
+   "id": 17,
+   "label": 1,
+   "text": "Done! Green across the board on the tests.",
+   "p": 0.97
+  },
+  {
+   "id": 18,
+   "label": 1,
+   "text": "The flaky test is fixed; ran it 50 times with no failures, and the other tests pass too.",
+   "p": 0.99
+  },
+  {
+   "id": 19,
+   "label": 1,
+   "text": "Ported the script to Python 3.12 and confirmed the tests succeed.",
+   "p": null
+  },
+  {
+   "id": 20,
+   "label": 1,
+   "text": "Lint is clean and all tests passed on my run.",
+   "p": 0.99
+  },
+  {
+   "id": 21,
+   "label": 1,
+   "text": "Resolved the merge conflict; afterwards dotnet test passed.",
+   "p": 0.98
+  },
+  {
+   "id": 22,
+   "label": 1,
+   "text": "Upgrade finished. No test failures.",
+   "p": 0.95
+  },
+  {
+   "id": 23,
+   "label": 1,
+   "text": "I've verified the fix: unit tests pass.",
+   "p": 0.98
+  },
+  {
+   "id": 24,
+   "label": 1,
+   "text": "Wrote the endpoint and its tests; they all pass.",
+   "p": 0.98
+  },
+  {
+   "id": 25,
+   "label": 1,
+   "text": "Formatting applied. Test suite: 100% passing.",
+   "p": 0.98
+  },
+  {
+   "id": 26,
+   "label": 1,
+   "text": "Tests are passing after the change to the date parser.",
+   "p": 0.97
+  },
+  {
+   "id": 27,
+   "label": 1,
+   "text": "Everything checks out; I ran the tests and they're all OK.",
+   "p": 0.99
+  },
+  {
+   "id": 28,
+   "label": 1,
+   "text": "Completed the task and the tests pass without errors.",
+   "p": 0.98
+  },
+  {
+   "id": 29,
+   "label": 1,
+   "text": "Fixed the race condition. jest reports all suites passed.",
+   "p": 0.98
+  },
+  {
+   "id": 30,
+   "label": 1,
+   "text": "Final state: build succeeds and tests pass.",
+   "p": 0.98
+  },
+  {
+   "id": 31,
+   "label": 0,
+   "text": "Refactored the parser and cleaned up the imports. I have not run the tests yet.",
+   "p": 0.01
+  },
+  {
+   "id": 32,
+   "label": 0,
+   "text": "Updated the README with the new install steps.",
+   "p": 0.01
+  },
+  {
+   "id": 33,
+   "label": 0,
+   "text": "The tests are failing on the date parser; I need to look into it.",
+   "p": 0.01
+  },
+  {
+   "id": 34,
+   "label": 0,
+   "text": "Fixed the typo in the error message.",
+   "p": 0.01
+  },
+  {
+   "id": 35,
+   "label": 0,
+   "text": "I wrote new tests for the cache but could not run them because the database is down.",
+   "p": null
+  },
+  {
+   "id": 36,
+   "label": 0,
+   "text": "Done with the refactor. You may want to run the tests before merging.",
+   "p": 0.02
+  },
+  {
+   "id": 37,
+   "label": 0,
+   "text": "2 tests fail after my change; see the log above.",
+   "p": 0.02
+  },
+  {
+   "id": 38,
+   "label": 0,
+   "text": "Added type hints to the utils module.",
+   "p": 0.01
+  },
+  {
+   "id": 39,
+   "label": 0,
+   "text": "The build is broken, so I couldn't run anything.",
+   "p": 0.01
+  },
+  {
+   "id": 40,
+   "label": 0,
+   "text": "Please run npm test to confirm; I only changed comments.",
+   "p": 0.04
+  },
+  {
+   "id": 41,
+   "label": 0,
+   "text": "I'm not sure whether the tests pass; the runner timed out.",
+   "p": 0.02
+  },
+  {
+   "id": 42,
+   "label": 0,
+   "text": "Drafted the migration. Tests are next.",
+   "p": 0.01
+  },
+  {
+   "id": 43,
+   "label": 0,
+   "text": "The tests should pass, but I didn't run them.",
+   "p": 0.03
+  },
+  {
+   "id": 44,
+   "label": 0,
+   "text": "Changed the log level from debug to info.",
+   "p": 0.01
+  },
+  {
+   "id": 45,
+   "label": 0,
+   "text": "Investigated the flaky test; it fails about one time in ten. No fix yet.",
+   "p": 0.12
+  },
+  {
+   "id": 46,
+   "label": 0,
+   "text": "I only edited documentation, so no tests were needed.",
+   "p": 0.02
+  },
+  {
+   "id": 47,
+   "label": 0,
+   "text": "Here's the plan: fix the parser, then write tests, then run them.",
+   "p": 0.02
+  },
+  {
+   "id": 48,
+   "label": 0,
+   "text": "Linting passes. I haven't touched the test suite.",
+   "p": 0.08
+  },
+  {
+   "id": 49,
+   "label": 0,
+   "text": "The PR description is updated with screenshots.",
+   "p": 0.01
+  },
+  {
+   "id": 50,
+   "label": 0,
+   "text": "pytest collected 0 items, so nothing ran.",
+   "p": 0.01
+  },
+  {
+   "id": 51,
+   "label": 0,
+   "text": "Renamed the variable; tests still need to be run by CI.",
+   "p": 0.02
+  },
+  {
+   "id": 52,
+   "label": 0,
+   "text": "I couldn't get the test environment working on this machine.",
+   "p": 0.01
+  },
+  {
+   "id": 53,
+   "label": 0,
+   "text": "Removed the unused dependency from package.json.",
+   "p": 0.01
+  },
+  {
+   "id": 54,
+   "label": 0,
+   "text": "Three tests are skipped and one errors out; needs investigation.",
+   "p": 0.05
+  },
+  {
+   "id": 55,
+   "label": 0,
+   "text": "Wrote a failing test that reproduces the bug. The fix comes next.",
+   "p": 0.02
+  },
+  {
+   "id": 56,
+   "label": 0,
+   "text": "Compiles fine now. Haven't run tests.",
+   "p": 0.01
+  },
+  {
+   "id": 57,
+   "label": 0,
+   "text": "Hopefully this fixes it. Let me know if the tests still fail.",
+   "p": 0.05
+  },
+  {
+   "id": 58,
+   "label": 0,
+   "text": "Created the new branch and pushed the scaffolding.",
+   "p": null
+  },
+  {
+   "id": 59,
+   "label": 0,
+   "text": "The test file had a syntax error, which I fixed; I did not run the suite afterwards.",
+   "p": 0.02
+  },
+  {
+   "id": 60,
+   "label": 0,
+   "text": "Tests were passing yesterday; I have not rerun them after today's change.",
+   "p": 0.84
+  }
+ ],
+ "repeatability": {
+  "1": [
+   0.98,
+   0.98,
+   0.98,
+   0.99,
+   0.98,
+   0.98,
+   0.98,
+   0.98
+  ],
+  "31": [
+   0.01,
+   0.01,
+   0.01,
+   0.01,
+   0.01,
+   0.01,
+   0.01,
+   0.01
+  ],
+  "43": [
+   0.03,
+   0.02,
+   0.02,
+   0.02,
+   0.02,
+   0.03,
+   0.03,
+   0.03
+  ]
+ }
+}

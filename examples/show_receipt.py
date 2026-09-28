@@ -1,4 +1,4 @@
-"""Show the receipt a decision leaves behind. Fully offline.
+"""Show the receipt a decision leaves behind.
 
 Every decision is written to a JSONL receipt before the kit returns an answer: what was
 asked, which model answered, the full distribution, the threshold status and the route. The
@@ -6,7 +6,7 @@ request itself is not stored, only a digest of the exact bytes sent. This runs t
 example once and prints its receipt, annotated. Random ids, digests and the timestamp are
 shortened so the output is the same on every run.
 
-Run it from the repository root:
+Run it from the repository root (add --offline to replay the answer recorded on 2026-09-28):
 
     python examples/show_receipt.py
 """
@@ -21,9 +21,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
+from _demo import setup  # noqa: E402 (after the src path setup)
+
 from jev_kit.engine import EngineConfig, decide  # noqa: E402 (after the src path setup)
 from jev_kit.receipts import ReceiptWriter  # noqa: E402 (after the src path setup)
-from jev_kit.transport import MockTransport  # noqa: E402 (after the src path setup)
 
 ROUTER = REPO / "skills" / "jev-runtime" / "questions" / "preflight-route.json"
 MOCK_REPLY = {
@@ -35,15 +36,15 @@ MOCK_REPLY = {
 }
 
 
-def main() -> None:
+def main(offline: bool | None = None) -> None:
+    demo = setup(offline)
     receipts = Path(tempfile.mkdtemp(prefix="jev-receipts-"))
     decide(
         {"schema_version": 1, "question_set_path": str(ROUTER), "mode": "shadow",
          "state": {"request": "Customer says order 1182 was charged twice and asks for a refund."}},
-        transport=MockTransport.replying(
-            200, json.dumps(MOCK_REPLY).encode(), {"x-typesafe-request-id": "demo-request-2"}
-        ),
+        transport=demo.transport(MOCK_REPLY),
         config=EngineConfig(
+            attestation=demo.attestation,
             source_allowlist=frozenset({"agent_request"}),
             writer=ReceiptWriter(directory=receipts),
         ),
@@ -58,7 +59,7 @@ def main() -> None:
         ("fingerprint", "sha256:...", "question + model + egress rules; thresholds bind to it"),
         ("requested_model", decision["requested_model"], "the pinned version"),
         ("served_model", decision["served_model"], "a mismatch is rejected"),
-        ("model", decision["model"], "who really answered: a mock, not Jev"),
+        ("model", decision["model"], "jev-1.13.0 live, or mock for a replay"),
         ("distribution", dist, "the full answer, not just the top label"),
         ("threshold_status", decision["threshold_status"] or "none",
          "no calibrated threshold yet"),

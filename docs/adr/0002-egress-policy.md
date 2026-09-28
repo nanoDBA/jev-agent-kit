@@ -148,6 +148,24 @@ place (required before any personal data, GDPR Art. 28). `dpa: false` permits on
 whose every field is a non-personal Tier 3 kind; HMAC tokens count as personal data. Missing or invalid attestation is a
 failure (gates ask, advisory returns no advice). Mock transports do not require it.
 
+## Amendment 2 (2026-09-28): the examples ask Jev live
+
+Decided by the owner: the README examples call Jev live by default, and `--offline` replays
+recorded answers. Readers of this kit are expected to have a Jev key, and published output
+should match what Jev really returns.
+
+Scope of the exception to the live-use attestation above: only `examples/_demo.py` and the
+examples that use it. They send nothing but fixed sample text written in this repository
+(synthetic messages, a sample request, `rm -rf ./build` with a fake path hashed under a
+published demo key). None of it is the reader's data, so the in-memory attestation the
+examples pass states inventory and DPA coverage for that sample text only, with the scope
+written into it. It is never loaded from or written to disk and is not available to hooks,
+the CLI or the engine's defaults, which still require a real attestation file. Every other
+rule of this ADR still applies to those requests: declared fields, transforms, the Tier 1
+scan of the final bytes, and the pinned model.
+
+Tests never take the live path: they run every example with `--offline`.
+
 ## Implementation rules
 
 - Detectors and transforms are **data**, versioned in the repo, with the source pattern set

@@ -1,7 +1,8 @@
 # Live calls and recording real evidence
 
 Live calls send data to TypeSafe and may cost money. Get authorization for that before adding
-credentials. The README demos need none of this.
+credentials. The README demos need only an API key: they send fixed sample text, so
+they skip the attestation and allowlist below (ADR 0002, Amendment 2).
 
 Read [What leaves your machine](../../README.md#what-leaves-your-machine) first.
 

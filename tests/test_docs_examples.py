@@ -42,7 +42,7 @@ def _env(**extra: str) -> dict[str, str]:
 
 def _run_example(name: str) -> str:
     proc = subprocess.run(
-        [sys.executable, str(EXAMPLES / name)],
+        [sys.executable, str(EXAMPLES / name), "--offline"],  # tests never call the live API
         env=_env(), capture_output=True, text=True, timeout=60, check=True,
     )
     assert proc.stderr == ""
@@ -70,7 +70,7 @@ def test_route_request_matches_readme() -> None:
     out = _run_example("route_request.py")
     assert "route:   no_advice" in out
     assert "handled: specialist_llm" in out
-    assert "(recorded Jev answer)" in out  # labelled in the output itself
+    assert "(recorded Jev answer from 2026-09-28)" in out  # labelled in the output itself
     for line in out.splitlines():
         assert line in README, line
 
@@ -321,7 +321,7 @@ def test_new_examples_match_readme(example: str) -> None:
 def test_verify_claim_keeps_counting_in_code_and_stays_cautious() -> None:
     out = _run_example("verify_claim.py")
     assert "Test reports:   0  (0 tests passed, counted in code)" in out
-    assert "Jev (recorded):" in out  # the replayed answer is labelled in the output
+    assert "(recorded Jev answer from 2026-09-28)" in out  # the replayed answer is labelled
     assert "not backed by a test report" in out
 
 
@@ -333,6 +333,8 @@ def test_receipt_example_reflects_a_real_receipt() -> None:
 
 
 def _verify_claim_module() -> Any:
+    if str(EXAMPLES) not in sys.path:
+        sys.path.insert(0, str(EXAMPLES))  # for the shared examples/_demo.py
     spec = importlib.util.spec_from_file_location(
         "verify_claim", REPO / "examples" / "verify_claim.py"
     )
@@ -393,7 +395,7 @@ def test_verify_claim_rejects_reports_that_show_no_pass(
 ) -> None:
     module = _verify_claim_module()
     assert module.passed_tests(report) == 0
-    module.main([report])
+    module.main([report], offline=True)
     out = capsys.readouterr().out
     assert "Test reports:   1  (0 tests passed" in out
     assert "not backed by a test report" in out
@@ -402,7 +404,7 @@ def test_verify_claim_rejects_reports_that_show_no_pass(
 def test_verify_claim_counts_a_pytest_report(capsys: pytest.CaptureFixture[str]) -> None:
     module = _verify_claim_module()
     assert module.passed_tests(PYTEST_REPORT) == 1
-    module.main([PYTEST_REPORT])
+    module.main([PYTEST_REPORT], offline=True)
     assert "1 passing tests are on record" in capsys.readouterr().out
 
 
@@ -422,3 +424,16 @@ def test_others_measurements_match_the_research_note() -> None:
     assert len(figures) >= 4
     for figure in figures:
         assert figure in note, figure
+
+
+def test_examples_without_a_key_explain_offline(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Live is the default; with no key the demo stops with one line pointing at --offline,
+    # before any network call.
+    env = {k: v for k, v in _env().items() if not k.startswith("TYPESAFE_API_KEY")}
+    proc = subprocess.run(
+        [sys.executable, str(EXAMPLES / "route_request.py")],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert proc.returncode == 1
+    assert "--offline" in proc.stderr
+    assert proc.stdout == ""

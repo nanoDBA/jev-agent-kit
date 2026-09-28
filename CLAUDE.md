@@ -70,7 +70,9 @@ See `docs/adr/0003-python-implementation.md`.
 
 ## Guardrails for autonomous sessions
 
-- Live Jev calls only from `scripts/` or explicit smoke tests, with a per-run call cap.
+- Live Jev calls only from `scripts/`, explicit smoke tests, or the README examples (fixed
+  sample text; ADR 0002 Amendment 2), with a per-run call cap. Tests run examples with
+  `--offline`.
 - Never push to `main` without the owner's approval; work on branches.
 - Do not open PRs against third-party repos (for example `dfinke/Jev`) without approval.
   Draft them under `docs/upstream/` first.

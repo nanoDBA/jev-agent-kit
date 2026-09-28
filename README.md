@@ -28,12 +28,13 @@ skill for all three hosts.
 
 ## Quick start
 
-About a minute. You need Python 3.11 or later. No account or API key.
+You need Python 3.11 or later and a Jev API key from [TypeSafe](https://typesafe.ai).
 
 ```sh
 git clone https://github.com/nanoDBA/jev-agent-kit.git
 cd jev-agent-kit
 python -m pip install -e .
+export TYPESAFE_API_KEY=...                # PowerShell: $env:TYPESAFE_API_KEY = "..."
 
 python examples/verify_claim.py           # Jev + code: is "All tests pass" backed by a report?
 python examples/claim_contrast.py         # what Jev tells apart that a keyword check cannot
@@ -42,9 +43,12 @@ python examples/gate_walkthrough.py       # Jev + code facts: how risky is rm -r
 python examples/show_receipt.py           # the record every decision leaves
 ```
 
-The demos run offline. Where one needs Jev, it replays an answer Jev really gave to that exact
-input, recorded on 2026-09-28. Run the commands from the repository root. If `jev-kit` is not
-on your PATH, use `python -m jev_kit.cli` instead.
+Each demo asks Jev live and makes one to four calls. It sends only the sample text written in
+the demo, never your files. No key? Add `--offline` to any demo to replay the answers Jev gave
+to the same inputs on 2026-09-28. The outputs shown below are those recorded answers; a live
+run usually differs by a few hundredths, sometimes more on an ambiguous request (see
+[routing](#why-routing-needs-a-policy-and-evaluation)). Run the commands from the repository
+root. If `jev-kit` is not on your PATH, use `python -m jev_kit.cli` instead.
 
 ## What works today
 
@@ -53,7 +57,7 @@ Installing the kit into a host does not switch on everything this README shows. 
 | Part | What it does now | What you do |
 | --- | --- | --- |
 | Host hooks | One event per host: `PreToolUse` in Claude Code and Codex, `pre_tool_call` in Hermes. Each call the hook sees is checked with `tool-call-gate`; the guides register it for shell commands. In shadow mode, the default, the hook writes a receipt and changes nothing. | Register the hook with the [host guide](#add-it-to-your-agent). |
-| Examples | The test-claim check, routing and receipt demos run offline on recorded answers. They are not installed into any host. | Copy the pattern into your own code. |
+| Examples | The test-claim check, routing, gate and receipt demos ask Jev live (or replay recorded answers with `--offline`). They are not installed into any host. | Copy the pattern into your own code. |
 | Question sets | `preflight-route`, `postflight-verify` and `stop-or-continue` ship as JSON. Nothing calls them automatically. | Call them from your code through the Python API or `jev-kit`. |
 | Acting on answers | Nothing acts on a Jev answer until a threshold for that exact question is registered, and a hook acts only in enforce mode. | Collect live answers in shadow, label them, and [calibrate](docs/guides/calibration.md). |
 
@@ -78,7 +82,8 @@ python examples/verify_claim.py
 Agent says:     'Refactored the parser and cleaned up the imports. All tests pass.'
 Commands run:   git diff --stat, ruff check src, git add -A
 Test reports:   0  (0 tests passed, counted in code)
-Jev (recorded): does the message claim the tests passed?  p(yes)=0.98
+Jev:            does the message claim the tests passed?  p(yes)=0.98
+                (recorded Jev answer from 2026-09-28)
 Verdict:        the claim is not backed by a test report; ask the agent to run them
 ```
 
@@ -91,6 +96,7 @@ python examples/claim_contrast.py
 
 ```text
 Test reports: none (0 tests passed, counted in code)
+Jev:          recorded Jev answers from 2026-09-28
 
 message            says pass  Jev p(claim)  route      action today
 explicit claim     yes        0.98          no_advice  ask agent to run tests
@@ -108,7 +114,7 @@ Jev separates a claim that never says "pass" from a prediction that does. The la
 what the policy does today: this question has no calibrated threshold, so the kit returns
 `no_advice` and the code treats every message as a claim. Once a threshold is measured on your
 own messages, the code can skip the check for the last two. Interpretation and action stay
-separate on purpose: a replayed answer never authorizes anything.
+separate on purpose: without a measured threshold, no answer authorizes anything.
 
 On 60 messages, Jev answered this question correctly 56 times out of the 57 it answered in
 time; see [What we measured](#what-we-measured).
@@ -141,7 +147,7 @@ python examples/route_request.py
 
 ```text
 request: 'Customer says order 1182 was charged twice and asks for a refund.'
-Which handler should take it?  (recorded Jev answer)
+Which handler should take it?  (recorded Jev answer from 2026-09-28)
   deterministic   ##############       0.68
   specialist_llm  #                    0.07
   human           #####                0.25
@@ -149,9 +155,11 @@ route:   no_advice
 handled: specialist_llm
 ```
 
-Jev returns a probability for every option you defined. Whether 0.68 for `deterministic` is
-right depends on things the question does not state: your refund policy and what each handler
-can actually do. That is the lesson for routing: write the criteria into the question, then
+Jev returns a probability for every option you defined. This answer also moves more than the
+clear cases do: asked eight more times later that day, `deterministic` ranged from 0.53 to
+0.61 and `human` from 0.35 to 0.42, while the Fahrenheit request gave 1.00 every time.
+Whether `deterministic` is right depends on things the question does not state: your refund
+policy and what each handler can actually do. That is the lesson for routing: write the criteria into the question, then
 measure on your own requests how often answers like this are right before acting on them. Here the kit reports `no_advice`, and the code uses its default, a
 specialist model.
 
@@ -162,8 +170,8 @@ python examples/gate_walkthrough.py
 ```
 
 An agent wants to run `rm -rf ./build` and describes it as "Delete everything in the build
-output folder". The example never runs the command. It shows what would be sent, and Jev's
-recorded answers to three questions about the call:
+output folder". The example never runs the command. It shows what would be sent, Jev's
+answers to three questions about the call, and the routes a hook in enforce mode would get:
 
 ```text
 destructive        p(yes)=0.91  -> ask
@@ -202,7 +210,7 @@ Jev's destructive answer for the same command was 0.78. They are heuristic: a co
 confidence (pipes, quoting, variables, `bash -c`, scripts, interpreters, package installs, and
 similar) gets `null` for "unknown" and `cmd_parse_confident: false`, and in enforce mode such a
 command always asks. See [ADR 0005](docs/adr/0005-command-properties.md). All three answers come
-back as `ask` because a replayed answer can never clear a check.
+back as `ask` because no threshold is calibrated, so no answer can clear a check.
 
 `context` is plain text and needs an explicit opt-in for live calls. The hooks do not add the
 working directory to it, but a description can still name a folder.
@@ -297,8 +305,8 @@ Decision receipt (one JSONL line; long ids and digests shortened):
 Commit marker: 1 decision line for this call, written durably.
 ```
 
-Every decision is written like this before the kit answers. Receipts are how you learn whether a question deserves trust: they hold the full distribution, so you can tune thresholds offline, replay decisions against a new Jev version, spot drift, count false positives and negatives, and find the decisions that should not be delegated at all. `model` says who answered: `mock`
-marks the replayed answer, so it can never be mistaken for a live one. `distribution` keeps
+Every decision is written like this before the kit answers. Receipts are how you learn whether a question deserves trust: they hold the full distribution, so you can tune thresholds offline, replay decisions against a new Jev version, spot drift, count false positives and negatives, and find the decisions that should not be delegated at all. `model` says who answered: `jev-1.13.0` on a live run, `mock` with `--offline`, so a replayed
+answer can never be mistaken for a live one. `distribution` keeps
 the whole answer for measuring thresholds later, and `threshold_status` says whether a
 measured threshold exists. [Receipts](docs/receipts.md) explains the other fields.
 
@@ -373,8 +381,9 @@ an advisory question (such as routing) returns `no_advice` and your code keeps i
 path, and a gate (such as the tool-call checks) returns `ask`, so the call needs a person or
 another check.
 
-**Replayed answers never approve anything.** The demos' recorded answers are marked as mock
-answers everywhere they appear, including receipts, and the kit never acts on them.
+**Replayed answers never approve anything.** With `--offline`, the demos' recorded answers
+are marked as mock answers everywhere they appear, including receipts, and the kit never acts
+on them.
 
 **Only what a question needs leaves your machine.** Each question declares the fields it
 uses; everything else stays local. Commands are cut to their program name, paths become keyed
@@ -416,7 +425,7 @@ are in [research note 12](docs/research/12-live-evaluation.md).
 | --- | --- |
 | "Does this message claim the tests passed?" on 60 messages | First run: 56 of 57 answered correctly at a 0.5 cut-off; 3 timed out. Rerun: 59 of 60, no timeouts |
 | The same, worded "…after the latest change?" | 60 of 60 correct; claims 0.75 to 0.99, non-claims 0.01 to 0.09 |
-| The same question asked 8 times | Answers moved by at most 0.01 |
+| The same question asked 8 times | Clear yes/no messages: moved by at most 0.01. An ambiguous routing request: the top option ranged 0.53 to 0.61, against 0.68 that morning |
 | The four shipped question sets and all three hooks | Worked end to end, live |
 | Tokens per call | About 300 to 390 in all; the 123-call rerun used 36,923 tokens |
 | Jev call latency | Usually 0.17 to 0.31 seconds; in the first run, occasional 4 to 7 second calls and 3 of 60 over the 10-second deadline; none in the 123-call rerun (slowest 0.32 s) |

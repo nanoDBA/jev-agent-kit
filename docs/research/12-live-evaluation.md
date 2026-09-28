@@ -47,9 +47,10 @@ by the service and all answers validated. Examples: a unit conversion routed to
 citation"; `rm` on a project folder scored 0.93 destructive, `ls` 0.02, an upload to a paste
 site 0.88 on exfiltration.
 
-## 2a. The answers the README demos replay
+## 2a. The answers the README demos replay with --offline
 
-Recorded with the exact demo inputs, one call each, and replayed by the demos offline:
+Recorded with the exact demo inputs, one call each. The demos ask Jev live by default and
+replay these with `--offline`:
 
 | Demo | Input | Answer |
 | --- | --- | --- |
@@ -118,6 +119,12 @@ through the shipped `preflight-route` set, one call each: "Convert 72 degrees Fa
 Celsius." deterministic 1.00; "Write a short, friendly release note for a bug fix in the CSV
 export." specialist_llm 0.92, deterministic 0.08; "A customer says their spouse died and asks
 us to close the joint account and waive the final bill." human 0.99.
+
+**Routing repeatability.** The refund request, asked 8 more times that afternoon:
+`deterministic` 0.53 to 0.61, `human` 0.35 to 0.42, `specialist_llm` 0.04 to 0.05; the
+morning's single answer was 0.68 and 0.25. The Fahrenheit request gave `deterministic` 1.00
+all 8 times. So the 0.01 repeatability measured on clear yes/no messages (section 1) does not
+carry over to an ambiguous Choice: there the top answer moved by up to 0.15 in one day.
 
 **Usage.** The 123 calls in this rerun reported 36,923 tokens in all, about 300 per call
 (`reported_tokens` in the receipts). The kit's default per-process budget of 100 calls

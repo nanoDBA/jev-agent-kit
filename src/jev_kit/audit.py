@@ -169,10 +169,13 @@ _REMOTE_DESTINATION_RE = re.compile(
 
 # A ~/.ssh path with up to 8 bounded segments (nested dirs and globs such as ~/.ssh/*.pub or
 # ~/.ssh/work/id_ed25519.pub). The whole path is captured so its last segment can be checked.
-_SSH_PATH_RE = re.compile(r"(?i)(?<![\w.])\.ssh((?:[/\\][\w.*?-]{1,64}){0,8})(?![\w-])")
+_SSH_PATH_RE = re.compile(
+    r"(?i)(?<![\w.])\.ssh((?:[/\\][\w.*?~-]{1,64}){0,8})(?![\w.*?~-])"
+)
 # A bare id_* key filename, captured whole (id_ed25519, id_rsa-cert.pub, id_ecdsa_sk) so a
 # public key or certificate is judged by its complete name, not by its id_* prefix.
-_KEY_FILE_RE = re.compile(r"(?i)\bid_(?:rsa|dsa|ecdsa|ed25519)(?![a-z0-9])[\w.-]{0,64}")
+_KEY_FILE_RE = re.compile(r"(?i)\bid_(?:rsa|dsa|ecdsa|ed25519)(?![a-z0-9])[\w.~-]{0,64}")
+_FILENAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.~-")
 
 _SSH_NON_SECRET_NAMES = frozenset({"config", "known_hosts", "known_hosts.old", "authorized_keys"})
 
@@ -207,8 +210,12 @@ def _has_credential_location(line: str) -> bool:
     """True if *line* names at least one private credential location."""
     if _CREDENTIAL_LOCATION_RE.search(line):
         return True
-    if any(not _is_public_file(m.group(0)) for m in _KEY_FILE_RE.finditer(line)):
-        return True
+    for m in _KEY_FILE_RE.finditer(line):
+        # A name longer than the cap continues past the match; its real final extension is
+        # unknown, so it is conservatively NOT public (a truncated "...pub.backup" must flag).
+        truncated = m.end() < len(line) and line[m.end()] in _FILENAME_CHARS
+        if truncated or not _is_public_file(m.group(0)):
+            return True
     if any(_ssh_path_is_secret(m.group(1)) for m in _SSH_PATH_RE.finditer(line)):
         return True
     return any(_env_file_is_secret(m.group(1)) for m in _ENV_FILE_RE.finditer(line))

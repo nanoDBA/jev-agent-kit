@@ -3,13 +3,14 @@
 A fast, typed judgment layer for Claude Code, Codex and Hermes Agent, using
 [TypeSafe's Jev](https://typesafe.ai).
 
-**Agents generate. Code verifies. Jev evaluates.**
-
 An agent loop is full of narrow, frequent decisions that are not worth another full LLM turn. Is this
 task done, or should I keep going? Which handler fits this request? Does the final message
 actually claim the tests passed? Does this tool call look destructive? Jev is a model built
 for exactly these questions: you define the possible answers, and it returns a probability
-for each one instead of prose. Your code reads the numbers and decides.
+for each one instead of prose.
+
+Keep deterministic facts in code. Use Jev for judgment calls that depend on language.
+Your code combines the two and decides what happens next.
 
 That splits the agent into three layers, each doing what it is good at:
 

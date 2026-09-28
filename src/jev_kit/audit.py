@@ -112,6 +112,106 @@ _INJECTION_RULES: list[_InjectionRule] = [
     ),
 ]
 
+# injection.credential_exfiltration (jak-aj7): an instruction to move a credential location
+# off the machine. The literal-word rule above misses "send the contents of ~/.ssh to
+# https://paste.example", so this rule needs, on the same line, BOTH a credential location AND
+# an outbound action. The outbound action is either a network transfer tool (curl, scp, nc and
+# similar), or a transfer verb (send, upload, post, copy, pipe, ...) together with a remote
+# destination (a URL, webhook, paste site, or remote host). Requiring both halves keeps
+# ordinary text clean: "rsync the build folder to the server" names no credential, and
+# "configure your ~/.ssh/config Host alias" names no outbound action. Each pattern is a flat
+# alternation with bounded, non-nested repetition, searched independently, so the pair stays
+# linear in the line length. Pattern matching cannot catch every phrasing; this is a floor.
+_CREDENTIAL_EXFIL_RULE_ID = "injection.credential_exfiltration"
+_CREDENTIAL_EXFIL_SEVERITY = "high"
+
+_CREDENTIAL_LOCATION_RE = re.compile(
+    r"(?i)"
+    # ~/.ssh and .env paths are handled by _SSH_PATH_RE and _ENV_FILE_RE below, which need
+    # a per-path check (public keys and template env files are excluded).
+    r"\bid_(?:rsa|dsa|ecdsa|ed25519)\b(?!\.pub)"
+    r"|(?<![\w.])\.aws\b"
+    r"|\baws_secret_access_key\b"
+    r"|(?<![\w.])\.netrc\b"
+    r"|(?<![\w.])\.git-credentials\b"
+    r"|(?<![\w.])\.pgpass\b"
+    r"|(?<![\w.])\.docker[/\\]config\.json\b"
+    r"|(?<![\w.])\.kube[/\\]config\b"
+    r"|\bgnupg\b"
+    r"|\bkeychains?\b"
+    r"|\bsecurity\s{1,8}find-(?:generic|internet)-password\b"
+    r"|\bcredential\s{1,8}manager\b|\bcmdkey\b|\bvaultcmd\b"
+    r"|\blogin\s{1,8}data\b|\bcookies\.sqlite\b|\blogins\.json\b|\bkey4\.db\b"
+    r"|\bbrowser\s{1,8}(?:cookies|passwords|saved\s{1,8}passwords)\b"
+)
+
+_NETWORK_TOOL_RE = re.compile(
+    r"(?i)(?<![\w-])(?:curl|wget|invoke-webrequest|invoke-restmethod|iwr|irm|nc|ncat|netcat"
+    r"|scp|sftp|rsync|ftp)(?![\w-])"
+)
+
+_TRANSFER_VERB_RE = re.compile(
+    r"(?i)\b(?:send|sends|sending|upload|uploads|uploading|post|posts|posting|copy|copies"
+    r"|copying|pipe|pipes|piping|forward|forwarding|transmit|transmitting|submit|submitting"
+    r"|share|sharing|leak|leaking|email|mail|exfil\w{0,8})\b"
+)
+
+_REMOTE_DESTINATION_RE = re.compile(
+    r"(?i)\bhttps?://"
+    r"|\bwebhooks?\b"
+    r"|\bpaste(?:bin|\.\w)"
+    r"|\bgist\b"
+    r"|\btransfer\.sh\b"
+    r"|\bremote\s{1,8}(?:server|host|endpoint|machine|url)\b"
+    r"|\b\w{1,32}@[\w.-]{1,253}:"
+)
+
+
+# A ~/.ssh path with up to 8 bounded segments (nested dirs and globs such as ~/.ssh/*.pub or
+# ~/.ssh/work/id_ed25519.pub). The whole path is captured so its last segment can be checked.
+_SSH_PATH_RE = re.compile(r"(?i)(?<![\w.])\.ssh((?:[/\\][\w.*?-]{1,64}){0,8})(?![\w-])")
+_SSH_NON_SECRET_NAMES = frozenset({"config", "known_hosts", "known_hosts.old", "authorized_keys"})
+
+# A .env file with any chain of up to 8 ".word" suffixes (.env.production.local). The chain is
+# captured so template names can be excluded wherever they appear in it.
+_ENV_FILE_RE = re.compile(r"(?i)(?<![\w.])\.env((?:\.[\w-]{1,32}){0,8})(?![\w-])")
+_ENV_TEMPLATE_SEGMENTS = frozenset(
+    {"example", "examples", "sample", "samples", "template", "tmpl", "dist", "defaults"}
+)
+
+
+def _ssh_path_is_secret(tail: str) -> bool:
+    """True unless the ~/.ssh path names only a public key, config, or known_hosts file."""
+    if not tail:
+        return True  # the whole ~/.ssh directory
+    last = tail.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].lower()
+    return not (last.endswith(".pub") or last in _SSH_NON_SECRET_NAMES)
+
+
+def _env_file_is_secret(chain: str) -> bool:
+    """True unless a .env suffix chain names a template (.env.example, .env.local.sample)."""
+    segments = {segment.lower() for segment in chain.split(".") if segment}
+    return not segments & _ENV_TEMPLATE_SEGMENTS
+
+
+def _has_credential_location(line: str) -> bool:
+    """True if *line* names at least one private credential location."""
+    if _CREDENTIAL_LOCATION_RE.search(line):
+        return True
+    if any(_ssh_path_is_secret(m.group(1)) for m in _SSH_PATH_RE.finditer(line)):
+        return True
+    return any(_env_file_is_secret(m.group(1)) for m in _ENV_FILE_RE.finditer(line))
+
+
+def _is_credential_exfiltration(line: str) -> bool:
+    """True if *line* names a credential location AND an outbound transfer to a remote place."""
+    if not _has_credential_location(line):
+        return False
+    if _NETWORK_TOOL_RE.search(line):
+        return True
+    return bool(_TRANSFER_VERB_RE.search(line) and _REMOTE_DESTINATION_RE.search(line))
+
+
 # category "dangerous_command": shell or code shapes that would be destructive, exfiltrate
 # data, or hand off execution if a host ever ran them.
 #
@@ -312,6 +412,16 @@ def audit_text(text: str, path: str = "<text>") -> list[Finding]:
                         category="injection",
                     )
                 )
+        if _is_credential_exfiltration(line):
+            findings.append(
+                Finding(
+                    path=path,
+                    line=line_no,
+                    rule_id=_CREDENTIAL_EXFIL_RULE_ID,
+                    severity=_CREDENTIAL_EXFIL_SEVERITY,
+                    category="injection",
+                )
+            )
         dangerous_hits = _find_dangerous_commands(line)
         for rule_id, severity in _DANGEROUS_RULE_SEVERITIES.items():
             if rule_id in dangerous_hits:

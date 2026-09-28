@@ -55,10 +55,16 @@ What leaves the machine for each record:
 
 Slot kinds: `identifier` (HMAC token unless on the public-names allowlist), `contact`
 (`<contact>`), `path` (`<path>`), `command` (basename only, with the existing compound and
-quoting refusals), `metric` (a finite number, or the existing bounded metric token), and `enum`
-(one of the declared values). The first five reuse the existing egress transforms through the
-public `transform_state` function, so they behave exactly like a state field of that kind. Only
-`level` values from a fixed keyword set are accepted.
+quoting refusals), `metric` (numbers only: a finite int or float, or a numeric string matching
+`^[+-]?[0-9]{1,32}(\.[0-9]{1,32})?$`, with no unit suffix), and `enum` (one of the declared
+values). The first four reuse the existing egress transforms through the public
+`transform_state` function, so they behave exactly like a state field of that kind. A template
+`metric` slot is deliberately stricter than a plain `metric` state field, which keeps its
+existing bounded token behavior: a free-text metric slot would let a template author pass
+unmasked text (a name, a hex id) past kind-based masking inside an otherwise trusted message.
+Non-numeric values with a known set belong in an `enum` slot. `level` is matched
+case-insensitively against a fixed keyword set and always sent lowercased (`ERROR` becomes
+`error`); anything outside the set is refused.
 
 Rendering is a single left-to-right pass over the parsed template: literal pieces are copied and
 each slot is replaced by its transformed value. Values are never re-parsed, so a param that
@@ -88,9 +94,9 @@ advice). Nothing is passed through raw, and no partial field is sent.
   `template_id`.
 - Params that are not an object, or that are missing a slot or carry an extra key.
 - A param value that is a bool, None, nested container, non-finite number, number in a
-  non-metric slot, string over 256 characters, enum value not declared, or a value its slot
-  transform refuses (for example a metric string outside the metric token charset, which also
-  refuses newlines and braces).
+  non-metric slot, string over 256 characters, enum value not declared, a metric string that is
+  not strictly numeric (names, words, hex, units, exponents), or a value its slot transform
+  refuses.
 
 At load (a `config` failure): malformed templates, a templated field when no templates are
 declared, an unknown `format` value, unknown keys anywhere in a template definition.
@@ -120,9 +126,12 @@ existing fingerprint. A test pins a pre-existing fingerprint to prove this.
   keeps existing calibration identities stable and binds its own digest only where used.
 - **Sending params as a structured object next to the template text** instead of a rendered
   message. Unambiguous, but less natural for the model. Rendering is safe here because every
-  slot value is either a token (HMAC, placeholder, enum, number) or a metric string whose
-  charset excludes braces and newlines. This can be revisited if calibration shows the model
+  slot value is a token (HMAC, placeholder, command basename, enum value or number), none of
+  which can contain braces or newlines. This can be revisited if calibration shows the model
   prefers structure.
+- **Reusing the plain metric token (up to 64 characters of `[A-Za-z0-9 ._:+/-]`) for template
+  metric slots.** It would let arbitrary words and identifiers ride through a template
+  unmasked. Rejected in favor of numbers only.
 - **Per-field (rather than whole-request) blocking.** Existing egress blocks the whole request on
   any field failure; a partial request would silently change what a calibrated question sees.
 
@@ -131,8 +140,11 @@ existing fingerprint. A test pins a pre-existing fingerprint to prove this.
 - A question-set author can write a sensitive literal into a template. Review of the question
   set is the control, backed by the load-time and final Tier 1 scans, which cannot catch every
   class (for example a customer name).
-- A metric slot passes up to 64 characters of `[A-Za-z0-9 ._:+/-]` verbatim, as a metric state
-  field already does. An author should use `enum` wherever the value set is known.
+- A numeric metric slot still sends the number verbatim. A number can itself be sensitive (an
+  account or PIN-length value); authors should declare metric slots only for counts, sizes,
+  durations and codes. Card-number-shaped values are still caught by the final scan.
+- Plain `metric` state fields keep the existing 64-character token behavior; this ADR does not
+  change them.
 - An `identifier` token is linkable and still personal data (ADR 0002). A `log` field is a
   personal kind, so the live DPA attestation rules apply unchanged.
 - The template approach only helps hosts that can emit structured records. Hosts with only raw

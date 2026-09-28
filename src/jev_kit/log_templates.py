@@ -51,6 +51,10 @@ _REUSED_KINDS = {
 }
 _ENUM = "enum"
 
+# A template metric slot is numbers only (owner decision on PR #16): a free-text metric slot
+# would let an author pass unmasked text past kind-based masking. Text belongs in an enum slot.
+_NUMERIC = re.compile(r"^[+-]?[0-9]{1,32}(?:\.[0-9]{1,32})?$")
+
 LEVELS = frozenset(
     {"trace", "debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"}
 )
@@ -191,6 +195,12 @@ def _transform_param(slot: Slot, value: Any, ctx: EgressContext) -> str:
         return value
     if not isinstance(value, (str, int, float)):
         raise _blocked("log_param_type")
+    if slot.kind == "metric":
+        if isinstance(value, str):
+            if not _NUMERIC.match(value):
+                raise _blocked("log_param_not_numeric")
+            return value
+        return str(value)
     kind = _REUSED_KINDS[slot.kind]
     # Reuse the shipped transform for this kind exactly as a state field would get it. It
     # refuses numbers in non-metric kinds and anything the kind cannot reduce.
@@ -211,6 +221,8 @@ def _render_record(
     if not isinstance(record, Mapping) or set(record) != {"level", "template_id", "params"}:
         raise _blocked("log_record_shape")
     level = record["level"]
+    # Levels are matched case-insensitively and always sent lowercased (owner decision, PR #16).
+    level = level.lower() if isinstance(level, str) else level
     if not isinstance(level, str) or level not in LEVELS:
         raise _blocked("log_record_level")
     template_id = record["template_id"]

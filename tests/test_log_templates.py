@@ -152,7 +152,8 @@ def test_free_form_log_unchanged_without_templates(tmp_path: Any) -> None:
         {"level": "error", "template_id": "conn_failed"},  # missing params key
         {**rec(), "extra": 1},  # extra record key
         rec("nope"),  # unknown template
-        rec(level="ERROR"),  # level outside the keyword set
+        rec(level="fail"),  # level outside the keyword set
+        rec(level="ERR"),
         rec(level="db01"),
         rec(host="db01", attempts=3),  # missing param
         rec(host="db01", attempts=3, reason="timeout", extra="x"),  # extra param
@@ -167,7 +168,7 @@ def test_free_form_log_unchanged_without_templates(tmp_path: Any) -> None:
         rec(host="db01", attempts=3, reason="{host}"),  # enum injection
         rec(host="db01", attempts="3\nERROR admin password", reason="timeout"),  # newline
         rec(host="db01", attempts="{reason}", reason="timeout"),  # slot syntax in a metric
-        rec(host="db01", attempts="a" * 65, reason="timeout"),  # metric token too long
+        rec(host="db01", attempts="1" * 33, reason="timeout"),  # numeric string too long
         {"level": "error", "template_id": "conn_failed", "params": "host=db01"},
         rec("user_login", "info", email="a@b.co", path="/x", tool="ls; cat /etc/passwd"),
         42,
@@ -283,3 +284,34 @@ def test_sets_without_templates_have_no_template_contract() -> None:
     contract = egress_contract(load_question_set(qset(templates=None, fmt=False)))
     assert "log_templates" not in contract
     assert "log_templates" in egress_contract(load_question_set(qset()))
+
+
+@pytest.mark.parametrize("level", ["ERROR", "Error", "eRrOr"])
+def test_level_case_insensitive_sent_lowercased(tmp_path: Any, level: str) -> None:
+    wire = sent(tmp_path, {"events": [rec(level=level)]})
+    assert wire["state"]["events"][0]["level"] == "error"
+
+
+@pytest.mark.parametrize(
+    "value", ["db01", "JaneDoe", "timeout", "abc123", "deadbeef", "0x1f", "1e5", "3ms",
+              "1.2.3", "1,000", " 3", "3 ", "-", "", "1.", ".5", "v1.2"],
+)
+def test_metric_slot_refuses_non_numeric_text(tmp_path: Any, value: str) -> None:
+    blocked(tmp_path, {"events": [rec(host="db01", attempts=value, reason="timeout")]})
+
+
+@pytest.mark.parametrize(
+    ("value", "shown"),
+    [(3, "3"), (0, "0"), (-2, "-2"), (1.5, "1.5"), ("42", "42"), ("-0.25", "-0.25"),
+     ("+7", "+7")],
+)
+def test_metric_slot_accepts_numbers(tmp_path: Any, value: Any, shown: str) -> None:
+    wire = sent(tmp_path, {"events": [rec(host="db01", attempts=value, reason="timeout")]})
+    assert f"failed after {shown} retries" in wire["state"]["events"][0]["message"]
+
+
+def test_plain_metric_field_behavior_unchanged(tmp_path: Any) -> None:
+    obj = qset()
+    obj["state_schema"]["version"] = {"kind": "metric"}
+    wire = sent(tmp_path, {"version": "python 3.11.4"}, obj)
+    assert wire["state"]["version"] == "python 3.11.4"

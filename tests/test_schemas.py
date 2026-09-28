@@ -70,3 +70,25 @@ def test_example_attestation_checks() -> None:
     with pytest.raises(ValidationError):
         check_attestation({"inventory": True, "inventory_date": "2026-09-25", "dpa": False},
                           personal_present=True)
+
+
+def test_example_question_set_with_log_templates_loads() -> None:
+    schema = json.loads((SCHEMA_DIR / "question-set.schema.json").read_text(encoding="utf-8"))
+    assert "log_templates" in schema["properties"]
+    qs = load_question_set(
+        {
+            "schema_version": 1, "id": "logs", "version": "1", "model": "jev-1.13.0",
+            "escalation_target": "gpt-6",
+            "questions": {"o": {"type": "noul", "instructions": "Outage?",
+                                "kit": {"consequence": "advisory"}}},
+            "log_templates": {
+                "conn_failed": {
+                    "text": "connection to {host} failed: {reason}",
+                    "params": {"host": {"kind": "identifier"},
+                               "reason": {"kind": "enum", "values": ["timeout"]}},
+                }
+            },
+            "state_schema": {"events": {"kind": "log", "params": {"format": "template"}}},
+        }
+    )
+    assert set(qs.log_templates) == {"conn_failed"}

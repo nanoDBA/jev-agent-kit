@@ -8,13 +8,19 @@ classes, and transcript settings. Parsing rejects duplicate keys and non-finite 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from jev_kit.egress import EGRESS_TRANSFORM_DIGEST, ContentKind, FieldSpec, scan_text
 from jev_kit.errors import FailReason, ValidationError
 from jev_kit.fingerprint import parse_canonical
+from jev_kit.log_templates import (
+    LogTemplate,
+    check_field_format,
+    parse_log_templates,
+    templates_contract,
+)
 from jev_kit.types import (
     ChoiceQuestion,
     ConsequenceClass,
@@ -39,6 +45,7 @@ class QuestionSet:
     transcripts_enabled: bool
     transcripts_cap: int
     raw: dict[str, Any]  # the whole file, for the set digest
+    log_templates: dict[str, LogTemplate] = field(default_factory=dict)  # ADR 0004
 
 
 def _require(obj: dict[str, Any], key: str, check: str) -> Any:
@@ -162,6 +169,8 @@ _ALLOWED_FIELD_PARAMS: dict[str, frozenset[str]] = {
     ContentKind.CODE.value: frozenset({"language"}),
     ContentKind.FREE_TEXT.value: frozenset({"source_type"}),
     ContentKind.TRANSCRIPT.value: frozenset({"source_type"}),
+    # ADR 0004: {"format": "template"} opts a log field into declared templates.
+    ContentKind.LOG.value: frozenset({"format"}),
 }
 
 
@@ -185,6 +194,7 @@ _QS_ALLOWED_FIELDS = frozenset(
     {
         "schema_version", "id", "version", "model", "escalation_target",
         "questions", "state_schema", "transcripts", "excluded_classes",
+        "log_templates",
     }
 )
 
@@ -218,6 +228,11 @@ def _parse(obj: Any) -> QuestionSet:
     if not isinstance(raw_schema, dict):
         raise ValidationError(FailReason.CONFIG, "schema_type")
     schema = {name: _build_field(spec) for name, spec in raw_schema.items()}
+    log_templates = (
+        parse_log_templates(obj["log_templates"]) if "log_templates" in obj else {}
+    )
+    for spec in schema.values():
+        check_field_format(spec, log_templates)
 
     transcripts = obj.get("transcripts", {})
     if not isinstance(transcripts, dict):
@@ -265,6 +280,7 @@ def _parse(obj: Any) -> QuestionSet:
         transcripts_enabled=enabled,
         transcripts_cap=cap,
         raw=obj,
+        log_templates=log_templates,
     )
 
 
@@ -288,7 +304,7 @@ def load_question_set_file(path: str | Path) -> QuestionSet:
 
 def egress_contract(qset: QuestionSet) -> dict[str, Any]:
     """The effective egress contract hashed into every question fingerprint (story 69)."""
-    return {
+    contract: dict[str, Any] = {
         "policy_version": EGRESS_POLICY_VERSION,
         # A digest of the actual transform/detector behavior, so a change to how state is reduced
         # (e.g. command reduction) invalidates prior calibration automatically (finding H3).
@@ -300,3 +316,8 @@ def egress_contract(qset: QuestionSet) -> dict[str, Any]:
         "transcripts": {"enabled": qset.transcripts_enabled, "cap": qset.transcripts_cap},
         "excluded_classes": sorted(qset.excluded_classes),
     }
+    # Declared log templates change what the model sees, so they are bound here (ADR 0004). The
+    # key is added only when templates exist, so sets without templates keep their fingerprints.
+    if qset.log_templates:
+        contract["log_templates"] = templates_contract(qset.log_templates)
+    return contract

@@ -51,6 +51,8 @@ hooks deliberately never send or use (folder names often name a client).
   `C:\Windows\..\Windows` count as system paths. A tilde path is judged as a path under the
   home base. Symlinks are not resolved (no filesystem access). A relative path whose net climb
   is three or more levels, and a UNC path, make the parse not confident.
+- WSL (`/mnt/c/...`), Cygwin (`/cygdrive/c/...`) and Git Bash (`/c/...`) spellings are read
+  as the Windows drive, so `/mnt/c/Users/x` is home and `/c/Windows` is a system path.
 - Every package install also sets `cmd_network_download`.
 - Detection is biased toward `true`. Where a word could be a flag or an option's argument, it is
   read as the flag. That is exactly the ambiguity that forced H16, but here it is harmless: a
@@ -83,8 +85,29 @@ or when the program runs something this parser cannot see (`bash`, `sh`, `pwsh`,
 `Invoke-Command`, `python -c` and similar), or an assignment that cmd could read as a command
 (`rd=/s`). An internal error in the extractor also gives "not confident", never `false`.
 
-Confident is reserved for commands whose effects this module fully models. So the parse is
-also not confident when the command runs code it cannot see: interpreters and their script or
+**The one rule: confident is an allowlist.** The parse is confident only when every program
+in it is on the modeled allowlist and none of the conditions above applies. The allowlist is:
+the delete, copy and move commands in the table (`rm`, `rmdir`, `unlink`, `Remove-Item` and
+its aliases, `del`, `erase`, `rd`, `cp`, `mv`, `ln`, `Copy-Item`, `Move-Item`), the permission
+commands in the table, the plain downloaders (`curl`, `wget`, `iwr`, `irm`), read-only
+listing and text tools (`ls`, `dir`, `cat`, `type`, `echo`, `pwd`, `head`, `tail`, `wc`,
+`grep`, `mkdir`, `touch`, `find` without `-exec`, `which`, `whoami`, `date`, `sort`, `uniq`,
+`stat`, `tree`, `du`, `df`, `Get-ChildItem`, `Get-Content`, `Get-Location`, `Write-Output`,
+`Select-String`), the wrappers `sudo`, `doas`, `gsudo`, `run0`, `env`, `nice`, `nohup`,
+`time`, `command`, `builtin` around a modeled program, and git with a read-only or index-only
+subcommand that runs no hook, updates no ref and changes no config (`status`, `log`, `diff`,
+`show`, `rev-parse`, `ls-files`, `ls-tree`, `ls-remote`, `blame`, `grep`, `describe`,
+`shortlog`, `show-ref`, `cat-file`, `for-each-ref`, `add`, `rm`, `mv`, `clean` and similar
+inspection commands). Everything else is not confident, keeping any positive detections. In
+particular: any program not listed (`evil`, `net`, `certutil`, `pip list`); a path-qualified
+command word (`/tmp/evil`, `tools/evil`, `~/bin/evil`, `C:\tmp\evil.exe`, and even
+`/bin/rm`, since the path may not hold what the name suggests); `exec`, `eval`, `source`,
+`.` and `Import-Module`; git subcommands that run repository hooks or change refs or config
+(`commit`, `checkout`, `switch`, `merge`, `pull`, `push`, `rebase`, `am`, `reset`, `branch`,
+`tag`, `fetch`, `clone`, `stash`, `config`); other version control tools (`hg`, `svn`,
+`fossil`, `bzr`), whose clone, checkout, pull and update also set `cmd_network_download`.
+
+Examples of code this module cannot see, all not confident: interpreters and their script or
 module operands (`python x.py`, `python -m mod`, `node`, `deno`, `bun`, `ruby`, `perl`, `php`,
 `java`, `dotnet`), build tools and task runners (`make`, `just`, `cargo`, `go`, `gradle`,
 `mvn`, `rake`), test runners (`pytest`, `jest`, `tox`), package managers and package runners
@@ -158,9 +181,14 @@ name. Eleven bits per call cannot carry a secret the way a raw argument can.
   function over the command text. `ll` could be anything.
 - Relative paths are judged without the working directory. `rm -rf ..` is not flagged as the
   home directory even when the working directory is directly under home.
-- Programs outside the lists get all-`false` properties when the parse is confident. A
-  destructive tool the lists do not know (`shred`, `dd`, `mkfs`, `format`, a database CLI) has
-  only its program name as evidence, as before this change.
+- A program outside the modeled allowlist is never confident, so a destructive tool the lists
+  do not know (`shred`, `dd`, `mkfs`, `format`, a database CLI) gets `null` properties and, in
+  enforce, always asks. The cost is friction: in enforce every unmodeled command asks,
+  including host tool names such as `Edit` that a shim sends when a call has no command text.
+- Modeled read-only git subcommands can still run programs through local repository config
+  (`core.fsmonitor`, external diff drivers). Such config is not cloned, but a local attacker
+  who can write `.git/config` is out of scope.
+- A lone `/c` is not read as a Git Bash drive root, because it looks the same as a cmd switch.
 - One bit per property per call is still data about the command. A compromised agent could in
   principle signal a few bits through its choice of flags; it could do far more by running the
   command.

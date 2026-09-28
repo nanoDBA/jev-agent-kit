@@ -182,7 +182,8 @@ def test_outgoing_bytes_hold_no_raw_arguments(
         if key.startswith(STATE_PREFIX):
             assert value is None or isinstance(value, bool)
     assert state["command"] in {"rm", "git", "Remove-Item", "curl"}
-    assert state[CONFIDENT_KEY] is True
+    # `git push` runs hooks, so it is not a modeled (confident) command.
+    assert state[CONFIDENT_KEY] is (state["command"] != "git")
 
 
 def test_unconfident_command_sends_null_properties(tmp_path: Path) -> None:
@@ -362,6 +363,40 @@ def test_every_package_install_is_also_a_download(
     assert state[STATE_PREFIX + "package_install"] is True
     assert state[STATE_PREFIX + "network_download"] is True
     assert state[CONFIDENT_KEY] is False  # install scripts are unseen code
+
+
+@pytest.mark.parametrize("host", HOSTS)
+@pytest.mark.parametrize(
+    "command",
+    ["/tmp/evil", "tools/evil", "~/bin/evil", "C:\\tmp\\evil.exe", "evil", "exec evil",
+     "Import-Module .\\x.psm1", "git commit -m wip", "git checkout main", "git merge x",
+     "git config core.hooksPath /tmp/h"],
+)
+def test_unmodeled_commands_are_sent_as_unknown(host: str, command: str, tmp_path: Path) -> None:
+    # Round-2 C01: confident is an allowlist of fully modeled commands.
+    state = _outgoing_state(host, command, tmp_path)
+    assert state[CONFIDENT_KEY] is False
+    for name in PROPERTY_NAMES:
+        assert state[STATE_PREFIX + name] is not False
+    assert _run_host(host, command, Mode.ENFORCE, _all_accept) is HookOutcome.ASK
+
+
+@pytest.mark.parametrize("host", HOSTS)
+@pytest.mark.parametrize(
+    ("command", "field"),
+    [("rm -rf /mnt/c/Users/x", "targets_home_directory"),
+     ("rm -rf /c/Users/x", "targets_home_directory"),
+     ("rm -rf /cygdrive/c/Users/x", "targets_home_directory"),
+     ("rm -rf /mnt/c/Windows", "targets_root_or_system_path"),
+     ("hg clone http://x", "network_download"),
+     ("svn checkout http://x", "network_download")],
+)
+def test_wsl_paths_and_other_vcs_in_outgoing_state(
+    host: str, command: str, field: str, tmp_path: Path
+) -> None:
+    # Round-2 C02 and C04.
+    state = _outgoing_state(host, command, tmp_path)
+    assert state[STATE_PREFIX + field] is True
 
 
 @pytest.mark.parametrize("host", HOSTS)

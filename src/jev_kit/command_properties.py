@@ -234,6 +234,9 @@ def _analyze_tokens(tokens: list[str], found: _Found, depth: int) -> None:
         found.unsure("no_command_word")
         return
     word = tokens[idx]
+    if "/" in word or "\\" in word or word.startswith("~"):
+        # A path-qualified command word may be any program, not the one its name suggests.
+        found.unsure("path_qualified_program")
     if word.startswith(("./", ".\\", "../", "..\\")) or word.lower().endswith(_SCRIPT_SUFFIXES):
         found.unsure("runs_unseen_code")  # a local script: its contents are not inspected
     readings = _program_readings(word)
@@ -291,6 +294,8 @@ def _analyze_program(program: str, args: list[str], found: _Found, depth: int) -
     if program in _ELEVATION:
         found.hit("uses_elevation")
     if program in _PLAIN_WRAPPERS:
+        if program == "exec":
+            found.unsure("exec_replaces_shell")  # still look through it for positives
         rest = list(args)
         if program == "env":
             while rest and _ENV_ASSIGNMENT.match(rest[0]):
@@ -305,6 +310,14 @@ def _analyze_program(program: str, args: list[str], found: _Found, depth: int) -
     if program in _INDIRECT:
         found.unsure("indirect_execution")
         return
+    if program not in _MODELED and program != "git":
+        # Confident is an allowlist (ADR 0005): a program whose effects this module does not
+        # model is unknown. Positive detections below still count.
+        found.unsure("unmodeled_program")
+    if program in _VCS_OTHER:
+        words = {t.lower() for t in args if not t.startswith("-")}
+        if words & _VCS_DOWNLOAD:
+            found.hit("network_download")
     if program in _RUNNERS or program.startswith("python"):
         # Interpreters, build tools, test runners and package runners execute code (a script,
         # a module, a make target, a package script) that this module cannot see. Positive
@@ -429,6 +442,10 @@ def _git(args: list[str], found: _Found) -> None:
     if sub not in _GIT_KNOWN:
         found.unsure("git_unknown_subcommand")  # possibly a user alias
         return
+    if sub not in _GIT_MODELED:
+        # Subcommands that run repository hooks (commit, checkout, merge, pull, push, rebase,
+        # am, ...), update refs (reference-transaction hook) or change config are not modeled.
+        found.unsure("git_unmodeled_subcommand")
     opts = _options(rest)
     words = {t.lower() for t in rest}
     if sub in _GIT_DOWNLOAD:
@@ -653,7 +670,14 @@ def _absolute(token: str) -> tuple[str, list[str]] | None:
         first, _, rest = low.partition("/")
         return "posix", _resolve(["home", first, *rest.split("/")])
     if low.startswith("/"):
-        return "posix", _resolve(low.split("/"))
+        segs = _resolve(low.split("/"))
+        # WSL (/mnt/c), Cygwin (/cygdrive/c) and Git Bash (/c) spellings of a Windows drive.
+        if len(segs) >= 2 and segs[0] in {"mnt", "cygdrive"} and len(segs[1]) == 1:
+            return "windows", segs[2:]
+        # A lone "/c" is not mapped: cmd switches such as "/s" and "/q" look the same.
+        if len(segs) >= 2 and len(segs[0]) == 1 and segs[0].isalpha():
+            return "windows", segs[1:]
+        return "posix", segs
     if _DRIVE.match(low):
         return "windows", _resolve(low[2:].split("/"))
     return None
@@ -802,3 +826,26 @@ _RUNNERS = frozenset({
 })
 _SCRIPT_SUFFIXES = (".sh", ".bash", ".zsh", ".ps1", ".psm1", ".py", ".js", ".mjs", ".cjs",
                     ".ts", ".rb", ".pl", ".php", ".bat", ".cmd", ".vbs", ".jar", ".lua")
+
+# Programs whose effects this module models. Only these (plus modeled git subcommands and the
+# plain wrappers around them) can give a confident parse.
+_MODELED = frozenset({
+    "rm", "rmdir", "unlink", "remove-item", "ri", "del", "erase", "rd",
+    "cp", "mv", "ln", "copy-item", "cpi", "copy", "move-item", "mi", "move",
+    "ls", "dir", "cat", "type", "echo", "pwd", "head", "tail", "wc", "grep", "mkdir", "touch",
+    "find", "which", "whoami", "date", "sort", "uniq", "stat", "tree", "du", "df",
+    "get-childitem", "gci", "get-content", "gc", "get-location", "write-output",
+    "select-string", "curl", "wget", "iwr", "irm", "invoke-webrequest", "invoke-restmethod",
+}) | _PERMISSIONS | (_PLAIN_WRAPPERS - {"exec"}) | frozenset({"sudo", "doas", "gsudo",
+                                                               "run0"})
+# Read-only or index-only git subcommands that run no hook and change no ref or config.
+_GIT_MODELED = frozenset({
+    "status", "log", "diff", "show", "rev-parse", "ls-files", "ls-tree", "ls-remote", "blame",
+    "grep", "describe", "shortlog", "show-ref", "cat-file", "for-each-ref", "version", "help",
+    "count-objects", "merge-base", "rev-list", "name-rev", "whatchanged", "diff-tree",
+    "diff-index", "diff-files", "check-ignore", "var", "verify-commit", "verify-tag", "add",
+    "rm", "mv", "clean", "annotate", "cherry", "range-diff",
+})
+_VCS_OTHER = frozenset({"hg", "svn", "fossil", "bzr", "brz", "darcs", "cvs"})
+_VCS_DOWNLOAD = frozenset({"clone", "checkout", "co", "pull", "update", "up", "export",
+                           "fetch", "sync", "branch", "get", "open"})

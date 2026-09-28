@@ -247,6 +247,7 @@ def _analyze_tokens(tokens: list[str], found: _Found, depth: int) -> None:
         found.unsure("program_unreadable")
     # Every argument, under both a literal and a POSIX-unescaped reading.
     for tok in tokens[idx + 1:]:
+        _check_name_aliases(tok, found)
         for variant in _variants(tok):
             _check_path_token(variant, found)
     for program, extra in readings:
@@ -340,7 +341,7 @@ def _analyze_program(program: str, args: list[str], found: _Found, depth: int) -
         return
 
     if program in _WRITERS:
-        _check_planted_code(args, found)
+        _check_planted_code(program, args, found)
 
     # Delete commands: POSIX rm, PowerShell Remove-Item and its aliases, cmd del/rd.
     if program in _POSIX_DELETE or program in _PS_DELETE:
@@ -393,25 +394,62 @@ def _analyze_program(program: str, args: list[str], found: _Found, depth: int) -
 _PS_COPY = frozenset({"copy-item", "cpi", "copy", "move-item", "mi", "move"})
 
 
-def _check_planted_code(args: list[str], found: _Found) -> None:
+def _check_planted_code(program: str, args: list[str], found: _Found) -> None:
     """A write can plant code that runs later (a git hook, an agent settings file, a Makefile).
 
-    Every path argument of a writing command is checked, sources included, with option values
-    (`--target-directory=x`) too. Any component starting with "." (other than "." and "..") or a
-    final name that tools auto-run or auto-load makes the parse unconfident.
+    Options are an allowlist of exact spellings per command (`_WRITER_SWITCHES`,
+    `_WRITER_VALUED`). Any other dashed word (an attached value such as `-t.git`, a cluster with
+    a valued letter, a colon-bound PowerShell parameter, an unknown or abbreviated option, a
+    dashed word after `--`) makes the parse unconfident. A recursive copy is unconfident
+    because the copied contents are unseen. Every remaining word is a path: a component
+    starting with "." or a final name that tools auto-run or auto-load is unconfident.
     """
-    for tok in args:
-        for cand in (tok, tok.split("=", 1)[1] if tok.startswith("-") and "=" in tok else ""):
-            segs = _segments(cand.lower())
-            if not segs or (cand.startswith("-") and "=" not in cand):
-                continue
-            if any(seg.startswith(".") and seg not in {".", ".."} for seg in segs):
-                found.unsure("writes_dot_path")
-            name = segs[-1]
-            if name in _AUTO_RUN_NAMES or name.endswith(_AUTO_RUN_SUFFIXES) or (
-                name.startswith(("docker-compose", "compose.")) and name.endswith((".yml", ".yaml"))
-            ):
-                found.unsure("writes_auto_run_file")
+    powershell = program in _PS_WRITERS
+    switches = _WRITER_SWITCHES[program]
+    valued = _WRITER_VALUED[program]
+    paths: list[str] = []
+    idx = 0
+    end_of_options = False
+    while idx < len(args):
+        tok = args[idx]
+        idx += 1
+        if end_of_options or not tok.startswith("-") or tok == "-":
+            if end_of_options and tok.startswith("-"):
+                found.unsure("writer_option_unknown")  # a dashed name after `--`
+            paths.append(tok)
+            continue
+        key = tok.lower() if powershell else tok
+        if tok == "--" and not powershell:
+            end_of_options = True
+            continue
+        if key in valued:
+            if idx < len(args):
+                paths.append(args[idx])
+                idx += 1
+            continue
+        if key in switches:
+            if key in _RECURSIVE_COPY_SWITCHES.get(program, frozenset()):
+                found.unsure("recursive_copy")
+            continue
+        cluster = tok[1:]
+        if (not powershell and not tok.startswith("--") and cluster
+                and all("-" + ch in switches for ch in cluster)):
+            if any("-" + ch in _RECURSIVE_COPY_SWITCHES.get(program, frozenset())
+                   for ch in cluster):
+                found.unsure("recursive_copy")
+            continue
+        found.unsure("writer_option_unknown")
+    for cand in paths:
+        segs = _segments(cand.lower())
+        if not segs:
+            continue
+        if any(seg.startswith(".") and seg not in {".", ".."} for seg in segs):
+            found.unsure("writes_dot_path")
+        name = segs[-1]
+        if name in _AUTO_RUN_NAMES or name.endswith(_AUTO_RUN_SUFFIXES) or (
+            name.startswith(("docker-compose", "compose.")) and name.endswith((".yml", ".yaml"))
+        ):
+            found.unsure("writes_auto_run_file")
 
 
 def _options(args: list[str]) -> list[str]:
@@ -634,6 +672,14 @@ def _python_like(program: str, args: list[str], found: _Found) -> None:
 
 
 # --------------------------------------------------------------------------- paths
+
+
+def _check_name_aliases(token: str, found: _Found) -> None:
+    """Windows reads GIT~1 as an 8.3 alias and drops a trailing dot or space, so the name on
+    disk may differ from the name written here. Checked on the literal word only."""
+    for seg in _segments(token):
+        if seg not in {".", ".."} and (_SHORT_NAME.search(seg) or seg.endswith((".", " "))):
+            found.unsure("windows_name_alias")
 
 
 def _check_path_token(token: str, found: _Found) -> None:
@@ -904,3 +950,33 @@ _AUTO_RUN_NAMES = frozenset({
 })
 _AUTO_RUN_SUFFIXES = (".ps1", ".psm1", ".pth", ".config.js", ".config.ts", ".config.mjs",
                       ".config.cjs")
+
+_SHORT_NAME = re.compile(r"~[0-9]")
+_PS_WRITERS = frozenset({"copy-item", "cpi", "copy", "move-item", "mi", "move"})
+_PS_WRITER_SWITCHES = frozenset({"-recurse", "-force", "-passthru", "-container", "-whatif",
+                                 "-confirm"})
+_PS_WRITER_VALUED = frozenset({"-path", "-literalpath", "-destination"})
+_WRITER_SWITCHES: dict[str, frozenset[str]] = {
+    "cp": frozenset({"-r", "-R", "-a", "-f", "-i", "-n", "-v", "-p", "-u", "-P", "-L", "-H",
+                     "--recursive", "--archive", "--force", "--interactive", "--no-clobber",
+                     "--verbose", "--update", "--no-dereference", "--dereference"}),
+    "mv": frozenset({"-f", "-i", "-n", "-v", "-u", "--force", "--interactive",
+                     "--no-clobber", "--verbose", "--update"}),
+    "ln": frozenset({"-s", "-f", "-n", "-v", "-i", "--symbolic", "--force",
+                     "--no-dereference", "--verbose", "--interactive"}),
+    "touch": frozenset({"-a", "-m", "-c", "--no-create"}),
+    "mkdir": frozenset({"-p", "-v", "--parents", "--verbose"}),
+    **{name: _PS_WRITER_SWITCHES for name in _PS_WRITERS},
+}
+_WRITER_VALUED: dict[str, frozenset[str]] = {
+    "cp": frozenset({"-t", "--target-directory"}),
+    "mv": frozenset({"-t", "--target-directory"}),
+    "ln": frozenset({"-t", "--target-directory"}),
+    "touch": frozenset(),
+    "mkdir": frozenset(),
+    **{name: _PS_WRITER_VALUED for name in _PS_WRITERS},
+}
+_RECURSIVE_COPY_SWITCHES: dict[str, frozenset[str]] = {
+    "cp": frozenset({"-r", "-R", "-a", "--recursive", "--archive"}),
+    **{name: frozenset({"-recurse"}) for name in _PS_WRITERS},
+}

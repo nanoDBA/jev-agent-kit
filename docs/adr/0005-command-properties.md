@@ -104,16 +104,28 @@ assignment or option, since no variable is treated as safe; `exec`, `eval`, `sou
 `Import-Module`; every git command; other version control tools (`hg`, `svn`, `fossil`,
 `bzr`), whose clone, checkout, pull and update also set `cmd_network_download`.
 
-Writes that plant code are not confident. For `cp`, `mv`, `ln`, `Copy-Item`, `Move-Item`
-(and aliases), `touch` and `mkdir`, every path argument is checked, sources and option values
-(`-t dir`, `--target-directory=dir`) included, case-insensitively with either separator. If any
-component starts with `.` (other than `.` and `..`: `.git/hooks`, `.git/config`, `.claude`,
-`.codex`, `.vscode`, `.github`, `.husky`, `.envrc`, `.env.local`, `.bashrc`), or the final
-name is a file that tools run or load on their own (`Makefile`, `justfile`, `package.json`,
-`pyproject.toml`, `setup.py`, `setup.cfg`, `tox.ini`, `conftest.py`, `Dockerfile`,
-`docker-compose*.yml`, `sitecustomize.py`, `*.pth`, `*.ps1`, `*.config.js` and similar), the
-parse is not confident. Limit: the name list is finite, and a directory destination hides the
-final name (`cp x src/` where `x` is `conftest.py` is caught only through the source).
+Writes that plant code are not confident. For `cp`, `mv`, `ln`, `touch`, `mkdir` and the
+PowerShell `Copy-Item` and `Move-Item` (and aliases), options are an allowlist of exact
+spellings. `cp`: `-r -R -a -f -i -n -v -p -u -P -L -H` alone or clustered, their long forms
+without values, and `-t`/`--target-directory` only as a separate word followed by its value.
+`mv` and `ln`: the same idea with their own switches. `touch`: `-a -m -c --no-create`.
+`mkdir`: `-p -v --parents --verbose`. PowerShell: `-Path`, `-LiteralPath`, `-Destination`
+with a separate value word, and the switches `-Recurse`, `-Force`, `-PassThru`, `-Container`,
+`-WhatIf`, `-Confirm`, spelled in full (any case). Any other dashed word is not confident: an
+attached value (`-t.git/hooks`, `-rt.git`), a colon-bound parameter
+(`-Destination:Makefile`), an abbreviation, an unknown option, or a dashed word after `--`.
+A recursive copy (`cp -r`, `-R`, `-a`, `Copy-Item -Recurse`) is not confident, because the
+copied contents are unseen. Every remaining word is a path, checked case-insensitively with
+either separator: any component starting with `.` (other than `.` and `..`), or a final name
+that tools run or load on their own (`Makefile`, `justfile`, `package.json`, `pyproject.toml`,
+`setup.py`, `setup.cfg`, `tox.ini`, `conftest.py`, `Dockerfile`, `docker-compose*.yml`,
+`sitecustomize.py`, `*.pth`, `*.ps1`, `*.config.js` and similar), is not confident. Limit: the
+name list is finite, a directory destination hides the final name, and `mv` of a directory
+is not detected as recursive.
+
+Windows name aliases are not confident on every platform: any path component containing `~`
+followed by a digit (an 8.3 short name such as `GIT~1`) or ending in `.` or a space
+(`Makefile.`), since Windows may resolve it to a different name.
 
 Every git command is not confident, by deliberate choice. Even read commands run programs
 named by the repository's own config (`core.fsmonitor` on `status`, `diff.external`,
@@ -180,7 +192,7 @@ name. Eleven bits per call cannot carry a secret the way a raw argument can.
 ## Consequences
 
 - In enforce, these everyday commands now always ask: every git command (including `git
-  commit`, `checkout`, `pull`, `push`, `fetch`, `status`, `diff` and `log`), `npm test`,
+  commit`, `checkout`, `pull`, `push`, `fetch`, `status`, `diff` and `log`), `cp -r`, `npm test`,
   `pytest`, `make`, and non-shell tool names such as `Edit` that a shim sends when a call has
   no command text.
 - The gate can tell `rm file` from `rm -rf /`, and flag `git push --force` as a history rewrite,

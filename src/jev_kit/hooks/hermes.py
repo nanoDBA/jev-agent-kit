@@ -2,7 +2,11 @@
 
 A Hermes plugin registers a callback via `ctx.register_hook("pre_tool_call", fn)`. The callback
 allows a tool call by returning `None`, or blocks it by returning `{"action": "block",
-"message": ...}` (Hermes routes a block to human approval). Hermes fails closed at a
+"message": ...}`, which stops the call and returns the message to the model. The shim
+deliberately does not use Hermes' `approve` action: Hermes keys approvals by tool name (one
+grant covers later calls of that tool) and auto-approves under YOLO, approvals off and some
+unattended policies, so `block` is the only response that holds everywhere. Hermes fails
+closed at a
 `plugins.hook_callback_timeout` (default 30s) plus a 60s suppression window on timeout or an
 uncaught exception (`docs/research/06-reverified-facts.md` section 9).
 
@@ -38,7 +42,7 @@ DEFAULT_QUESTION_SET_PATH = "skills/jev-runtime/questions/tool-call-gate.json"
 _MODE_ENV_VAR = "JEV_KIT_HOOK_MODE"
 _QUESTION_SET_ENV_VAR = "JEV_KIT_HOOK_QUESTION_SET_PATH"
 
-_BLOCK_MESSAGE = "jev-kit gate: send to human approval."
+_BLOCK_MESSAGE = "jev-kit gate: blocked for human review."
 
 
 class HermesContext(Protocol):

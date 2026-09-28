@@ -48,7 +48,7 @@ def test_enforce_ask_blocks() -> None:
     )
     assert result == {
         "action": "block",
-        "message": "jev-kit gate: send to human approval. (reason: uncalibrated)",
+        "message": "jev-kit gate: blocked for human review. (reason: uncalibrated)",
     }
 
 
@@ -106,7 +106,7 @@ def test_unparseable_event_enforce_blocks() -> None:
     )
     assert result == {
         "action": "block",
-        "message": "jev-kit gate: send to human approval. (reason: unparseable_event)",
+        "message": "jev-kit gate: blocked for human review. (reason: unparseable_event)",
     }
 
 

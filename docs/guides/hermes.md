@@ -93,7 +93,7 @@ Shadow mode prints `None`, which lets the call proceed. With `JEV_KIT_HOOK_MODE=
 and no API key it prints:
 
 ```text
-{'action': 'block', 'message': 'jev-kit gate: send to human approval. (reason: config)'}
+{'action': 'block', 'message': 'jev-kit gate: blocked for human review. (reason: config)'}
 ```
 
 ## What Hermes sees
@@ -110,10 +110,11 @@ engine's child process. If that budget runs out, the hook answers fail-closed wi
 further, and a worker still finishing keeps running in the background. Loading the engine also
 comes on top of the budget. That still leaves a wide margin under 30 seconds.
 
-Known limitation: in enforce mode the plugin returns Hermes' `block` action, so the call is
-stopped rather than sent for approval, even though the message says "send to human approval".
-Hermes also has an `approve` action that asks for approval. Switching to it is tracked as a
-follow-up.
+In enforce mode the plugin returns Hermes' `block` action, so the call is stopped and the
+message goes back to the model. It does not use Hermes' `approve` action on purpose: Hermes
+remembers an approval for the whole tool (one "allow for session" covers later calls of that
+tool, whatever their arguments), and approves without asking under YOLO mode, with approvals
+turned off, and under some cron or unattended policies. `block` holds in all of those.
 
 ## 5. Record real evidence (optional)
 

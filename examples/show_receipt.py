@@ -29,8 +29,8 @@ ROUTER = REPO / "skills" / "jev-runtime" / "questions" / "preflight-route.json"
 MOCK_REPLY = {
     "model": "jev-1.13.0",
     "answers": {"route": {
-        "type": "choice", "choice": "deterministic", "confidence": 0.82,
-        "probabilities": {"deterministic": 0.82, "specialist_llm": 0.15, "human": 0.03},
+        "type": "choice", "choice": "human", "confidence": 0.71,
+        "probabilities": {"deterministic": 0.05, "specialist_llm": 0.24, "human": 0.71},
     }},
 }
 
@@ -39,7 +39,7 @@ def main() -> None:
     receipts = Path(tempfile.mkdtemp(prefix="jev-receipts-"))
     decide(
         {"schema_version": 1, "question_set_path": str(ROUTER), "mode": "shadow",
-         "state": {"request": "What is the HTTP status code for 'Not Found'?"}},
+         "state": {"request": "Customer says order 1182 was charged twice and asks for a refund."}},
         transport=MockTransport.replying(
             200, json.dumps(MOCK_REPLY).encode(), {"x-typesafe-request-id": "demo-request-2"}
         ),

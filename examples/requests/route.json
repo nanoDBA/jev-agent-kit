@@ -3,7 +3,7 @@
   "op": "decide",
   "question_set_path": "skills/jev-runtime/questions/preflight-route.json",
   "state": {
-    "request": "What is the HTTP status code for 'Not Found'?"
+    "request": "Customer says order 1182 was charged twice and asks for a refund."
   },
   "mode": "shadow"
 }

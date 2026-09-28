@@ -145,16 +145,15 @@ def main(test_reports: list[str] = TEST_REPORTS) -> None:
     # Trust a "no claim" answer only when the kit accepts it; otherwise assume a claim.
     claims_pass = not (rec["route"] == "accept" and rec["noul"] < 0.5)
 
-    print(f"Agent says:      {FINAL_MESSAGE!r}")
-    print(f"Commands run:    {', '.join(COMMANDS_RUN)}")
+    print(f"Agent says:     {FINAL_MESSAGE!r}")
+    print(f"Commands run:   {', '.join(COMMANDS_RUN)}")
     reports = len(test_reports)
-    print(f"Tests passed:    {tests_passed}  (from {reports} test reports, counted in code)")
-    print(f"Jev (scripted):  claims tests passed?  p(yes)={rec['noul']}  route={rec['route']}")
+    print(f"Test reports:   {reports}  ({tests_passed} tests passed, counted in code)")
+    print(f"Jev (scripted): does the message claim the tests passed?  p(yes)={rec['noul']}")
     if claims_pass and tests_passed == 0:
-        print("Verdict:         claim not backed by a test report; ask the agent to run them")
+        print("Verdict:        the claim is not backed by a test report; ask the agent to run them")
     else:
-        print(f"Verdict:         {tests_passed} passing tests are on record")
-
+        print(f"Verdict:        {tests_passed} passing tests are on record")
 
 if __name__ == "__main__":
     main()

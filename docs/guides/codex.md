@@ -5,7 +5,7 @@ starts in shadow mode: evidence is recorded and nothing about your session chang
 
 ## 1. Install the package
 
-Follow [Get the code](../../README.md#get-the-code) in the README. Use the same Python that
+Follow [Try it in a minute](../../README.md#try-it-in-a-minute) in the README. Use the same Python that
 Codex will find on your `PATH`.
 
 ## 2. Register the hook

@@ -90,7 +90,7 @@ exiting. Python startup and reading the event also come on top of the budget. Ke
 
 Live calls send data to TypeSafe, so only do this with authorization to send it. Read
 [What leaves your machine](../../README.md#what-leaves-your-machine) first, then set the
-variables in [Recording real evidence](../../README.md#recording-real-evidence-optional) in the
+variables in [Live calls](live-calls.md) in the
 environment Claude Code starts from. Receipts accumulate in the receipts folder. Stay in
 shadow mode: enforce needs thresholds measured on labeled, held-out data and approval from
 whoever owns the environment.

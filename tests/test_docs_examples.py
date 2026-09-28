@@ -26,6 +26,7 @@ REPO = Path(__file__).resolve().parents[1]
 GATE = REPO / "skills" / "jev-runtime" / "questions" / "tool-call-gate.json"
 EXAMPLES = REPO / "examples"
 README = (REPO / "README.md").read_text(encoding="utf-8")
+CLI_GUIDE = (REPO / "docs" / "guides" / "cli.md").read_text(encoding="utf-8")
 
 
 def _env(**extra: str) -> dict[str, str]:
@@ -72,10 +73,10 @@ def test_route_request_matches_readme() -> None:
 
 
 @pytest.mark.parametrize("from_file", [True, False])
-def test_readme_cli_request_without_key(from_file: bool, tmp_path: Path) -> None:
+def test_cli_guide_request_without_key(from_file: bool, tmp_path: Path) -> None:
     request_path = EXAMPLES / "requests" / "route.json"
     request = request_path.read_text(encoding="utf-8")
-    assert request.strip() in README
+    assert request.strip() in CLI_GUIDE
     args = [sys.executable, "-m", "jev_kit.cli"]
     if from_file:
         args += ["--input", "examples/requests/route.json"]
@@ -88,7 +89,7 @@ def test_readme_cli_request_without_key(from_file: bool, tmp_path: Path) -> None
     assert json.loads(proc.stdout) == {
         "schema_version": 1, "status": "error", "reason": "config", "records": [],
     }
-    assert proc.stdout.strip() in README
+    assert proc.stdout.strip() in CLI_GUIDE
     assert not list(tmp_path.iterdir())
 
 

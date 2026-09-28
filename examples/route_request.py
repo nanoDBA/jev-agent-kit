@@ -30,9 +30,9 @@ MOCK_REPLY = {
     "answers": {
         "route": {
             "type": "choice",
-            "choice": "deterministic",
-            "probabilities": {"deterministic": 0.82, "specialist_llm": 0.15, "human": 0.03},
-            "confidence": 0.82,
+            "choice": "human",
+            "probabilities": {"deterministic": 0.05, "specialist_llm": 0.24, "human": 0.71},
+            "confidence": 0.71,
         }
     },
 }
@@ -58,11 +58,11 @@ def handle(request: str) -> str:
     )
     rec = response["records"][0]
     print(f"request: {request!r}")
-    print("Which handler should take it?  [scripted answer]")
+    print("Which handler should take it?")
     for option, p in rec["distribution"].items():
         bar = "#" * round(p * 20)
         print(f"  {option:<15} {bar:<20} {p:.2f}")
-    print(f"route:   {rec['route']}  (mock={rec['is_mock']})")
+    print(f"route:   {rec['route']}")
 
     # Your code owns the decision. Act on the label only when the kit says `accept`;
     # otherwise use your normal path.
@@ -72,5 +72,5 @@ def handle(request: str) -> str:
 
 
 if __name__ == "__main__":
-    handler = handle("What is the HTTP status code for 'Not Found'?")
+    handler = handle("Customer says order 1182 was charged twice and asks for a refund.")
     print(f"handled: {handler}")

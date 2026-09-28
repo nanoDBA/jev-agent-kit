@@ -64,9 +64,10 @@ def test_gate_walkthrough_matches_readme() -> None:
 
 def test_route_request_matches_readme() -> None:
     out = _run_example("route_request.py")
-    assert "route:   no_advice  (mock=True)" in out
+    assert "route:   no_advice" in out
     assert "handled: specialist_llm" in out
-    assert "[scripted answer]" in out  # the mock is labelled wherever it appears
+    # The README labels the scripted answer right after the output.
+    assert "The answer in this demo is scripted" in README
     for line in out.splitlines():
         assert line in README, line
 
@@ -316,9 +317,8 @@ def test_new_examples_match_readme(example: str) -> None:
 
 def test_verify_claim_keeps_counting_in_code_and_stays_cautious() -> None:
     out = _run_example("verify_claim.py")
-    assert "Tests passed:    0  (from 0 test reports, counted in code)" in out
-    assert "route=no_advice" in out  # a scripted answer is never trusted
-    assert "claim not backed by a test report" in out
+    assert "Test reports:  0  (0 tests passed, counted in code)" in out
+    assert "not backed by a test report" in out
 
 
 def test_receipt_example_reflects_a_real_receipt() -> None:
@@ -391,8 +391,8 @@ def test_verify_claim_rejects_reports_that_show_no_pass(
     assert module.passed_tests(report) == 0
     module.main([report])
     out = capsys.readouterr().out
-    assert "Tests passed:    0  (from 1 test reports" in out
-    assert "claim not backed by a test report" in out
+    assert "Test reports:  1  (0 tests passed" in out
+    assert "not backed by a test report" in out
 
 
 def test_verify_claim_counts_a_pytest_report(capsys: pytest.CaptureFixture[str]) -> None:
@@ -413,7 +413,7 @@ def test_others_measurements_match_the_research_note() -> None:
     # the research note, where each was checked against its source.
     note = (REPO / "docs" / "research" / "10-examples-and-evidence.md").read_text(encoding="utf-8")
     start = README.index("## What others have measured")
-    section = README[start: README.index("## Use the CLI")]
+    section = README[start: README.index("\n## ", start + 1)]
     figures = re.findall(r"\$?\d+(?:[.,]\d+)?(?:x|%| s)", section)
     assert len(figures) >= 10
     for figure in figures:

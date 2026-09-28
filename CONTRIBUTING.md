@@ -13,7 +13,7 @@ calls, so correctness and safety come before features.
 
 ## Setting up
 
-Get the code as described in [the README](README.md#get-the-code), then install the
+Get the code as described in [the README](README.md#try-it-in-a-minute), then install the
 development tools:
 
 ```sh

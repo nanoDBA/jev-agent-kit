@@ -339,6 +339,9 @@ def _analyze_program(program: str, args: list[str], found: _Found, depth: int) -
         _git(args, found)
         return
 
+    if program in _WRITERS:
+        _check_planted_code(args, found)
+
     # Delete commands: POSIX rm, PowerShell Remove-Item and its aliases, cmd del/rd.
     if program in _POSIX_DELETE or program in _PS_DELETE:
         for tok in _options(args):
@@ -388,6 +391,27 @@ def _analyze_program(program: str, args: list[str], found: _Found, depth: int) -
 
 
 _PS_COPY = frozenset({"copy-item", "cpi", "copy", "move-item", "mi", "move"})
+
+
+def _check_planted_code(args: list[str], found: _Found) -> None:
+    """A write can plant code that runs later (a git hook, an agent settings file, a Makefile).
+
+    Every path argument of a writing command is checked, sources included, with option values
+    (`--target-directory=x`) too. Any component starting with "." (other than "." and "..") or a
+    final name that tools auto-run or auto-load makes the parse unconfident.
+    """
+    for tok in args:
+        for cand in (tok, tok.split("=", 1)[1] if tok.startswith("-") and "=" in tok else ""):
+            segs = _segments(cand.lower())
+            if not segs or (cand.startswith("-") and "=" not in cand):
+                continue
+            if any(seg.startswith(".") and seg not in {".", ".."} for seg in segs):
+                found.unsure("writes_dot_path")
+            name = segs[-1]
+            if name in _AUTO_RUN_NAMES or name.endswith(_AUTO_RUN_SUFFIXES) or (
+                name.startswith(("docker-compose", "compose.")) and name.endswith((".yml", ".yaml"))
+            ):
+                found.unsure("writes_auto_run_file")
 
 
 def _options(args: list[str]) -> list[str]:
@@ -720,7 +744,12 @@ def _is_home(token: str) -> bool:
         return False
     if len(segs) <= 2 or _has_glob(segs[1]):
         return True
-    return len(segs) == 3 and (segs[2].startswith(".") or _has_glob(segs[2]))
+    if len(segs) == 3 and _has_glob(segs[2]):
+        return True
+    # A hidden entry anywhere under a home directory (`~/.ssh/id_rsa`, `~/.aws/credentials`,
+    # `~/.config/gh/hosts.yml`) holds settings or secrets and counts as home, as a read source
+    # or a write destination. An ordinary project child does not.
+    return any(seg.startswith(".") and seg not in {".", ".."} for seg in segs[2:])
 
 
 # --------------------------------------------------------------------------- raw scan
@@ -861,3 +890,17 @@ _GIT_MODELED = frozenset({
 _VCS_OTHER = frozenset({"hg", "svn", "fossil", "bzr", "brz", "darcs", "cvs"})
 _VCS_DOWNLOAD = frozenset({"clone", "checkout", "co", "pull", "update", "up", "export",
                            "fetch", "sync", "branch", "get", "open"})
+
+# Commands that write or create files at their path arguments.
+_WRITERS = frozenset({"cp", "mv", "ln", "copy-item", "cpi", "copy", "move-item", "mi", "move",
+                      "touch", "mkdir"})
+# Files that build tools, test runners, shells or package managers run or load on their own.
+_AUTO_RUN_NAMES = frozenset({
+    "makefile", "gnumakefile", "justfile", "package.json", "pyproject.toml", "setup.py",
+    "setup.cfg", "tox.ini", "noxfile.py", "conftest.py", "pytest.ini", "dockerfile",
+    "sitecustomize.py", "usercustomize.py", "cargo.toml", "build.rs", "gemfile", "rakefile",
+    "build.gradle", "build.gradle.kts", "settings.gradle", "pom.xml", "cmakelists.txt",
+    "requirements.txt", "pipfile", "composer.json", "deno.json", "bunfig.toml",
+})
+_AUTO_RUN_SUFFIXES = (".ps1", ".psm1", ".pth", ".config.js", ".config.ts", ".config.mjs",
+                      ".config.cjs")

@@ -31,7 +31,7 @@ and never sees the raw arguments.
 | `cmd_recursive_delete` | `rm` with `-r`, `-R` or `--recursive`; `Remove-Item` or an alias (`rm`, `ri`, `del`, `erase`, `rd`, `rmdir`) with a prefix of `-Recurse`; cmd `del`, `erase`, `rd`, `rmdir` with `/s` (also `/S/Q` and `rd/s/q`); `find -delete`; `git clean -d`. |
 | `cmd_force_flag` | `rm -f`; a prefix of `-Force` from `-fo` on for the delete, copy and move cmdlets; cmd `/q` or `/f` on the delete built-ins; `cp`, `mv`, `ln` with `-f`; any `--force` or `-Force` word; `git push -f` or `--force*`; `git clean -f`; `git checkout -f`. |
 | `cmd_targets_root_or_system_path` | Any argument (including `--opt=value` and `-Param:value` values) is `/`, a glob at the top level (`/*`, `/e?c`), or under a system directory (`/etc`, `/usr`, `/var`, `/bin`, `/boot`, `/dev`, `/proc`, `/sys`, `/root`, `/opt`, macOS `/System`, `/Library` and others) after lexical `..` resolution; or a drive root (`C:`, `C:\`, `\`), `Windows`, `Program Files` (and 8.3 `PROGRA~1`), `ProgramData`, or any `System32` segment. In an unparsed line, `$env:SystemRoot`, `%windir%` and similar also count. |
-| `cmd_targets_home_directory` | An argument is a home directory itself, a wildcard over it, or a hidden entry directly under it: `~`, `~/`, `~/*`, `~/.ssh`, `~user`, `/home/<user>`, `/Users/<user>/*`, `C:\Users\<user>`. In an unparsed line, `$HOME`, `${HOME}`, `$env:USERPROFILE`, `%USERPROFILE%` also count. |
+| `cmd_targets_home_directory` | An argument (source or destination) is a home directory itself, a wildcard over it, or a hidden entry anywhere under it (`~/.ssh/id_rsa`, `~/.aws/credentials`): `~`, `~/`, `~/*`, `~/.ssh`, `~user`, `/home/<user>`, `/Users/<user>/*`, `C:\Users\<user>`. In an unparsed line, `$HOME`, `${HOME}`, `$env:USERPROFILE`, `%USERPROFILE%` also count. |
 | `cmd_uses_elevation` | The program, or a wrapper in front of it, is `sudo`, `doas`, `su`, `pkexec`, `runas`, `gsudo`, `run0`; or an unparsed line has `-Verb RunAs`. |
 | `cmd_network_download` | `curl`, `wget`, `Invoke-WebRequest`/`iwr`, `Invoke-RestMethod`/`irm`, `Start-BitsTransfer`, `bitsadmin`, `aria2c`, `scp`, `rsync`, `sftp` and similar; `certutil -urlcache`; `git clone`, `fetch`, `pull`; any package install below. |
 | `cmd_pipes_to_shell` | In a line that is already unparsed: a pipe into a shell or interpreter (`| sh`, `| sudo bash`, `| iex`, `| python3`), `bash <(...)`, or `iex` combined with a downloader (`DownloadString`, `iwr`). |
@@ -103,6 +103,17 @@ assignment (`PATH=/tmp ls`, `LD_PRELOAD=x ls`, `GIT_PAGER=x git log`) and `env` 
 assignment or option, since no variable is treated as safe; `exec`, `eval`, `source`, `.` and
 `Import-Module`; every git command; other version control tools (`hg`, `svn`, `fossil`,
 `bzr`), whose clone, checkout, pull and update also set `cmd_network_download`.
+
+Writes that plant code are not confident. For `cp`, `mv`, `ln`, `Copy-Item`, `Move-Item`
+(and aliases), `touch` and `mkdir`, every path argument is checked, sources and option values
+(`-t dir`, `--target-directory=dir`) included, case-insensitively with either separator. If any
+component starts with `.` (other than `.` and `..`: `.git/hooks`, `.git/config`, `.claude`,
+`.codex`, `.vscode`, `.github`, `.husky`, `.envrc`, `.env.local`, `.bashrc`), or the final
+name is a file that tools run or load on their own (`Makefile`, `justfile`, `package.json`,
+`pyproject.toml`, `setup.py`, `setup.cfg`, `tox.ini`, `conftest.py`, `Dockerfile`,
+`docker-compose*.yml`, `sitecustomize.py`, `*.pth`, `*.ps1`, `*.config.js` and similar), the
+parse is not confident. Limit: the name list is finite, and a directory destination hides the
+final name (`cp x src/` where `x` is `conftest.py` is caught only through the source).
 
 Every git command is not confident, by deliberate choice. Even read commands run programs
 named by the repository's own config (`core.fsmonitor` on `status`, `diff.external`,

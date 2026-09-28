@@ -373,7 +373,9 @@ def test_every_package_install_is_also_a_download(
      "git config core.hooksPath /tmp/h", "PATH=/tmp ls", "LD_PRELOAD=/tmp/x.so ls",
      "env LD_PRELOAD=/tmp/x.so ls", "GIT_EXTERNAL_DIFF=/tmp/x git diff",
      "GIT_PAGER=/tmp/x git log", "git grep -O x", "git diff --ext-diff",
-     "git show --textconv HEAD", "git status", "git log", "date -s 2020-01-01"],
+     "git show --textconv HEAD", "git status", "git log", "date -s 2020-01-01",
+     "cp /tmp/evil .git/hooks/pre-commit", "ln -s /tmp/evil .git/hooks/pre-commit",
+     "cp /tmp/x .claude/settings.json", "cp /tmp/x Makefile", "cp /tmp/x .envrc"],
 )
 def test_unmodeled_commands_are_sent_as_unknown(host: str, command: str, tmp_path: Path) -> None:
     # Round-2 C01: confident is an allowlist of fully modeled commands.
@@ -392,7 +394,9 @@ def test_unmodeled_commands_are_sent_as_unknown(host: str, command: str, tmp_pat
      ("rm -rf /cygdrive/c/Users/x", "targets_home_directory"),
      ("rm -rf /mnt/c/Windows", "targets_root_or_system_path"),
      ("hg clone http://x", "network_download"),
-     ("svn checkout http://x", "network_download")],
+     ("svn checkout http://x", "network_download"),
+     ("cp ~/.ssh/id_rsa ./leak", "targets_home_directory"),
+     ("cat ~/.aws/credentials", "targets_home_directory")],
 )
 def test_wsl_paths_and_other_vcs_in_outgoing_state(
     host: str, command: str, field: str, tmp_path: Path

@@ -89,23 +89,28 @@ or when the program runs something this parser cannot see (`bash`, `sh`, `pwsh`,
 in it is on the modeled allowlist and none of the conditions above applies. The allowlist is:
 the delete, copy and move commands in the table (`rm`, `rmdir`, `unlink`, `Remove-Item` and
 its aliases, `del`, `erase`, `rd`, `cp`, `mv`, `ln`, `Copy-Item`, `Move-Item`), the permission
-commands in the table, the plain downloaders (`curl`, `wget`, `iwr`, `irm`), read-only
-listing and text tools (`ls`, `dir`, `cat`, `type`, `echo`, `pwd`, `head`, `tail`, `wc`,
-`grep`, `mkdir`, `touch`, `find` without `-exec`, `which`, `whoami`, `date`, `sort`, `uniq`,
-`stat`, `tree`, `du`, `df`, `Get-ChildItem`, `Get-Content`, `Get-Location`, `Write-Output`,
-`Select-String`), the wrappers `sudo`, `doas`, `gsudo`, `run0`, `env`, `nice`, `nohup`,
-`time`, `command`, `builtin` around a modeled program, and git with a read-only or index-only
-subcommand that runs no hook, updates no ref and changes no config (`status`, `log`, `diff`,
-`show`, `rev-parse`, `ls-files`, `ls-tree`, `ls-remote`, `blame`, `grep`, `describe`,
-`shortlog`, `show-ref`, `cat-file`, `for-each-ref`, `add`, `rm`, `mv`, `clean` and similar
-inspection commands). Everything else is not confident, keeping any positive detections. In
-particular: any program not listed (`evil`, `net`, `certutil`, `pip list`); a path-qualified
-command word (`/tmp/evil`, `tools/evil`, `~/bin/evil`, `C:\tmp\evil.exe`, and even
-`/bin/rm`, since the path may not hold what the name suggests); `exec`, `eval`, `source`,
-`.` and `Import-Module`; git subcommands that run repository hooks or change refs or config
-(`commit`, `checkout`, `switch`, `merge`, `pull`, `push`, `rebase`, `am`, `reset`, `branch`,
-`tag`, `fetch`, `clone`, `stash`, `config`); other version control tools (`hg`, `svn`,
-`fossil`, `bzr`), whose clone, checkout, pull and update also set `cmd_network_download`.
+commands in the table, the plain downloaders (`curl`, `wget`, `iwr`, `irm`) without options
+that run a program or read a config file, read-only listing and text tools (`ls`, `dir`,
+`cat`, `type`, `echo`, `pwd`, `head`, `tail`, `wc`, `grep`, `mkdir`, `touch`, `find` without
+`-exec`, `which`, `whoami`, `uniq`, `stat`, `tree`, `du`, `df`, `Get-ChildItem`,
+`Get-Content`, `Get-Location`, `Write-Output`, `Select-String`), and the wrappers `sudo`,
+`doas`, `gsudo`, `run0`, `nice`, `nohup`, `time`, `command`, `builtin` around a modeled
+program. Everything else is not confident, keeping any positive detections. In particular:
+any program not listed (`evil`, `net`, `certutil`, `pip list`, `date`, `sort`); a
+path-qualified command word (`/tmp/evil`, `tools/evil`, `~/bin/evil`, `C:\tmp\evil.exe`,
+and even `/bin/rm`, since the path may not hold what the name suggests); any leading variable
+assignment (`PATH=/tmp ls`, `LD_PRELOAD=x ls`, `GIT_PAGER=x git log`) and `env` with any
+assignment or option, since no variable is treated as safe; `exec`, `eval`, `source`, `.` and
+`Import-Module`; every git command; other version control tools (`hg`, `svn`, `fossil`,
+`bzr`), whose clone, checkout, pull and update also set `cmd_network_download`.
+
+Every git command is not confident, by deliberate choice. Even read commands run programs
+named by the repository's own config (`core.fsmonitor` on `status`, `diff.external`,
+`textconv`, filters, the pager), options such as `grep -O`, `diff --ext-diff`, `--textconv`,
+`-c`, `--upload-pack` run programs directly, and `-C`, `--git-dir` and `--work-tree` can point
+git at any repository. No git subcommand is documented as never consulting such config, so
+git is judged by its positive properties (`cmd_git_history_rewrite`, `cmd_network_download`)
+and otherwise treated as unknown.
 
 Examples of code this module cannot see, all not confident: interpreters and their script or
 module operands (`python x.py`, `python -m mod`, `node`, `deno`, `bun`, `ruby`, `perl`, `php`,
@@ -163,7 +168,11 @@ name. Eleven bits per call cannot carry a secret the way a raw argument can.
 
 ## Consequences
 
-- The gate can tell `rm file` from `rm -rf /`, and `git status` from `git push --force`,
+- In enforce, these everyday commands now always ask: every git command (including `git
+  commit`, `checkout`, `pull`, `push`, `fetch`, `status`, `diff` and `log`), `npm test`,
+  `pytest`, `make`, and non-shell tool names such as `Edit` that a shim sends when a call has
+  no command text.
+- The gate can tell `rm file` from `rm -rf /`, and flag `git push --force` as a history rewrite,
   without any raw argument leaving the machine.
 - More lines are "not confident" than are blocked by egress. In enforce those always ask. That
   is more friction for commands with variables or quoting, by design.
@@ -185,9 +194,6 @@ name. Eleven bits per call cannot carry a secret the way a raw argument can.
   do not know (`shred`, `dd`, `mkfs`, `format`, a database CLI) gets `null` properties and, in
   enforce, always asks. The cost is friction: in enforce every unmodeled command asks,
   including host tool names such as `Edit` that a shim sends when a call has no command text.
-- Modeled read-only git subcommands can still run programs through local repository config
-  (`core.fsmonitor`, external diff drivers). Such config is not cloned, but a local attacker
-  who can write `.git/config` is out of scope.
 - A lone `/c` is not read as a Git Bash drive root, because it looks the same as a cmd switch.
 - One bit per property per call is still data about the command. A compromised agent could in
   principle signal a few bits through its choice of flags; it could do far more by running the

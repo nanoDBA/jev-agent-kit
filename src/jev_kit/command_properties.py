@@ -229,6 +229,9 @@ def _analyze_tokens(tokens: list[str], found: _Found, depth: int) -> None:
         # whose name is a program this module knows is therefore not trusted as an assignment.
         if tokens[idx].split("=", 1)[0].lower() in _KNOWN_PROGRAMS:
             found.unsure("ambiguous_assignment")
+        # Any variable can change what runs (PATH, LD_PRELOAD, GIT_PAGER, GIT_EXTERNAL_DIFF,
+        # ...). No variable is treated as safe.
+        found.unsure("env_assignment")
         idx += 1
     if idx >= len(tokens):
         found.unsure("no_command_word")
@@ -298,6 +301,8 @@ def _analyze_program(program: str, args: list[str], found: _Found, depth: int) -
             found.unsure("exec_replaces_shell")  # still look through it for positives
         rest = list(args)
         if program == "env":
+            if rest and (_ENV_ASSIGNMENT.match(rest[0]) or rest[0].startswith("-")):
+                found.unsure("env_assignment")
             while rest and _ENV_ASSIGNMENT.match(rest[0]):
                 rest.pop(0)
         if not rest:
@@ -310,10 +315,14 @@ def _analyze_program(program: str, args: list[str], found: _Found, depth: int) -
     if program in _INDIRECT:
         found.unsure("indirect_execution")
         return
-    if program not in _MODELED and program != "git":
+    if program not in _MODELED:
         # Confident is an allowlist (ADR 0005): a program whose effects this module does not
         # model is unknown. Positive detections below still count.
         found.unsure("unmodeled_program")
+    if program in _DOWNLOADERS and any(
+        "askpass" in t.lower() or t in {"-e", "--execute", "-K", "--config"} for t in args
+    ):
+        found.unsure("downloader_runs_program")  # wget --use-askpass, -e; curl -K config
     if program in _VCS_OTHER:
         words = {t.lower() for t in args if not t.startswith("-")}
         if words & _VCS_DOWNLOAD:
@@ -833,12 +842,15 @@ _MODELED = frozenset({
     "rm", "rmdir", "unlink", "remove-item", "ri", "del", "erase", "rd",
     "cp", "mv", "ln", "copy-item", "cpi", "copy", "move-item", "mi", "move",
     "ls", "dir", "cat", "type", "echo", "pwd", "head", "tail", "wc", "grep", "mkdir", "touch",
-    "find", "which", "whoami", "date", "sort", "uniq", "stat", "tree", "du", "df",
+    "find", "which", "whoami", "uniq", "stat", "tree", "du", "df",
     "get-childitem", "gci", "get-content", "gc", "get-location", "write-output",
     "select-string", "curl", "wget", "iwr", "irm", "invoke-webrequest", "invoke-restmethod",
 }) | _PERMISSIONS | (_PLAIN_WRAPPERS - {"exec"}) | frozenset({"sudo", "doas", "gsudo",
                                                                "run0"})
-# Read-only or index-only git subcommands that run no hook and change no ref or config.
+# git is not on the allowlist: every git command can run programs named by the repository's
+# own config (core.fsmonitor, diff.external, textconv, filters, pager), and -C, --git-dir and
+# --work-tree can point it at any repository. These read-only or index-only subcommands are
+# kept only to explain the extra "git_unmodeled_subcommand" reason for the rest.
 _GIT_MODELED = frozenset({
     "status", "log", "diff", "show", "rev-parse", "ls-files", "ls-tree", "ls-remote", "blame",
     "grep", "describe", "shortlog", "show-ref", "cat-file", "for-each-ref", "version", "help",

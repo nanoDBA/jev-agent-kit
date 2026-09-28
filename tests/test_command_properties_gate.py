@@ -370,7 +370,10 @@ def test_every_package_install_is_also_a_download(
     "command",
     ["/tmp/evil", "tools/evil", "~/bin/evil", "C:\\tmp\\evil.exe", "evil", "exec evil",
      "Import-Module .\\x.psm1", "git commit -m wip", "git checkout main", "git merge x",
-     "git config core.hooksPath /tmp/h"],
+     "git config core.hooksPath /tmp/h", "PATH=/tmp ls", "LD_PRELOAD=/tmp/x.so ls",
+     "env LD_PRELOAD=/tmp/x.so ls", "GIT_EXTERNAL_DIFF=/tmp/x git diff",
+     "GIT_PAGER=/tmp/x git log", "git grep -O x", "git diff --ext-diff",
+     "git show --textconv HEAD", "git status", "git log", "date -s 2020-01-01"],
 )
 def test_unmodeled_commands_are_sent_as_unknown(host: str, command: str, tmp_path: Path) -> None:
     # Round-2 C01: confident is an allowlist of fully modeled commands.

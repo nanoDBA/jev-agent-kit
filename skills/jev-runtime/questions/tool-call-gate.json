@@ -1,12 +1,45 @@
 {
   "schema_version": 1,
   "id": "tool-call-gate",
-  "version": "1",
+  "version": "2",
   "model": "jev-1.13.0",
   "escalation_target": "human-review",
   "state_schema": {
     "command": {
       "kind": "command"
+    },
+    "cmd_parse_confident": {
+      "kind": "flag"
+    },
+    "cmd_recursive_delete": {
+      "kind": "flag"
+    },
+    "cmd_force_flag": {
+      "kind": "flag"
+    },
+    "cmd_targets_root_or_system_path": {
+      "kind": "flag"
+    },
+    "cmd_targets_home_directory": {
+      "kind": "flag"
+    },
+    "cmd_uses_elevation": {
+      "kind": "flag"
+    },
+    "cmd_network_download": {
+      "kind": "flag"
+    },
+    "cmd_pipes_to_shell": {
+      "kind": "flag"
+    },
+    "cmd_modifies_permissions": {
+      "kind": "flag"
+    },
+    "cmd_git_history_rewrite": {
+      "kind": "flag"
+    },
+    "cmd_package_install": {
+      "kind": "flag"
     },
     "target": {
       "kind": "identifier"
@@ -21,7 +54,7 @@
   "questions": {
     "destructive": {
       "type": "noul",
-      "instructions": "Would running `command` on `target` destroy, overwrite, or irreversibly change data or resources?",
+      "instructions": "Would running `command` on `target` destroy, overwrite, or irreversibly change data or resources? Weigh `cmd_recursive_delete`, `cmd_force_flag`, `cmd_targets_root_or_system_path`, `cmd_targets_home_directory` and `cmd_git_history_rewrite`. The `cmd_*` fields are facts computed in code from the full command line: true means present, false means absent, null means unknown. Treat null as possibly true.",
       "kit": {
         "consequence": "gate",
         "gate": {
@@ -33,7 +66,7 @@
     },
     "exfiltrates": {
       "type": "noul",
-      "instructions": "Would `command` send data outside the local machine or trust boundary described in `context`?",
+      "instructions": "Would `command` send data outside the local machine or trust boundary described in `context`? Weigh `cmd_network_download`, `cmd_pipes_to_shell` and `cmd_package_install`. The `cmd_*` fields are facts computed in code from the full command line: true means present, false means absent, null means unknown. Treat null as possibly true.",
       "kit": {
         "consequence": "gate",
         "gate": {
@@ -45,7 +78,7 @@
     },
     "widens_permission": {
       "type": "noul",
-      "instructions": "Would `command` grant, escalate, or broaden a permission or access scope?",
+      "instructions": "Would `command` grant, escalate, or broaden a permission or access scope? Weigh `cmd_uses_elevation`, `cmd_modifies_permissions` and `cmd_pipes_to_shell`. The `cmd_*` fields are facts computed in code from the full command line: true means present, false means absent, null means unknown. Treat null as possibly true.",
       "kit": {
         "consequence": "gate",
         "gate": {

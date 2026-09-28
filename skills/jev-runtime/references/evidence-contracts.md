@@ -12,7 +12,7 @@ they do not establish evidence quality, calibration, or host enforcement.
 | --- | --- | --- | --- | --- |
 | [Choose a handler](#preflight-route) | [preflight-route.json](../questions/preflight-route.json) | `request` | `route` (choice) | advisory |
 | [Review an output](#postflight-verify) | [postflight-verify.json](../questions/postflight-verify.json) | `request`, `output` | `addresses_request` (noul), `contains_fabricated_citation` (noul), `within_scope` (noul) | advisory |
-| [Assess a proposed tool call](#tool-call-gate) | [tool-call-gate.json](../questions/tool-call-gate.json) | `command`, `target`, `context` | `destructive` (noul), `exfiltrates` (noul), `widens_permission` (noul) | gate |
+| [Assess a proposed tool call](#tool-call-gate) | [tool-call-gate.json](../questions/tool-call-gate.json) | `command`, `cmd_parse_confident`, `cmd_recursive_delete`, `cmd_force_flag`, `cmd_targets_root_or_system_path`, `cmd_targets_home_directory`, `cmd_uses_elevation`, `cmd_network_download`, `cmd_pipes_to_shell`, `cmd_modifies_permissions`, `cmd_git_history_rewrite`, `cmd_package_install`, `target`, `context` | `destructive` (noul), `exfiltrates` (noul), `widens_permission` (noul) | gate |
 | [Decide whether to finish](#stop-or-continue) | [stop-or-continue.json](../questions/stop-or-continue.json) | `goal`, `evidence_summary` | `enough_to_finish` (noul), `another_step_would_help` (noul) | advisory |
 
 ## preflight-route
@@ -49,7 +49,10 @@ the host's authorization scope. Code checks paths, permissions, destructive effe
 egress deterministically; evidence must describe the same action that would execute.
 
 Known limitations: the command transform keeps only the executable's basename and drops
-every subcommand, flag, and argument (`git -C repo push --force` is sent as `git`), identifier
+every subcommand, flag, and argument (`git -C repo push --force` is sent as `git`). The hooks
+add `cmd_*` booleans computed locally from the full line (ADR 0005), such as
+`cmd_git_history_rewrite`; they are heuristic, `null` means unknown, and a command the parser
+cannot read (`cmd_parse_confident` false) never reaches allow in enforce. Identifier
 transforms obscure target identity, and `context` requires an allowlisted source type. Those
 transforms can
 remove precisely what distinguishes a safe command from a destructive or outbound one. Keep

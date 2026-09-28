@@ -22,24 +22,31 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
+from jev_kit.command_properties import (  # noqa: E402 (after the src path setup)
+    extract_command_properties,
+)
 from jev_kit.engine import EngineConfig, decide  # noqa: E402 (after the src path setup)
 from jev_kit.receipts import ReceiptWriter  # noqa: E402 (after the src path setup)
 from jev_kit.transport import MockTransport  # noqa: E402 (after the src path setup)
 
 GATE = REPO / "skills" / "jev-runtime" / "questions" / "tool-call-gate.json"
 
-# The state a Claude Code hook builds from one PreToolUse event.
+COMMAND = "rm -rf ./build"
+
+# The state a Claude Code hook builds from one PreToolUse event. The `cmd_*` facts are computed
+# locally, in code, from the full command line (ADR 0005).
 STATE = {
-    "command": "rm -rf ./build",
+    "command": COMMAND,
     "target": "/home/alice/private-repo/build",
     "context": "tool=Bash; description=Delete everything in the build output folder",
+    **extract_command_properties(COMMAND).as_state(),
 }
 
 MOCK_REPLY = {
     "model": "jev-1.13.0",
     "answers": {
-        "destructive": {"type": "noul", "noul": 0.78},
-        "exfiltrates": {"type": "noul", "noul": 0.02},
+        "destructive": {"type": "noul", "noul": 0.91},
+        "exfiltrates": {"type": "noul", "noul": 0.03},
         "widens_permission": {"type": "noul", "noul": 0.04},
     },
 }

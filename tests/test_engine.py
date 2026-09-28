@@ -805,6 +805,8 @@ def test_producer_free_fingerprints_match_the_previous_release() -> None:
     # Pinned from main at 25a15f0 (before producers existed). Requests without a producer must
     # keep their fingerprints so existing calibration still applies. If a deliberate egress
     # change moves this value, update it and say in the change that calibration is invalidated.
+    # Moved deliberately by ADR 0005 (the `flag` content kind in egress.py): every fingerprint
+    # changed, so any calibration made before it is invalidated. None was recorded.
     from jev_kit.engine import effective_contract
     from jev_kit.fingerprint import question_fingerprint
     from jev_kit.questionset import load_question_set
@@ -814,4 +816,4 @@ def test_producer_free_fingerprints_match_the_previous_release() -> None:
         option_or_level_set=[], model="jev-1.13.0",
         egress_contract=effective_contract(load_question_set(question_set()), EngineConfig()),
     )
-    assert fp == "7d8c07ad92a31d0fb7ddc30066000eb578e3028961d04c7f5ba7a84ba3755e82"
+    assert fp == "49be7a2e24ddd7aa2044abaa710b15569a06621b865ba7de01eb40d73a87591a"

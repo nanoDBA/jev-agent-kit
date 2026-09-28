@@ -244,23 +244,39 @@ output folder". The example never runs the command. It shows what would be sent,
 recorded answers to three questions about the call:
 
 ```text
-destructive        p(yes)=0.78  -> ask
-exfiltrates        p(yes)=0.02  -> ask
+destructive        p(yes)=0.91  -> ask
+exfiltrates        p(yes)=0.03  -> ask
 widens_permission  p(yes)=0.04  -> ask
 ```
 
 ```json
 {
+  "cmd_force_flag": true,
+  "cmd_git_history_rewrite": false,
+  "cmd_modifies_permissions": false,
+  "cmd_network_download": false,
+  "cmd_package_install": false,
+  "cmd_parse_confident": true,
+  "cmd_pipes_to_shell": false,
+  "cmd_recursive_delete": true,
+  "cmd_targets_home_directory": false,
+  "cmd_targets_root_or_system_path": false,
+  "cmd_uses_elevation": false,
   "command": "rm",
   "context": "tool=Bash; description=Delete everything in the build output folder",
   "target": "id_7dcb134b1ad03cd1"
 }
 ```
 
-Jev sees `rm` and the agent's description, but no flags and no readable path. The
-description matters here: it says what the agent intends to delete, and it is the main
-evidence the answer can rest on. All three answers come back as `ask` because a replayed
-answer can never clear a check.
+Jev sees `rm`, the agent's description, and yes/no facts the kit worked out locally from the
+full command line, but no flags, arguments or readable path. The `cmd_*` facts say this is a
+recursive, forced delete that does not aim at the system or home directory, so `rm file`
+and `rm -rf /` no longer look the same. On this call they made a difference: without them,
+Jev's destructive answer for the same command was 0.78. They are heuristic: a command the kit cannot read with
+confidence (pipes, quoting, variables, `bash -c`, scripts, interpreters, package installs, and
+similar) gets `null` for "unknown" and `cmd_parse_confident: false`, and in enforce mode such a
+command always asks. See [ADR 0005](docs/adr/0005-command-properties.md). All three answers come
+back as `ask` because a replayed answer can never clear a check.
 
 `context` is plain text and needs an explicit opt-in for live calls. The hooks do not add the
 working directory to it, but a description can still name a folder.
@@ -380,6 +396,7 @@ Only fields a question set declares are sent, after they are trimmed. For `tool-
 | Field | What is sent |
 | --- | --- |
 | `command` | The program name only. `rm -rf ./build` becomes `rm`. |
+| `cmd_*` | Yes/no facts computed locally from the full command line, such as `cmd_recursive_delete` or `cmd_uses_elevation`, or `null` for unknown. Never text. |
 | `target` | A keyed hash of the file path or URL, never the path itself. |
 | `context` | Plain text: the tool name, plus the description in Claude Code, turn id in Codex, or task id in Hermes. The hooks do not add the working directory, but a description or id can still contain a folder name. Email addresses, IP addresses and phone numbers are masked. |
 

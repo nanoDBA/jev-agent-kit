@@ -56,6 +56,9 @@ def test_gate_walkthrough_matches_readme() -> None:
     sent = json.loads(out[out.index("{", start): out.index("}", start) + 1])
     assert sent["command"] == "rm"
     assert sent["target"].startswith("id_")
+    # Facts computed locally from the full line (ADR 0005); never the flags themselves.
+    assert sent["cmd_recursive_delete"] is True and sent["cmd_parse_confident"] is True
+    assert "-rf" not in json.dumps(sent)
     assert json.dumps(sent, indent=2) in README
     for qid in ("destructive", "exfiltrates", "widens_permission"):
         row = next(line for line in out.splitlines() if line.strip().startswith(qid))

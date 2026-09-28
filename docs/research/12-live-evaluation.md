@@ -48,9 +48,12 @@ Recorded with the exact demo inputs, one call each, and replayed by the demos of
 | --- | --- | --- |
 | `verify_claim.py` | "Refactored the parser and cleaned up the imports. All tests pass." | claims tests passed: 0.98 |
 | `route_request.py`, `show_receipt.py` | "Customer says order 1182 was charged twice and asks for a refund." | deterministic 0.68, human 0.25, specialist_llm 0.07 (confidence 0.52) |
-| `gate_walkthrough.py` | command `rm`, keyed-hash target, context "tool=Bash; description=Delete everything in the build output folder" | destructive 0.78, exfiltrates 0.02, widens_permission 0.04 |
+| `gate_walkthrough.py` (tool-call-gate v1) | command `rm`, keyed-hash target, context "tool=Bash; description=Delete everything in the build output folder" | destructive 0.78, exfiltrates 0.02, widens_permission 0.04 |
+| `gate_walkthrough.py` (tool-call-gate v2, with the command-property flags from ADR 0005) | the same fields plus `cmd_recursive_delete: true`, `cmd_force_flag: true`, `cmd_parse_confident: true` and the other flags false | destructive 0.91, exfiltrates 0.03, widens_permission 0.04 |
 
 A real answer can surprise: for the refund request Jev leaned toward handling it in code.
+The two gate rows are single calls, so the rise from 0.78 to 0.91 once the command-property
+flags were sent is an anecdote, not a measurement.
 
 ## 3. Hooks and error paths
 

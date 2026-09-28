@@ -5,7 +5,7 @@ call. It starts in shadow mode: evidence is recorded and nothing about your sess
 
 ## 1. Install the package
 
-Follow [Try it in a minute](../../README.md#try-it-in-a-minute) in the README. Install into the same
+Follow [Quick start](../../README.md#quick-start) in the README. Install into the same
 Python environment Hermes runs in, so the plugin can import `jev_kit`.
 
 ## 2. Add the plugin

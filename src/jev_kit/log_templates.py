@@ -99,6 +99,9 @@ def _parse_slot(spec: Any) -> Slot:
     if not isinstance(spec, dict):
         raise _config("log_template_slot_not_object")
     kind = spec.get("kind")
+    # A non-string kind ([] or {}) is a config error, never an unhashable-type crash (L03).
+    if not isinstance(kind, str):
+        raise _config("log_template_slot_kind")
     if kind == _ENUM:
         if not set(spec) <= {"kind", "values"}:
             raise _config("log_template_slot_unknown_field")
@@ -106,7 +109,7 @@ def _parse_slot(spec: Any) -> Slot:
         if (
             not isinstance(values, list)
             or not 1 <= len(values) <= MAX_ENUM_VALUES
-            or not all(isinstance(v, str) and _SAFE_ID.match(v) for v in values)
+            or not all(isinstance(v, str) and _SAFE_ID.fullmatch(v) for v in values)
             or len(set(values)) != len(values)
         ):
             raise _config("log_template_enum_values")
@@ -121,7 +124,7 @@ def _parse_slot(spec: Any) -> Slot:
 
 
 def _parse_template(template_id: Any, spec: Any) -> LogTemplate:
-    if not isinstance(template_id, str) or not _SAFE_ID.match(template_id):
+    if not isinstance(template_id, str) or not _SAFE_ID.fullmatch(template_id):
         raise _config("log_template_id_unsafe")
     if scan_text(template_id) is not None:
         raise _config("log_template_secret_shaped")
@@ -134,7 +137,7 @@ def _parse_template(template_id: Any, spec: Any) -> LogTemplate:
     if not isinstance(raw_params, dict) or len(raw_params) > MAX_SLOTS:
         raise _config("log_template_params")
     for name in raw_params:
-        if not isinstance(name, str) or not _SLOT_NAME.match(name):
+        if not isinstance(name, str) or not _SLOT_NAME.fullmatch(name):
             raise _config("log_template_slot_name")
     slots = {name: _parse_slot(s) for name, s in raw_params.items()}
 
@@ -148,8 +151,19 @@ def _parse_template(template_id: Any, spec: Any) -> LogTemplate:
         pos = match.end()
     pieces.append(text[pos:])
     for literal in pieces:
-        if literal is not None and not _LITERAL.match(literal):
+        if literal is not None and not _LITERAL.fullmatch(literal):
             raise _config("log_template_text_charset")
+    # A slot may not touch a letter, digit or another slot: "elapsed {n}ms" would glue a value to
+    # template text and could defeat boundary-anchored detectors such as the card-number scan
+    # (Codex L01). Each rendered value is also scanned on its own before concatenation.
+    for index, piece in enumerate(pieces):
+        if piece is not None:
+            continue
+        before, after = pieces[index - 1], pieces[index + 1]
+        if (not before and index > 1) or (not after and index + 2 < len(pieces)):
+            raise _config("log_template_slot_adjacent")
+        if (before and before[-1].isalnum()) or (after and after[0].isalnum()):
+            raise _config("log_template_slot_adjacent")
     # Each declared slot appears exactly once, and no undeclared slot appears.
     if len(order) != len(set(order)) or set(order) != set(slots):
         raise _config("log_template_slots_mismatch")
@@ -183,6 +197,18 @@ def check_field_format(spec: FieldSpec, templates: Mapping[str, LogTemplate]) ->
 
 
 def _transform_param(slot: Slot, value: Any, ctx: EgressContext) -> str:
+    rendered = _slot_value(slot, value, ctx)
+    # Defense in depth for every slot kind: no newline, control character or slot syntax, and
+    # the same Tier 1 detectors as the final scan run on the value alone, before concatenation
+    # with template text can hide a boundary (Codex L01, L02). The full-request scan still runs.
+    if any(ch in rendered for ch in "{}\r\n") or not rendered.isprintable():
+        raise _blocked("log_param_unsafe")
+    if scan_text(rendered) is not None:
+        raise _blocked("log_param_detector_hit")
+    return rendered
+
+
+def _slot_value(slot: Slot, value: Any, ctx: EgressContext) -> str:
     if isinstance(value, bool) or value is None or isinstance(value, (dict, list, tuple)):
         raise _blocked("log_param_type")
     if isinstance(value, float) and not math.isfinite(value):
@@ -197,7 +223,7 @@ def _transform_param(slot: Slot, value: Any, ctx: EgressContext) -> str:
         raise _blocked("log_param_type")
     if slot.kind == "metric":
         if isinstance(value, str):
-            if not _NUMERIC.match(value):
+            if not _NUMERIC.fullmatch(value):
                 raise _blocked("log_param_not_numeric")
             return value
         return str(value)
@@ -207,12 +233,7 @@ def _transform_param(slot: Slot, value: Any, ctx: EgressContext) -> str:
     out = transform_state({"v": value}, {"v": FieldSpec(kind)}, ctx)["v"]
     if isinstance(out, bool) or not isinstance(out, (str, int, float)):
         raise _blocked("log_param_type")
-    rendered = str(out)
-    # A rendered value never carries newlines or slot syntax (defense in depth; the metric
-    # token charset already excludes them).
-    if any(ch in rendered for ch in "{}\r\n") or not rendered.isprintable():
-        raise _blocked("log_param_unsafe")
-    return rendered
+    return str(out)
 
 
 def _render_record(

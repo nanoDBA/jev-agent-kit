@@ -72,13 +72,26 @@ contains `{host}` or other template-looking text cannot expand or forge a slot.
 
 ### Why template literals are safe to send
 
-- They are authored in the question set, which is a reviewed, repo-controlled file, the same
-  trust level as question instructions that already leave the machine verbatim. They are never
-  runtime data: the host supplies only a `template_id` and params.
+- They are authored in the question set, at the same trust level as question instructions,
+  which already leave the machine verbatim. **Caller precondition:** template definitions
+  (literal text, slot kinds and enum values) must come from trusted, reviewed question-set
+  content. This applies equally to a question set passed inline to `decide` (the
+  `question_set` request field), not only to files in a repository. A caller must never build
+  template literals or enum declarations from runtime data (tool output, log lines, user or web
+  content); doing so turns a template into an unmasked channel. The kit cannot verify where an
+  inline definition came from, so this is the caller's responsibility. At runtime the host
+  supplies only a `template_id` and params.
 - At load, template text is restricted to a narrow charset (letters, digits, space and
   `. , : ; ( ) [ ] / _ + # % = ' -`), capped at 240 characters, must name each declared slot
-  exactly once and no other, and is refused if any Tier 1 detector matches it. Template ids and
-  enum values must be safe identifiers and also pass the detectors.
+  exactly once and no other, and is refused if any Tier 1 detector matches it. A slot may not
+  directly touch a letter, a digit or another slot (`elapsed {n}ms`, `id{n}` and `{a}{b}` are
+  refused), so a rendered value keeps a word boundary that boundary-anchored detectors such as
+  the card-number rule rely on. Template ids and enum values must be safe identifiers and also
+  pass the detectors. Every validator matches the whole string (`fullmatch`), so a terminal
+  newline cannot slip past an anchored pattern.
+- Each rendered slot value, of every kind, is checked on its own before concatenation: it must
+  contain no newline, control character or brace, and the same Tier 1 detectors the final scan
+  uses (`egress.scan_text`) must not match it.
 - The final whole-request Tier 1 scan (`scan_request`) still runs over the exact outgoing bytes,
   including every rendered message. A secret in a param that survives its transform (for
   example a credential-shaped metric token) blocks the whole request.

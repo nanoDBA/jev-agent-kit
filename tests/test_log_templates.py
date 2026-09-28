@@ -187,16 +187,77 @@ def test_identifier_injection_is_tokenized_not_expanded(tmp_path: Any) -> None:
     assert msg.count("failed after") == 1
 
 
+@pytest.mark.parametrize("pan", [4111111111111111, "4111111111111111", "5555555555554444"])
+def test_numeric_pan_in_metric_blocked_by_per_slot_scan(tmp_path: Any, pan: Any) -> None:
+    # Passes numeric validation, so only the Tier 1 scan stops it (Codex L04).
+    blocked(tmp_path, {"events": [rec(host="db01", attempts=pan, reason="timeout")]})
+
+
+@pytest.mark.parametrize("value", [42, "1234567", 1234567890123, "-0.5"])
+def test_ordinary_numbers_in_metric_pass(tmp_path: Any, value: Any) -> None:
+    wire = sent(tmp_path, {"events": [rec(host="db01", attempts=value, reason="timeout")]})
+    assert f"after {value} retries" in wire["state"]["events"][0]["message"]
+
+
 @pytest.mark.parametrize(
-    "secret",
-    [
-        "AKIAABCDEFGHIJKLMNOP",
-        "ghp_" + "a" * 36,
-        "4111 1111 1111 1111",
-    ],
+    "text",
+    ["elapsed {n}ms", "id{n} seen", "id{n}", "{n}ms", "{n}{m}", "a {n}{m} b", "x9{n}",
+     "{n}7 x"],
 )
-def test_secret_in_metric_param_blocked_by_final_scan(tmp_path: Any, secret: str) -> None:
-    blocked(tmp_path, {"events": [rec(host="db01", attempts=secret, reason="timeout")]})
+def test_slot_adjacent_to_letter_digit_or_slot_rejected(tmp_path: Any, text: str) -> None:
+    params = {"n": {"kind": "metric"}}
+    if "{m}" in text:
+        params["m"] = {"kind": "metric"}
+    bad = qset(templates={"t": {"text": text, "params": params}})
+    with pytest.raises(ValidationError):
+        load_question_set(bad)
+    resp, transport = run(tmp_path, {"events": {"level": "info", "template_id": "t",
+                                                "params": {k: 1 for k in params}}}, bad)
+    assert resp["status"] == "error" and resp["reason"] == "config"
+    assert transport.requests == []
+
+
+def test_pan_split_across_slots_blocked_by_final_scan(tmp_path: Any) -> None:
+    # Each part is clean alone; only the whole-request scan sees the joined card number.
+    params = {k: {"kind": "metric"} for k in "abcd"}
+    qs = qset(templates={"t": {"text": "{a} {b} {c} {d}", "params": params}})
+    parts = {"a": "4111", "b": "1111", "c": "1111", "d": "1111"}
+    blocked(tmp_path, {"events": {"level": "info", "template_id": "t", "params": parts}}, qs)
+    clean = {"a": "1", "b": "2", "c": "3", "d": "4"}
+    wire = sent(tmp_path, {"events": {"level": "info", "template_id": "t", "params": clean}}, qs)
+    assert wire["state"]["events"]["message"] == "1 2 3 4"
+
+
+@pytest.mark.parametrize(
+    "value", [rec(host="db01", attempts="3\n", reason="timeout"),
+              rec(host="db01", attempts=3, reason="timeout\n"),
+              rec("conn_failed\n", host="db01", attempts=3, reason="timeout"),
+              rec(level="error\n")],
+)
+def test_terminal_newline_values_refused(tmp_path: Any, value: Any) -> None:
+    blocked(tmp_path, {"events": value})
+
+
+@pytest.mark.parametrize(
+    "templates",
+    [{"t\n": {"text": "x"}},
+     {"t": {"text": "x\n"}},
+     {"t": {"text": "x {a}", "params": {"a\n": {"kind": "metric"}}}},
+     {"t": {"text": "x {a}", "params": {"a": {"kind": "enum", "values": ["b\n"]}}}}],
+)
+def test_terminal_newline_definitions_refused(templates: Any) -> None:
+    with pytest.raises(ValidationError):
+        load_question_set(qset(templates=templates))
+
+
+@pytest.mark.parametrize("kind", [[], {}, 1, None, True])
+def test_non_string_slot_kind_is_config_failure(tmp_path: Any, kind: Any) -> None:
+    bad = qset(templates={"t": {"text": "x {a}", "params": {"a": {"kind": kind}}}})
+    with pytest.raises(ValidationError):
+        load_question_set(bad)
+    resp, transport = run(tmp_path, {"events": rec()}, bad)
+    assert resp["status"] == "error" and resp["reason"] == "config"
+    assert transport.requests == []
 
 
 def test_secret_in_identifier_param_never_leaves(tmp_path: Any) -> None:

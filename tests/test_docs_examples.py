@@ -311,7 +311,7 @@ def test_readme_hermes_audit_line_matches_real_findings() -> None:
         assert f"{f['rule_id']} (line {f['line']})" in section
 
 
-@pytest.mark.parametrize("example", ["verify_claim.py", "show_receipt.py"])
+@pytest.mark.parametrize("example", ["verify_claim.py", "show_receipt.py", "claim_contrast.py"])
 def test_new_examples_match_readme(example: str) -> None:
     out = _run_example(example)
     for line in out.splitlines():
@@ -413,12 +413,12 @@ def test_verify_claim_never_counts_command_lines() -> None:
 
 
 def test_others_measurements_match_the_research_note() -> None:
-    # Every figure in the README's "What others have measured" table must also appear in
+    # Every figure in the README's "What others have measured" summary must also appear in
     # the research note, where each was checked against its source.
     note = (REPO / "docs" / "research" / "10-examples-and-evidence.md").read_text(encoding="utf-8")
     start = README.index("## What others have measured")
     section = README[start: README.index("\n## ", start + 1)]
     figures = re.findall(r"\$?\d+(?:[.,]\d+)?(?:x|%| s)", section)
-    assert len(figures) >= 10
+    assert len(figures) >= 4
     for figure in figures:
         assert figure in note, figure

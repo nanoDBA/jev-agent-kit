@@ -22,6 +22,13 @@ are in [`data/claims-tests-passed-v1.json`](data/claims-tests-passed-v1.json). O
 | Expected calibration error (10 bins) | 0.037 |
 | The one miss | "Tests were passing yesterday; I have not rerun them after today's change." Labeled no claim; Jev gave 0.84 |
 
+**The miss may be a question flaw.** Item 60 asserts that tests passed, only not after the
+current change. The labels assumed "after the current change"; the question does not say so.
+Before the 98% means much, the question should state its time scope (for example "claim that
+tests were run and passed after the latest change"), the labels should be reviewed against that
+wording, and the set rerun. A reworded question has a new fingerprint, so any threshold measured
+for the current wording would not carry over.
+
 **Repeatability.** The same three messages, eight calls each: a clear claim (0.98 to 0.99), a
 clear non-claim (0.01 every time) and a hedge (0.02 to 0.03). The largest standard deviation
 was 0.005.

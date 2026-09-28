@@ -25,3 +25,6 @@ Measure thresholds from authorized real answers, with independent labels and hel
 A threshold belongs to one exact question and set of data rules, so changing either retires
 it; see [Receipts](../receipts.md) for how that identity is recorded. Collecting evidence
 does not by itself authorize turning on enforce mode.
+
+[Calibrating a question](calibration.md) walks through the whole procedure, from receipts to a
+registry entry, with a runnable offline example.

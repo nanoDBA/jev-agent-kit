@@ -34,3 +34,10 @@ select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
 python_version = "3.11"
 strict = true
 files = ["src", "tests"]
+
+# duckdb is an optional analysis tool imported lazily by tools/receipts_report.py, never a
+# runtime or required dev dependency. Without this, mypy fails wherever duckdb is absent
+# (for example CI).
+[[tool.mypy.overrides]]
+module = ["duckdb", "duckdb.*"]
+ignore_missing_imports = true

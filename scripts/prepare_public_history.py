@@ -50,7 +50,14 @@ from typing import Any
 
 
 def run(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = None) -> str:
-    proc = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True)
+    # Decode as UTF-8 on every platform, keeping undecodable bytes (a Latin-1 filename,
+    # say) as surrogates instead of raising. The locale default made this crash on
+    # Linux and macOS and silently decode as cp1252 on Windows. Callers that must judge
+    # non-UTF-8 bytes read them raw.
+    proc = subprocess.run(
+        cmd, cwd=cwd, env=env, capture_output=True, encoding="utf-8",
+        errors="surrogateescape",
+    )
     if proc.returncode != 0:
         sys.exit(f"command failed: {' '.join(cmd)}\n{proc.stderr.strip()}")
     return proc.stdout

@@ -7,7 +7,9 @@ Code and Jev each do what they are good at:
   passed?
 - code combines the two facts and decides.
 
-The Jev answer here is scripted, so the kit returns no_advice and the code stays cautious.
+The Jev answer is a real one, recorded from jev-1.13.0 on 2026-09-28 and replayed so
+the demo runs offline. The kit never acts on a replayed answer, so it returns no_advice
+and the code stays cautious.
 Once the question has a threshold calibrated on your own labeled data, a confident answer
 would let the code skip the check on messages that make no such claim.
 
@@ -56,7 +58,7 @@ QUESTION_SET = {
     },
 }
 MOCK_REPLY = {"model": "jev-1.13.0",
-              "answers": {"claims_tests_passed": {"type": "noul", "noul": 0.96}}}
+              "answers": {"claims_tests_passed": {"type": "noul", "noul": 0.98}}}
 
 # What the session ran, and the test reports the host collected (none: no test ran).
 COMMANDS_RUN = ["git diff --stat", "ruff check src", "git add -A"]
@@ -149,7 +151,7 @@ def main(test_reports: list[str] = TEST_REPORTS) -> None:
     print(f"Commands run:   {', '.join(COMMANDS_RUN)}")
     reports = len(test_reports)
     print(f"Test reports:   {reports}  ({tests_passed} tests passed, counted in code)")
-    print(f"Jev (scripted): does the message claim the tests passed?  p(yes)={rec['noul']}")
+    print(f"Jev (recorded): does the message claim the tests passed?  p(yes)={rec['noul']}")
     if claims_pass and tests_passed == 0:
         print("Verdict:        the claim is not backed by a test report; ask the agent to run them")
     else:

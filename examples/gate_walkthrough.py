@@ -3,7 +3,7 @@
 An agent wants to run `rm -rf ./build`. This script shows:
 
 1. the request that would leave your machine (after the kit reduces it),
-2. what Jev answers (here a scripted mock, clearly labelled),
+2. what Jev answers (a real answer, recorded from jev-1.13.0 on 2026-09-28, replayed offline),
 3. the route the kit derives from each answer.
 
 Run it from the repository root:
@@ -38,9 +38,9 @@ STATE = {
 MOCK_REPLY = {
     "model": "jev-1.13.0",
     "answers": {
-        "destructive": {"type": "noul", "noul": 0.97},
+        "destructive": {"type": "noul", "noul": 0.78},
         "exfiltrates": {"type": "noul", "noul": 0.02},
-        "widens_permission": {"type": "noul", "noul": 0.01},
+        "widens_permission": {"type": "noul", "noul": 0.04},
     },
 }
 
@@ -65,11 +65,12 @@ def main() -> None:
     print(json.dumps(STATE, indent=2))
     print("\n   What is actually sent to Jev (state only):")
     print(json.dumps(sent["state"], indent=2))
-    print("\n2. Jev answers each question with p(yes)  [scripted mock]")
+    print("\n2. Jev answers each question with p(yes)  (recorded answer)")
     print("3. The kit derives a route:")
     for rec in response["records"]:
         print(f"   {rec['question_id']:<18} p(yes)={rec['noul']:<5} -> {rec['route']}")
-    print("\n   All routes are 'ask': the answer is a mock and no threshold is calibrated.")
+    print("\n   All routes are 'ask': a replayed answer is never acted on,")
+    print("   and no threshold is calibrated.")
 
 
 if __name__ == "__main__":

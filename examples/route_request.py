@@ -1,8 +1,9 @@
 """Ask Jev a question of your own: which handler should take a request? Fully offline.
 
 Uses the shipped `preflight-route` question set, a Choice question with three options. Jev
-returns a probability for every option; your code decides what to do with them. Here the
-answer is a scripted mock, so the kit returns `no_advice` and your code falls back.
+returns a probability for every option; your code decides what to do with them. The answer
+is a real one, recorded from jev-1.13.0 on 2026-09-28, replayed so the demo runs offline. The kit
+never acts on a replayed answer, so it returns `no_advice` and your code falls back.
 
 Run it from the repository root:
 
@@ -30,9 +31,9 @@ MOCK_REPLY = {
     "answers": {
         "route": {
             "type": "choice",
-            "choice": "human",
-            "probabilities": {"deterministic": 0.05, "specialist_llm": 0.24, "human": 0.71},
-            "confidence": 0.71,
+            "choice": "deterministic",
+            "probabilities": {"deterministic": 0.68, "specialist_llm": 0.07, "human": 0.25},
+            "confidence": 0.52,
         }
     },
 }
@@ -58,7 +59,7 @@ def handle(request: str) -> str:
     )
     rec = response["records"][0]
     print(f"request: {request!r}")
-    print("Which handler should take it?  (scripted demo answer)")
+    print("Which handler should take it?  (recorded Jev answer)")
     for option, p in rec["distribution"].items():
         bar = "#" * round(p * 20)
         print(f"  {option:<15} {bar:<20} {p:.2f}")

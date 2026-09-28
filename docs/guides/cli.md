@@ -34,7 +34,7 @@ Expected output:
 ```
 
 Without an API key, the command-line tool cannot ask Jev, so it reports a configuration
-error. It has no demo mode; the Python demos in the README provide scripted answers. With
+error. It has no demo mode; the Python demos in the README replay recorded answers. With
 credentials configured, the same command calls the service, so read
 [Live calls](live-calls.md) first.
 

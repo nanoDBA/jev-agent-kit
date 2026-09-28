@@ -29,8 +29,8 @@ ROUTER = REPO / "skills" / "jev-runtime" / "questions" / "preflight-route.json"
 MOCK_REPLY = {
     "model": "jev-1.13.0",
     "answers": {"route": {
-        "type": "choice", "choice": "human", "confidence": 0.71,
-        "probabilities": {"deterministic": 0.05, "specialist_llm": 0.24, "human": 0.71},
+        "type": "choice", "choice": "deterministic", "confidence": 0.52,
+        "probabilities": {"deterministic": 0.68, "specialist_llm": 0.07, "human": 0.25},
     }},
 }
 

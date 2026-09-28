@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 import types
 from pathlib import Path
@@ -220,6 +221,7 @@ def test_live_without_attestation_refuses_with_zero_sends(
         return {"schema_version": 1, "status": "ok", "records": []}
 
     monkeypatch.setattr(smoke, "run_json", _fake_run_json)
+    monkeypatch.delenv("JEV_KIT_ATTESTATION", raising=False)
 
     exit_code = smoke.main(["--max-calls", "5", "--live", "--out", str(tmp_path)])
 
@@ -285,9 +287,12 @@ def test_live_with_valid_attestation_proceeds_offline(
     """The live path is still exercised only through a monkeypatched ``run_json``: this never
     reaches a real transport, since the real ``run_json`` symbol is replaced entirely."""
     calls: list[dict[str, Any]] = []
+    seen_attestation: list[str | None] = []
 
     def _fake_run_json(request: dict[str, Any], *, transport: Any = None) -> dict[str, Any]:
         calls.append(request)
+        # The engine reads the attestation from the environment on the live path.
+        seen_attestation.append(os.environ.get("JEV_KIT_ATTESTATION"))
         return {
             "schema_version": 1,
             "status": "ok",
@@ -321,6 +326,8 @@ def test_live_with_valid_attestation_proceeds_offline(
 
     assert exit_code == 0
     assert 0 < len(calls) <= 3
+    # Every live call saw the attestation the operator passed (it was refused before).
+    assert seen_attestation == [str(good_attestation)] * len(calls)
 
 
 # ---------------------------------------------------------------------------

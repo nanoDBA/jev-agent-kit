@@ -8,8 +8,13 @@ Design notes tied to the Codex review:
 - bool is a subclass of int in Python, so a JSON true/false would otherwise pass as
   1/0. Every numeric check rejects bool explicitly (spec stories 21, 35a; finding R06).
 - A Score whose reported score contradicts its distribution is rejected: the score must
-  equal the probability-weighted mean of level indices within SCORE_MEAN_TOLERANCE
-  (finding R06).
+  equal the probability-weighted mean of level indices within the rounding bound of
+  score_mean_tolerance (finding R06).
+- Live Jev reports probabilities and scores to two decimals (measured 2026-09-28, see
+  docs/research/11-live-answer-shape.md). The Score-mean check therefore allows exactly
+  the error that rounding to REPORTED_STEP can introduce, and no more. The Choice argmax
+  check stays exact: rounding preserves order, so a chosen option that trails the top
+  reported probability is an inconsistent answer, and it is rejected.
 - Legend descriptions must match the question's level strings exactly (finding R06).
 """
 
@@ -34,8 +39,22 @@ from jev_kit.types import (
 
 # Named tolerances, documented with the receipt schema (spec Implementation Decisions).
 PROB_SUM_TOLERANCE = 1e-6
-SCORE_MEAN_TOLERANCE = 1e-6
+# Live answers are rounded to this step (two decimals).
+REPORTED_STEP = 0.01
+# Rounding is monotone, so it cannot make the true top option trail another one. The chosen
+# option must be a top reported probability (ties allowed); anything else is inconsistent.
 ARGMAX_TOLERANCE = 1e-9
+
+
+def score_mean_tolerance(levels: int) -> float:
+    """Largest honest gap between a rounded score and the mean of rounded probabilities.
+
+    The score is off by at most half a step. Each probability is off by at most half a step
+    and, because the rounded distribution still sums to 1, the errors sum to zero. The mean
+    error sum(i * e_i) is then largest with the high-index half rounded up and the low-index
+    half rounded down, which bounds it by half a step times floor(levels**2 / 4).
+    """
+    return REPORTED_STEP / 2 * (1 + (levels * levels) // 4) + 1e-9
 
 
 def _unit_number(value: Any, check: str) -> float:
@@ -123,7 +142,7 @@ def _validate_score(question: ScoreQuestion, raw: dict[str, Any]) -> ScoreAnswer
     if score < 0.0 or score > (n - 1):
         raise ValidationError(FailReason.ANSWER_INVALID, "score_range")
     weighted_mean = math.fsum(i * probabilities[key] for i, key in enumerate(keys))
-    if abs(score - weighted_mean) > SCORE_MEAN_TOLERANCE:
+    if abs(score - weighted_mean) > score_mean_tolerance(n):
         raise ValidationError(FailReason.ANSWER_INVALID, "score_inconsistent")
 
     return ScoreAnswer(

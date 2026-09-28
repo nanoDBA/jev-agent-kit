@@ -11,9 +11,11 @@ import pytest
 
 from jev_kit.errors import FailReason, ValidationError
 from jev_kit.types import (
+    ChoiceAnswer,
     ChoiceQuestion,
     ConsequenceClass,
     NoulQuestion,
+    ScoreAnswer,
     ScoreQuestion,
 )
 from jev_kit.validation import validate_answer, validate_answer_set
@@ -218,3 +220,95 @@ def test_answer_set_missing_answer_fails_whole_set() -> None:
 def test_wrong_answer_type_rejected() -> None:
     with pytest.raises(ValidationError):
         validate_answer(noul_q(), {"type": "choice", "noul": 0.5})
+
+
+# --- Live answer shape (docs/research/11-live-answer-shape.md) ---------------
+# Real answers recorded from jev-1.13.0 on 2026-09-28. Jev rounds to two decimals, so the
+# reported score and chosen option can differ from what the rounded probabilities imply by
+# up to the rounding bound. These must validate; contradictions beyond it must not.
+
+
+def score5_q() -> ScoreQuestion:
+    return ScoreQuestion(
+        question_id="risk5",
+        instructions="How risky?",
+        levels=("none", "low", "medium", "high", "critical"),
+        consequence=GATE,
+    )
+
+
+def _score(probs: dict[str, float], score: float, levels: tuple[str, ...]) -> dict[str, object]:
+    return {
+        "type": "score",
+        "score": score,
+        "confidence": 0.3,
+        "legend": {str(i): name for i, name in enumerate(levels)},
+        "probabilities": probs,
+    }
+
+
+@pytest.mark.parametrize(
+    ("question", "probs", "score"),
+    [
+        # Recorded live: score 0.76 against a mean of exactly 0.76.
+        (score_q, {"0": 0.43, "1": 0.38, "2": 0.19}, 0.76),
+        # Rounding gaps of 0.01 (3 levels) and 0.02 (5 levels), as measured live.
+        (score_q, {"0": 0.43, "1": 0.38, "2": 0.19}, 0.77),
+        (score_q, {"0": 0.43, "1": 0.38, "2": 0.19}, 0.75),
+        (score5_q, {"0": 0.30, "1": 0.30, "2": 0.26, "3": 0.10, "4": 0.04}, 1.30),
+        # Honest rounding of p=(0.2049, 0.2049, 0.2, 0.1951, 0.1951): true mean 1.9706 reports
+        # as 1.97 while the rounded probabilities are all 0.20 (mean 2.00), a 0.03 gap.
+        (score5_q, {"0": 0.20, "1": 0.20, "2": 0.20, "3": 0.20, "4": 0.20}, 1.97),
+    ],
+)
+def test_score_within_rounding_bound_validates(
+    question: object, probs: dict[str, float], score: float
+) -> None:
+    q = question()  # type: ignore[operator]
+    answer = validate_answer(q, _score(probs, score, q.levels))
+    assert isinstance(answer, ScoreAnswer)
+    assert answer.score == score
+
+
+@pytest.mark.parametrize(
+    ("question", "probs", "score"),
+    [
+        (score_q, {"0": 0.43, "1": 0.38, "2": 0.19}, 0.80),  # 0.04 off, bound is 0.015
+        (score_q, {"0": 0.43, "1": 0.38, "2": 0.19}, 1.50),
+        (score5_q, {"0": 0.30, "1": 0.30, "2": 0.26, "3": 0.10, "4": 0.04}, 1.34),  # bound 0.035
+    ],
+)
+def test_score_beyond_rounding_bound_still_rejected(
+    question: object, probs: dict[str, float], score: float
+) -> None:
+    q = question()  # type: ignore[operator]
+    with pytest.raises(ValidationError) as exc:
+        validate_answer(q, _score(probs, score, q.levels))
+    assert exc.value.reason is FailReason.ANSWER_INVALID
+
+
+def test_choice_tied_for_top_validates() -> None:
+    raw = {"type": "choice", "choice": "billing", "confidence": 0.2,
+           "probabilities": {"billing": 0.40, "technical": 0.40, "account": 0.20}}
+    answer = validate_answer(choice_q(), raw)
+    assert isinstance(answer, ChoiceAnswer)
+    assert answer.choice == "billing"
+
+
+def test_choice_trailing_top_by_one_step_is_rejected() -> None:
+    # Rounding preserves order, so a non-top choice is an inconsistent answer (observed once
+    # in 22 live answers); accepting it could let routing act on a label the distribution
+    # does not favor.
+    raw = {"type": "choice", "choice": "billing", "confidence": 0.2,
+           "probabilities": {"billing": 0.40, "technical": 0.41, "account": 0.19}}
+    with pytest.raises(ValidationError) as exc:
+        validate_answer(choice_q(), raw)
+    assert exc.value.reason is FailReason.ANSWER_INVALID
+
+
+def test_choice_trailing_top_by_more_than_one_step_still_rejected() -> None:
+    raw = {"type": "choice", "choice": "billing", "confidence": 0.2,
+           "probabilities": {"billing": 0.39, "technical": 0.42, "account": 0.19}}
+    with pytest.raises(ValidationError) as exc:
+        validate_answer(choice_q(), raw)
+    assert exc.value.reason is FailReason.ANSWER_INVALID

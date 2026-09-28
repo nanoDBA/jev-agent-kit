@@ -703,3 +703,34 @@ def test_language_profile_rejected_through_public_decide_h3(tmp_path: Any) -> No
     assert resp["status"] == "error" and resp["reason"] == "config"
     assert transport.requests == []
     assert list(tmp_path.glob("*.jsonl")) == []
+
+
+def test_absent_request_id_is_absent_not_unsafe(
+    tmp_path: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A response without an x-typesafe-request-id header is normal; it must not be logged as
+    # a dropped unsafe id (jak-fpt).
+    with caplog.at_level("DEBUG"):
+        only(decide(request("shadow"), transport=reply(0.1), config=config(tmp_path)))
+    assert _receipt_request_ids(tmp_path) == [None]
+    assert "dropped unsafe metadata id" not in caplog.text
+
+
+def test_unsafe_request_id_is_still_dropped(
+    tmp_path: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    body = json.dumps({"model": "jev-1.13.0", "answers": {"destructive": {"noul": 0.1}}}).encode()
+    transport = MockTransport.replying(200, body, {"x-typesafe-request-id": "bad id;"})
+    with caplog.at_level("DEBUG"):
+        only(decide(request("shadow"), transport=transport, config=config(tmp_path)))
+    assert _receipt_request_ids(tmp_path) == [None]
+    assert "dropped unsafe metadata id" in caplog.text
+
+
+def _receipt_request_ids(directory: Any) -> list[Any]:
+    lines = [
+        json.loads(line)
+        for path in directory.glob("*.jsonl")
+        for line in path.read_text(encoding="utf-8").splitlines()
+    ]
+    return [line["server_request_id"] for line in lines if "server_request_id" in line]

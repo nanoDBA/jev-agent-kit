@@ -42,9 +42,10 @@ job is to read the agent's final message and judge whether it claims the tests p
 then combines the two: a claim with no test report behind it means the agent is asked to run
 the tests.
 
-Neither part could do this alone. Code can count test reports but cannot reliably tell
-whether a sentence claims success; Jev can read the sentence but should not be trusted to
-count.
+Each part handles the piece it is better suited to. Code counts test reports exactly. It
+could also search the message for words like "pass", but deciding whether a sentence really
+claims success is a language judgment, which is Jev's job. Counting stays in code, because
+counting is a known Jev weak spot.
 
 In this demo, Jev's answer is scripted so it runs offline, and the kit does not act on it
 yet: until you measure a threshold for this question, code treats every message as a claim.
@@ -105,8 +106,8 @@ The same call without the key passes, reduced to what would be sent:
   {"command": "git", "context": "tool=Bash; description=Push the release branch", "target": "id_2be341514b09d550"}
 ```
 
-The kit checks every request for credentials before it leaves your machine and refuses the
-whole request if it finds one. When nothing needs blocking, it still trims the request: the
+The kit scans every request for recognized credential patterns before it leaves your machine
+and refuses the whole request if one matches. When nothing needs blocking, it still trims the request: the
 command becomes its program name and the file path becomes a keyed hash. The key shown is
 AWS's published example, not a real credential.
 
@@ -124,8 +125,8 @@ Claude:   Running git push origin release, with AWS_ACCESS_KEY_ID set.
 jev-kit:  {"permissionDecision": "ask", "permissionDecisionReason": "egress_blocked"}
 ```
 
-The tool call carried a credential, so nothing was sent to Jev, and Claude Code asks you before
-the command runs.
+The tool call matched a known credential pattern, so nothing was sent to Jev, and Claude Code
+asks you before the command runs.
 
 **Codex: an installer piped into a shell**
 
@@ -153,16 +154,18 @@ that is allowed to act; out of the box, hooks only watch and record. See
 
 ## How the kit stays safe
 
-This project is young, and it is built so that trying it cannot make your agent less safe.
+The default configuration is designed not to weaken your agent's existing permission
+controls.
 
 **Your agent's permission system stays in charge.** Jev can advise that a tool call looks
-fine, but it cannot approve one. The hooks only ever add a check: they may ask you, or stop
-a call, but they never tell your agent to skip its own approval rules.
+safe, but it cannot approve one or bypass your agent's normal checks. The hooks can add
+scrutiny by asking for review or blocking a call; they never remove an existing approval
+requirement.
 
-**Nothing is trusted until you measure it.** A Jev answer comes with probabilities, and how
-far to trust a given probability depends on the question and your data. The kit acts on an
-answer only when you have a threshold for that exact question, measured on your own labeled
-examples. None ship with the kit. Until you add one, an advisory question (such as routing)
+**Nothing is trusted until you measure it.** Jev returns probabilities, but a useful
+threshold depends on the exact question and your data. The kit therefore acts on a Jev answer
+only after you have calibrated that question against labeled examples. No calibrated
+thresholds ship with the kit. Until you add one, an advisory question (such as routing)
 comes back as `no_advice`, and your code keeps its normal path. A gate (such as the tool-call
 checks) comes back as `ask`, meaning the call needs a person or another check before it goes
 ahead.
@@ -173,21 +176,24 @@ them even when they look confident.
 
 **Only what a question needs leaves your machine.** Each question declares the fields it
 uses; everything else stays local. Commands are cut to their program name, paths become
-keyed hashes, and a request containing a credential is refused. Details are in
+keyed hashes, and a request matching a recognized credential pattern is refused. Details are in
 [What leaves your machine](#what-leaves-your-machine).
 
 ### Watch first, then act
 
 The hooks start in **shadow mode**: with an API key configured they ask Jev and record the
-answer, and either way they change nothing. Your
-agent behaves exactly as before, and you collect evidence about how Jev would have answered.
+answer, and either way they change nothing. Your agent behaves exactly as before, and you
+collect evidence about how Jev would have answered.
 
-**Enforce mode** lets the hooks act on their checks. Turn it on only with the environment
-owner's approval, after measuring thresholds on labeled data. Two stops work without any
-calibration: a request containing a credential, and a command that cannot be safely
-summarized. With today's uncalibrated question sets, every other checked call is also
-stopped for review, even harmless ones such as `ls`: Claude Code asks you, while Codex and
-Hermes block the call.
+**Enforce mode** lets the hooks act on their checks. It is off unless someone turns it on,
+and it should be turned on only with the environment owner's approval, after measuring
+thresholds on labeled data. Two stops work without any calibration: a request matching a
+recognized credential pattern, and a command that cannot be safely summarized.
+
+If enforce mode is turned on before any thresholds are measured, every other checked call is
+also stopped for review, even harmless ones such as `ls`: Claude Code asks you, while Codex
+and Hermes block the call. That is the safe failure, but it makes enforce mode impractical
+until you calibrate.
 
 | Host | What the hook returns when a check does not pass in enforce mode |
 | --- | --- |
@@ -224,6 +230,38 @@ threshold measured on your own requests, a confident `human` would come back as 
 your code could send refund disputes straight to a person. These numbers show the shape of an
 answer; they are not a measurement of Jev's accuracy.
 
+### Check a tool call before it runs
+
+```sh
+python examples/gate_walkthrough.py
+```
+
+An agent wants to run `rm -rf ./build` and describes it as "Delete everything in the build
+output folder". The example never runs the command. It shows what would be sent, and a
+scripted answer to three questions about the call:
+
+```text
+destructive        p(yes)=0.97  -> ask
+exfiltrates        p(yes)=0.02  -> ask
+widens_permission  p(yes)=0.01  -> ask
+```
+
+```json
+{
+  "command": "rm",
+  "context": "tool=Bash; description=Delete everything in the build output folder",
+  "target": "id_7dcb134b1ad03cd1"
+}
+```
+
+Look at what the judgment can rest on. The command is cut to `rm`, so its flags are gone, and
+the path is a keyed hash. The evidence that this call is destructive is the program name plus
+the agent's own description, which is why `context` is sent. A real answer can only be as good
+as those fields, so the question has to be one they can support. All three come back as `ask`
+because demo answers can never clear a check. `context` is plain text and needs an explicit
+opt-in for live calls; the hooks do not add the working directory to it, but a description can
+still name a folder.
+
 ### Read the receipt a decision leaves
 
 ```sh
@@ -245,18 +283,11 @@ Decision receipt (one JSONL line; long ids and digests shortened):
 Commit marker: 1 decision line for this call, written durably.
 ```
 
-| Field | What it tells you |
-| --- | --- |
-| `fingerprint` | Identifies the exact question, model and data rules. A threshold belongs to one fingerprint, so changing any of them retires old measurements. |
-| `requested_model`, `served_model` | The pinned model version, and the version that answered. A mismatch is rejected. |
-| `model` | Who really answered. Here it is `mock`, so nobody can mistake it for Jev. |
-| `distribution` | The whole answer, not just the top choice, so you can measure thresholds later. |
-| `threshold_status` | Whether a measured threshold exists for this question. |
-| `sent_digest` | A hash of the exact bytes sent. The request text itself is not stored. |
-
-Every decision is written like this before the kit answers. The commit marker tells a
-complete record apart from one cut short by a crash. These receipts are what you measure
-thresholds from.
+Every decision is written like this before the kit answers. The three lines worth knowing
+first: `model` says who really answered (`mock` here, so nobody can mistake it for Jev),
+`distribution` keeps the whole answer so you can measure thresholds later, and
+`threshold_status` says whether a measured threshold exists yet. The other fields are
+explained in [Receipts](docs/receipts.md).
 
 ### How the "all tests pass" check counts
 
@@ -286,78 +317,11 @@ publishes larger speed and cost multiples; we found no independent test of those
 them as vendor claims. This project has not measured token, cost or latency savings, and an
 extra check that replaces nothing adds cost.
 
-## Use the CLI
-
-### Send a JSON request
-
-[`examples/requests/route.json`](examples/requests/route.json) contains this complete request:
-
-```json
-{
-  "schema_version": 1,
-  "op": "decide",
-  "question_set_path": "skills/jev-runtime/questions/preflight-route.json",
-  "state": {
-    "request": "Customer says order 1182 was charged twice and asks for a refund."
-  },
-  "mode": "shadow"
-}
-```
-
-With both `TYPESAFE_API_KEY` and `TYPESAFE_API_KEY_COMMAND` unset, run:
-
-```sh
-jev-kit --input examples/requests/route.json
-```
-
-Expected output:
-
-```json
-{"schema_version":1,"status":"error","reason":"config","records":[]}
-```
-
-Without an API key, the command-line tool cannot ask Jev, so it reports a configuration
-error. It has no demo mode; the Python demos above provide scripted answers. With credentials
-configured, the same command calls the service, so read
-[Recording real evidence](#recording-real-evidence-optional) first.
-
-The CLI also reads one JSON object from standard input. In Bash or zsh:
-
-```sh
-jev-kit < examples/requests/route.json
-```
-
-In PowerShell 7:
-
-```powershell
-Get-Content -Raw examples/requests/route.json | jev-kit
-```
-
-Windows PowerShell 5.1 adds a byte-order mark to piped text, which the CLI rejects as invalid
-JSON. There, pass the file instead: `jev-kit --input examples/requests/route.json`.
-
-Both forms return the same response. Exit code `0` means the CLI produced a response,
-including an error response; it does not mean approval, so read `status` and each record's
-`route`. Malformed JSON or an unusable invocation returns exit `2`. The
-[CLI schemas](docs/schemas/README.md) describe the request and response formats, including
-`decide_batch` and `record_outcome`.
-
-### Preview a skill install
-
-```sh
-jev-kit install --scope repo
-```
-
-This prints a JSON plan with `"applied":false` for `.claude/skills`, `.agents/skills` and
-`.hermes/skills`, and changes no files. Use `--scope user` to preview a user-wide install.
-Installing the skill and registering a tool hook are separate steps; see
-[Add it to your agent](#add-it-to-your-agent).
-
 ## Choose a question type
 
 | Type | Use it for | What Jev returns |
 | --- | --- | --- |
-| Noul | A yes/no judgment, such as whether a message claims the tests passed | The probability of yes |
+| Noul (TypeSafe's name for a yes/no question) | A yes/no judgment, such as whether a message claims the tests passed | The probability of yes |
 | Choice | A fixed menu, such as code, a specialist model or a person | A probability for each option |
 | Score | A rating on a scale whose levels you define | A probability for each level |
 
@@ -378,39 +342,6 @@ Every answer comes back with one of three routes:
 | `ask` | A check did not pass, or something failed. Ask a person or run a deterministic check. |
 | `no_advice` | There is no usable answer yet. Keep your normal path. |
 
-For TypeSafe's API, see [the vendor documentation](https://docs.typesafe.ai/api.md).
-
-## Inspect a tool-call gate, offline
-
-```sh
-python examples/gate_walkthrough.py
-```
-
-The example describes `rm -rf ./build`; it never runs that command. It shows how the request
-is trimmed, and a scripted answer to three questions about the proposed action:
-
-```text
-destructive        p(yes)=0.97  -> ask
-exfiltrates        p(yes)=0.02  -> ask
-widens_permission  p(yes)=0.01  -> ask
-```
-
-All three come back as `ask` because demo answers can never clear a check. The trimmed request
-is:
-
-```json
-{
-  "command": "rm",
-  "context": "tool=Bash; description=Clean the build folder",
-  "target": "id_7dcb134b1ad03cd1"
-}
-```
-
-The command is only `rm`: flags and arguments are removed, so this field alone cannot tell
-`rm file` from `rm -rf /`. The target is a keyed hash. `context` is plain text, so it needs an
-explicit opt-in for live calls. The hooks no longer add the working directory to it, but a
-description can still name a folder.
-
 ## Add it to your agent
 
 With the environment owner's approval, follow the guide for your host. Each guide starts in
@@ -420,9 +351,8 @@ shadow mode and covers installing the skill separately from registering the hook
 - [Codex](docs/guides/codex.md)
 - [Hermes Agent](docs/guides/hermes.md)
 
-The installer only writes changes when you pass `--apply`. It links to `skills/jev-runtime`
-where it can and otherwise copies the files; moving or deleting a linked checkout breaks the
-install.
+To preview what a skill install would change without changing anything, run
+`jev-kit install --scope repo`; see [the CLI guide](docs/guides/cli.md#preview-a-skill-install).
 
 ## What leaves your machine
 
@@ -439,33 +369,22 @@ live gate requests are refused before sending, so no evidence is collected. Addi
 accepting that directory names and other unmasked context can leave the machine. The routing
 example's `request` field uses the separate source type `agent_request`.
 
-The kit scans the exact outgoing bytes for credentials and other prohibited data and refuses
-a request that matches. No scanner catches every secret. Source-code fields are refused
+The kit scans the exact outgoing bytes for recognized credential and other prohibited-data
+patterns and refuses a request that matches. No scanner catches every secret. Source-code fields are refused
 outright for now, and log fields keep only level keywords and masked placeholders.
 
 Receipts hold decision details and digests, never raw state or API keys. See
 [ADR 0002](docs/adr/0002-egress-policy.md) for the policy and its accepted risks.
 
-## Recording real evidence (optional)
+## Reference
 
-Live calls send data to TypeSafe and may cost money. Get authorization for that before adding
-credentials; the demos need none of this.
-
-| Variable | Purpose |
-| --- | --- |
-| `TYPESAFE_API_KEY` or `TYPESAFE_API_KEY_COMMAND` | API key, or a JSON argument list for a command that prints it from your secret store. |
-| `JEV_KIT_HMAC_KEY` | 32 random bytes, base64url-encoded, for keyed hashes such as `target`. Keep it secret. |
-| `JEV_KIT_SOURCE_ALLOWLIST` | Approved source types, comma-separated. `agent_context` permits the gate context; `agent_request` permits the routing example's text. |
-| `JEV_KIT_ATTESTATION` | Path to a JSON file recording inventory inclusion, its date and DPA status. Live calls are refused without a valid attestation. |
-| `JEV_KIT_RECEIPTS_DIR` | Optional absolute receipt folder; defaults to a per-user data folder. |
-
-An attestation has fields such as `{"inventory": true, "inventory_date": "2026-09-26",
-"dpa": true}`. Record your actual status and date; do not copy these values.
-
-The model is pinned to `jev-1.13.0`, and an answer from any other version is rejected.
-Measure thresholds from authorized real answers, with independent labels and held-out data.
-A threshold belongs to one exact question and set of data rules, so changing either retires
-it. Collecting evidence does not by itself authorize turning on enforce mode.
+- [Command-line tool](docs/guides/cli.md): JSON requests, standard input, exit codes and the
+  install preview.
+- [Live calls](docs/guides/live-calls.md): API keys, the source allowlist, attestation, and
+  measuring thresholds. Live calls send data to TypeSafe; read it before adding credentials.
+- [Receipts](docs/receipts.md): every field of a decision record.
+- [CLI schemas](docs/schemas/README.md) and [TypeSafe's API](https://docs.typesafe.ai/api.md).
+- [ADR 0002](docs/adr/0002-egress-policy.md): the egress policy and its accepted risks.
 
 ## Development
 

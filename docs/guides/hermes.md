@@ -120,7 +120,7 @@ turned off, and under some cron or unattended policies. `block` holds in all of 
 
 Live calls send data to TypeSafe, so only do this with authorization to send it. Read
 [What leaves your machine](../../README.md#what-leaves-your-machine) first, then set the
-variables in [Recording real evidence](../../README.md#recording-real-evidence-optional) in the
+variables in [Live calls](live-calls.md) in the
 environment Hermes starts from. Stay in shadow mode: enforce needs thresholds measured on
 labeled, held-out data and approval from whoever owns the environment.
 

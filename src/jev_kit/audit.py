@@ -127,13 +127,11 @@ _CREDENTIAL_EXFIL_SEVERITY = "high"
 
 _CREDENTIAL_LOCATION_RE = re.compile(
     r"(?i)"
-    # ~/.ssh, %USERPROFILE%\.ssh, $env:USERPROFILE\.ssh; not ssh config, known_hosts, or *.pub.
-    r"(?<![\w.])\.ssh(?![/\\](?:config|known_hosts|[\w.-]{0,64}\.pub)\b)(?![\w-])"
-    r"|\bid_(?:rsa|dsa|ecdsa|ed25519)\b(?!\.pub)"
+    # ~/.ssh and .env paths are handled by _SSH_PATH_RE and _ENV_FILE_RE below, which need
+    # a per-path check (public keys and template env files are excluded).
+    r"\bid_(?:rsa|dsa|ecdsa|ed25519)\b(?!\.pub)"
     r"|(?<![\w.])\.aws\b"
     r"|\baws_secret_access_key\b"
-    # .env and .env.local/.env.production, but not .env.example or .env.sample.
-    r"|(?<![\w.])\.env(?:\.(?:local|prod|production|dev|development|staging|test))?(?![\w-]|\.\w)"
     r"|(?<![\w.])\.netrc\b"
     r"|(?<![\w.])\.git-credentials\b"
     r"|(?<![\w.])\.pgpass\b"
@@ -169,9 +167,45 @@ _REMOTE_DESTINATION_RE = re.compile(
 )
 
 
+# A ~/.ssh path with up to 8 bounded segments (nested dirs and globs such as ~/.ssh/*.pub or
+# ~/.ssh/work/id_ed25519.pub). The whole path is captured so its last segment can be checked.
+_SSH_PATH_RE = re.compile(r"(?i)(?<![\w.])\.ssh((?:[/\\][\w.*?-]{1,64}){0,8})(?![\w-])")
+_SSH_NON_SECRET_NAMES = frozenset({"config", "known_hosts", "known_hosts.old", "authorized_keys"})
+
+# A .env file with any chain of up to 8 ".word" suffixes (.env.production.local). The chain is
+# captured so template names can be excluded wherever they appear in it.
+_ENV_FILE_RE = re.compile(r"(?i)(?<![\w.])\.env((?:\.[\w-]{1,32}){0,8})(?![\w-])")
+_ENV_TEMPLATE_SEGMENTS = frozenset(
+    {"example", "examples", "sample", "samples", "template", "tmpl", "dist", "defaults"}
+)
+
+
+def _ssh_path_is_secret(tail: str) -> bool:
+    """True unless the ~/.ssh path names only a public key, config, or known_hosts file."""
+    if not tail:
+        return True  # the whole ~/.ssh directory
+    last = tail.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].lower()
+    return not (last.endswith(".pub") or last in _SSH_NON_SECRET_NAMES)
+
+
+def _env_file_is_secret(chain: str) -> bool:
+    """True unless a .env suffix chain names a template (.env.example, .env.local.sample)."""
+    segments = {segment.lower() for segment in chain.split(".") if segment}
+    return not segments & _ENV_TEMPLATE_SEGMENTS
+
+
+def _has_credential_location(line: str) -> bool:
+    """True if *line* names at least one private credential location."""
+    if _CREDENTIAL_LOCATION_RE.search(line):
+        return True
+    if any(_ssh_path_is_secret(m.group(1)) for m in _SSH_PATH_RE.finditer(line)):
+        return True
+    return any(_env_file_is_secret(m.group(1)) for m in _ENV_FILE_RE.finditer(line))
+
+
 def _is_credential_exfiltration(line: str) -> bool:
     """True if *line* names a credential location AND an outbound transfer to a remote place."""
-    if not _CREDENTIAL_LOCATION_RE.search(line):
+    if not _has_credential_location(line):
         return False
     if _NETWORK_TOOL_RE.search(line):
         return True

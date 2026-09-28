@@ -3,7 +3,7 @@
 A fast, typed judgment layer for Claude Code, Codex and Hermes Agent, using
 [TypeSafe's Jev](https://typesafe.ai).
 
-**Claude writes. Code knows the facts. Jev makes the small judgment calls.**
+**Your agent writes. Plain code checks the facts. Jev makes the small judgment calls.**
 
 An agent loop is full of small decisions that are not worth another full LLM turn. Is this
 task done, or should I keep going? Which handler fits this request? Does the final message
@@ -13,7 +13,7 @@ for each one instead of prose. Your code reads the numbers and decides.
 
 That splits the agent into three layers, each doing what it is good at:
 
-| Claude / Codex / Hermes | Code | Jev |
+| Your agent (Claude Code, Codex, Hermes) | Plain code | Jev |
 | --- | --- | --- |
 | Writes the change | Counts 37 passed tests in the JUnit report | Is the agent ready to stop? |
 | Explains the result | Checks the file exists | Is this claim supported? |

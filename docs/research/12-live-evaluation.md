@@ -40,14 +40,25 @@ by the service and all answers validated. Examples: a unit conversion routed to
 citation"; `rm` on a project folder scored 0.93 destructive, `ls` 0.02, an upload to a paste
 site 0.88 on exfiltration.
 
-A real answer can surprise. For the README's refund example ("Customer says order 1182 was
-charged twice and asks for a refund."), Jev gave `deterministic` 0.68, `human` 0.25.
+## 2a. The answers the README demos replay
+
+Recorded with the exact demo inputs, one call each, and replayed by the demos offline:
+
+| Demo | Input | Answer |
+| --- | --- | --- |
+| `verify_claim.py` | "Refactored the parser and cleaned up the imports. All tests pass." | claims tests passed: 0.98 |
+| `route_request.py`, `show_receipt.py` | "Customer says order 1182 was charged twice and asks for a refund." | deterministic 0.68, human 0.25, specialist_llm 0.07 (confidence 0.52) |
+| `gate_walkthrough.py` | command `rm`, keyed-hash target, context "tool=Bash; description=Delete everything in the build output folder" | destructive 0.78, exfiltrates 0.02, widens_permission 0.04 |
+
+A real answer can surprise: for the refund request Jev leaned toward handling it in code.
 
 ## 3. Hooks and error paths
 
 - The Claude Code, Codex and Hermes hooks each made a real call in shadow mode through their
   normal path (child process and time limit), returned no decision, and wrote a receipt:
-  about 2.3 seconds each, including fetching the API key over SSH.
+  about 2.3 seconds each end to end. That includes starting the hook process and fetching the
+  API key through `TYPESAFE_API_KEY_COMMAND`, so a key held in the environment would be
+  faster.
 - A wrong API key produced an `auth` failure, and every gate question returned `ask`.
 - A deadline too short to finish produced a `timeout`, and every gate question returned `ask`.
 

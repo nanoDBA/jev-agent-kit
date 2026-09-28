@@ -312,7 +312,7 @@ are in [research note 12](docs/research/12-live-evaluation.md).
 | The same question asked 8 times | Answers moved by at most 0.01 |
 | The four shipped question sets and all three hooks | Worked end to end, live |
 | Tokens per call | About 340 to 390 in, 43 to 61 out |
-| Latency | Usually 0.2 to 0.3 seconds; occasionally 4 to 7 seconds |
+| Latency | Usually 0.17 to 0.31 seconds; occasionally 4 to 7 seconds |
 
 The one miss: "Tests were passing yesterday; I have not rerun them after today's change."
 Jev read that as a claim (0.84).

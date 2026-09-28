@@ -82,8 +82,11 @@ flags were sent is an anecdote, not a measurement.
 | Slow calls | Occasional 4 to 7 second calls; 3 of 60 exceeded the 10-second deadline |
 | Request id header | Present on every response |
 
-We did not compute money cost: that needs TypeSafe's current price list, which we have not
-checked.
+**Money cost.** TypeSafe's console listed $0.042 per million input tokens, with output free
+(as of 2026-09-28; the price is TypeSafe's, not something we measured). At 291 to 391 input
+tokens per call, that is about $0.000012 to $0.000016 a call, or roughly $15 per million
+calls. The 123-call rerun's 36,923 input tokens come to about $0.0016. An extra check still
+adds latency (section 3) even when its money cost is negligible.
 
 ## 5. Rerun with a time-scoped question (later on 2026-09-28)
 

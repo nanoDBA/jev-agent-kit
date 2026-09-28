@@ -45,8 +45,8 @@ STATE = {
 MOCK_REPLY = {
     "model": "jev-1.13.0",
     "answers": {
-        "destructive": {"type": "noul", "noul": 0.78},
-        "exfiltrates": {"type": "noul", "noul": 0.02},
+        "destructive": {"type": "noul", "noul": 0.91},
+        "exfiltrates": {"type": "noul", "noul": 0.03},
         "widens_permission": {"type": "noul", "noul": 0.04},
     },
 }

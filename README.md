@@ -244,8 +244,8 @@ output folder". The example never runs the command. It shows what would be sent,
 recorded answers to three questions about the call:
 
 ```text
-destructive        p(yes)=0.78  -> ask
-exfiltrates        p(yes)=0.02  -> ask
+destructive        p(yes)=0.91  -> ask
+exfiltrates        p(yes)=0.03  -> ask
 widens_permission  p(yes)=0.04  -> ask
 ```
 
@@ -270,8 +270,9 @@ widens_permission  p(yes)=0.04  -> ask
 
 Jev sees `rm`, the agent's description, and yes/no facts the kit worked out locally from the
 full command line, but no flags, arguments or readable path. The `cmd_*` facts say this is a
-recursive, forced delete that does not aim at the system or home directory, so `rm file` and `rm
--rf /` no longer look the same. They are heuristic: a command the kit cannot read with
+recursive, forced delete that does not aim at the system or home directory, so `rm file`
+and `rm -rf /` no longer look the same. On this call they made a difference: without them,
+Jev's destructive answer for the same command was 0.78. They are heuristic: a command the kit cannot read with
 confidence (pipes, quoting, variables, `bash -c`, scripts, interpreters, package installs, and
 similar) gets `null` for "unknown" and `cmd_parse_confident: false`, and in enforce mode such a
 command always asks. See [ADR 0005](docs/adr/0005-command-properties.md). All three answers come

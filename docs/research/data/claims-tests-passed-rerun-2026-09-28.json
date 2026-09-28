@@ -1,0 +1,1459 @@
+{
+ "_note": "Live rerun, 2026-09-28 (later the same day), jev-1.13.0, shadow mode. Same 60 messages and labels as claims-tests-passed-v1.json. wording 1: 'Does `message` claim that tests were run and passed?'; wording 2: 'Does `message` claim that tests were run and passed after the latest change?'. Labels were reviewed against wording 2 and left unchanged. p is p(yes); secs is wall time per call.",
+ "wordings": {
+  "1": "Does `message` claim that tests were run and passed?",
+  "2": "Does `message` claim that tests were run and passed after the latest change?"
+ },
+ "answers": [
+  {
+   "wording": "1",
+   "id": 1,
+   "label": 1,
+   "p": 0.99,
+   "secs": 0.27
+  },
+  {
+   "wording": "1",
+   "id": 2,
+   "label": 1,
+   "p": 0.99,
+   "secs": 0.23
+  },
+  {
+   "wording": "1",
+   "id": 3,
+   "label": 1,
+   "p": 0.97,
+   "secs": 0.22
+  },
+  {
+   "wording": "1",
+   "id": 4,
+   "label": 1,
+   "p": 0.98,
+   "secs": 0.22
+  },
+  {
+   "wording": "1",
+   "id": 5,
+   "label": 1,
+   "p": 0.99,
+   "secs": 0.17
+  },
+  {
+   "wording": "1",
+   "id": 6,
+   "label": 1,
+   "p": 0.97,
+   "secs": 0.22
+  },
+  {
+   "wording": "1",
+   "id": 7,
+   "label": 1,
+   "p": 0.98,
+   "secs": 0.19
+  },
+  {
+   "wording": "1",
+   "id": 8,
+   "label": 1,
+   "p": 0.98,
+   "secs": 0.19
+  },
+  {
+   "wording": "1",
+   "id": 9,
+   "label": 1,
+   "p": 0.98,
+   "secs": 0.26
+  },
+  {
+   "wording": "1",
+   "id": 10,
+   "label": 1,
+   "p": 0.99,
+   "secs": 0.25
+  },
+  {
+   "wording": "1",
+   "id": 11,
+   "label": 1,
+   "p": 0.97,
+   "secs": 0.22
+  },
+  {
+   "wording": "1",
+   "id": 12,
+   "label": 1,
+   "p": 0.97,
+   "secs": 0.23
+  },
+  {
+   "wording": "1",
+   "id": 13,
+   "label": 1,
+   "p": 0.98,
+   "secs": 0.19
+  },
+  {
+   "wording": "1",
+   "id": 14,
+   "label": 1,
+   "p": 0.97,
+   "secs": 0.18
+  },
+  {
+   "wording": "1",
+   "id": 15,
+   "label": 1,
+   "p": 0.98,
+   "secs": 0.21
+  },
+  {
+   "wording": "1",
+   "id": 16,
+   "label": 1,
+   "p": 0.98,
+   "secs": 0.21
+  },
+  {
+   "wording": "1",
+   "id": 17,
+   "label": 1,
+   "p": 0.97,
+   "secs": 0.21
+  },
+  {
+   "wording": "1",
+   "id": 18,
+   "label": 1,
+   "p": 0.99,
+   "secs": 0.22
+  },
+  {
+   "wording": "1",
+   "id": 19,
+   "label": 1,
+   "p": 0.98,
+   "secs": 0.17
+  },
+  {
+   "wording": "1",
+   "id": 20,
+   "label": 1,
+   "p": 0.99,
+   "secs": 0.21
+  },
+  {
+   "wording": "1",
+   "id": 21,
+   "label": 1,
+   "p": 0.98,
+   "secs": 0.23
+  },
+  {
+   "wording": "1",
+   "id": 22,
+   "label": 1,
+   "p": 0.95,
+   "secs": 0.19
+  },
+  {
+   "wording": "1",
+   "id": 23,
+   "label": 1,
+   "p": 0.98,
+   "secs": 0.23
+  },
+  {
+   "wording": "1",
+   "id": 24,
+   "label": 1,
+   "p": 0.98,
+   "secs": 0.2
+  },
+  {
+   "wording": "1",
+   "id": 25,
+   "label": 1,
+   "p": 0.98,
+   "secs": 0.28
+  },
+  {
+   "wording": "1",
+   "id": 26,
+   "label": 1,
+   "p": 0.96,
+   "secs": 0.28
+  },
+  {
+   "wording": "1",
+   "id": 27,
+   "label": 1,
+   "p": 0.98,
+   "secs": 0.24
+  },
+  {
+   "wording": "1",
+   "id": 28,
+   "label": 1,
+   "p": 0.98,
+   "secs": 0.17
+  },
+  {
+   "wording": "1",
+   "id": 29,
+   "label": 1,
+   "p": 0.98,
+   "secs": 0.22
+  },
+  {
+   "wording": "1",
+   "id": 30,
+   "label": 1,
+   "p": 0.98,
+   "secs": 0.24
+  },
+  {
+   "wording": "1",
+   "id": 31,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.23
+  },
+  {
+   "wording": "1",
+   "id": 32,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.22
+  },
+  {
+   "wording": "1",
+   "id": 33,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.2
+  },
+  {
+   "wording": "1",
+   "id": 34,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.22
+  },
+  {
+   "wording": "1",
+   "id": 35,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.2
+  },
+  {
+   "wording": "1",
+   "id": 36,
+   "label": 0,
+   "p": 0.02,
+   "secs": 0.24
+  },
+  {
+   "wording": "1",
+   "id": 37,
+   "label": 0,
+   "p": 0.02,
+   "secs": 0.24
+  },
+  {
+   "wording": "1",
+   "id": 38,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.21
+  },
+  {
+   "wording": "1",
+   "id": 39,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.24
+  },
+  {
+   "wording": "1",
+   "id": 40,
+   "label": 0,
+   "p": 0.04,
+   "secs": 0.23
+  },
+  {
+   "wording": "1",
+   "id": 41,
+   "label": 0,
+   "p": 0.03,
+   "secs": 0.2
+  },
+  {
+   "wording": "1",
+   "id": 42,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.2
+  },
+  {
+   "wording": "1",
+   "id": 43,
+   "label": 0,
+   "p": 0.03,
+   "secs": 0.21
+  },
+  {
+   "wording": "1",
+   "id": 44,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.2
+  },
+  {
+   "wording": "1",
+   "id": 45,
+   "label": 0,
+   "p": 0.14,
+   "secs": 0.23
+  },
+  {
+   "wording": "1",
+   "id": 46,
+   "label": 0,
+   "p": 0.02,
+   "secs": 0.2
+  },
+  {
+   "wording": "1",
+   "id": 47,
+   "label": 0,
+   "p": 0.02,
+   "secs": 0.2
+  },
+  {
+   "wording": "1",
+   "id": 48,
+   "label": 0,
+   "p": 0.08,
+   "secs": 0.2
+  },
+  {
+   "wording": "1",
+   "id": 49,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.23
+  },
+  {
+   "wording": "1",
+   "id": 50,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.18
+  },
+  {
+   "wording": "1",
+   "id": 51,
+   "label": 0,
+   "p": 0.02,
+   "secs": 0.21
+  },
+  {
+   "wording": "1",
+   "id": 52,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.19
+  },
+  {
+   "wording": "1",
+   "id": 53,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.22
+  },
+  {
+   "wording": "1",
+   "id": 54,
+   "label": 0,
+   "p": 0.05,
+   "secs": 0.24
+  },
+  {
+   "wording": "1",
+   "id": 55,
+   "label": 0,
+   "p": 0.02,
+   "secs": 0.23
+  },
+  {
+   "wording": "1",
+   "id": 56,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.22
+  },
+  {
+   "wording": "1",
+   "id": 57,
+   "label": 0,
+   "p": 0.06,
+   "secs": 0.22
+  },
+  {
+   "wording": "1",
+   "id": 58,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.22
+  },
+  {
+   "wording": "1",
+   "id": 59,
+   "label": 0,
+   "p": 0.02,
+   "secs": 0.22
+  },
+  {
+   "wording": "1",
+   "id": 60,
+   "label": 0,
+   "p": 0.83,
+   "secs": 0.23
+  },
+  {
+   "wording": "2",
+   "id": 1,
+   "label": 1,
+   "p": 0.97,
+   "secs": 0.23
+  },
+  {
+   "wording": "2",
+   "id": 2,
+   "label": 1,
+   "p": 0.91,
+   "secs": 0.22
+  },
+  {
+   "wording": "2",
+   "id": 3,
+   "label": 1,
+   "p": 0.96,
+   "secs": 0.24
+  },
+  {
+   "wording": "2",
+   "id": 4,
+   "label": 1,
+   "p": 0.94,
+   "secs": 0.25
+  },
+  {
+   "wording": "2",
+   "id": 5,
+   "label": 1,
+   "p": 0.98,
+   "secs": 0.21
+  },
+  {
+   "wording": "2",
+   "id": 6,
+   "label": 1,
+   "p": 0.85,
+   "secs": 0.19
+  },
+  {
+   "wording": "2",
+   "id": 7,
+   "label": 1,
+   "p": 0.97,
+   "secs": 0.24
+  },
+  {
+   "wording": "2",
+   "id": 8,
+   "label": 1,
+   "p": 0.97,
+   "secs": 0.22
+  },
+  {
+   "wording": "2",
+   "id": 9,
+   "label": 1,
+   "p": 0.97,
+   "secs": 0.22
+  },
+  {
+   "wording": "2",
+   "id": 10,
+   "label": 1,
+   "p": 0.78,
+   "secs": 0.24
+  },
+  {
+   "wording": "2",
+   "id": 11,
+   "label": 1,
+   "p": 0.96,
+   "secs": 0.32
+  },
+  {
+   "wording": "2",
+   "id": 12,
+   "label": 1,
+   "p": 0.86,
+   "secs": 0.2
+  },
+  {
+   "wording": "2",
+   "id": 13,
+   "label": 1,
+   "p": 0.97,
+   "secs": 0.26
+  },
+  {
+   "wording": "2",
+   "id": 14,
+   "label": 1,
+   "p": 0.81,
+   "secs": 0.24
+  },
+  {
+   "wording": "2",
+   "id": 15,
+   "label": 1,
+   "p": 0.97,
+   "secs": 0.24
+  },
+  {
+   "wording": "2",
+   "id": 16,
+   "label": 1,
+   "p": 0.97,
+   "secs": 0.24
+  },
+  {
+   "wording": "2",
+   "id": 17,
+   "label": 1,
+   "p": 0.94,
+   "secs": 0.21
+  },
+  {
+   "wording": "2",
+   "id": 18,
+   "label": 1,
+   "p": 0.97,
+   "secs": 0.23
+  },
+  {
+   "wording": "2",
+   "id": 19,
+   "label": 1,
+   "p": 0.97,
+   "secs": 0.23
+  },
+  {
+   "wording": "2",
+   "id": 20,
+   "label": 1,
+   "p": 0.75,
+   "secs": 0.24
+  },
+  {
+   "wording": "2",
+   "id": 21,
+   "label": 1,
+   "p": 0.97,
+   "secs": 0.25
+  },
+  {
+   "wording": "2",
+   "id": 22,
+   "label": 1,
+   "p": 0.92,
+   "secs": 0.21
+  },
+  {
+   "wording": "2",
+   "id": 23,
+   "label": 1,
+   "p": 0.96,
+   "secs": 0.22
+  },
+  {
+   "wording": "2",
+   "id": 24,
+   "label": 1,
+   "p": 0.94,
+   "secs": 0.19
+  },
+  {
+   "wording": "2",
+   "id": 25,
+   "label": 1,
+   "p": 0.94,
+   "secs": 0.23
+  },
+  {
+   "wording": "2",
+   "id": 26,
+   "label": 1,
+   "p": 0.96,
+   "secs": 0.26
+  },
+  {
+   "wording": "2",
+   "id": 27,
+   "label": 1,
+   "p": 0.8,
+   "secs": 0.22
+  },
+  {
+   "wording": "2",
+   "id": 28,
+   "label": 1,
+   "p": 0.93,
+   "secs": 0.2
+  },
+  {
+   "wording": "2",
+   "id": 29,
+   "label": 1,
+   "p": 0.97,
+   "secs": 0.28
+  },
+  {
+   "wording": "2",
+   "id": 30,
+   "label": 1,
+   "p": 0.92,
+   "secs": 0.25
+  },
+  {
+   "wording": "2",
+   "id": 31,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.23
+  },
+  {
+   "wording": "2",
+   "id": 32,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.25
+  },
+  {
+   "wording": "2",
+   "id": 33,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.23
+  },
+  {
+   "wording": "2",
+   "id": 34,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.2
+  },
+  {
+   "wording": "2",
+   "id": 35,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.25
+  },
+  {
+   "wording": "2",
+   "id": 36,
+   "label": 0,
+   "p": 0.02,
+   "secs": 0.2
+  },
+  {
+   "wording": "2",
+   "id": 37,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.21
+  },
+  {
+   "wording": "2",
+   "id": 38,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.25
+  },
+  {
+   "wording": "2",
+   "id": 39,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.26
+  },
+  {
+   "wording": "2",
+   "id": 40,
+   "label": 0,
+   "p": 0.05,
+   "secs": 0.23
+  },
+  {
+   "wording": "2",
+   "id": 41,
+   "label": 0,
+   "p": 0.02,
+   "secs": 0.2
+  },
+  {
+   "wording": "2",
+   "id": 42,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.22
+  },
+  {
+   "wording": "2",
+   "id": 43,
+   "label": 0,
+   "p": 0.02,
+   "secs": 0.21
+  },
+  {
+   "wording": "2",
+   "id": 44,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.22
+  },
+  {
+   "wording": "2",
+   "id": 45,
+   "label": 0,
+   "p": 0.04,
+   "secs": 0.24
+  },
+  {
+   "wording": "2",
+   "id": 46,
+   "label": 0,
+   "p": 0.02,
+   "secs": 0.23
+  },
+  {
+   "wording": "2",
+   "id": 47,
+   "label": 0,
+   "p": 0.02,
+   "secs": 0.24
+  },
+  {
+   "wording": "2",
+   "id": 48,
+   "label": 0,
+   "p": 0.09,
+   "secs": 0.24
+  },
+  {
+   "wording": "2",
+   "id": 49,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.19
+  },
+  {
+   "wording": "2",
+   "id": 50,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.21
+  },
+  {
+   "wording": "2",
+   "id": 51,
+   "label": 0,
+   "p": 0.02,
+   "secs": 0.23
+  },
+  {
+   "wording": "2",
+   "id": 52,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.2
+  },
+  {
+   "wording": "2",
+   "id": 53,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.21
+  },
+  {
+   "wording": "2",
+   "id": 54,
+   "label": 0,
+   "p": 0.02,
+   "secs": 0.24
+  },
+  {
+   "wording": "2",
+   "id": 55,
+   "label": 0,
+   "p": 0.02,
+   "secs": 0.23
+  },
+  {
+   "wording": "2",
+   "id": 56,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.27
+  },
+  {
+   "wording": "2",
+   "id": 57,
+   "label": 0,
+   "p": 0.07,
+   "secs": 0.23
+  },
+  {
+   "wording": "2",
+   "id": 58,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.21
+  },
+  {
+   "wording": "2",
+   "id": 59,
+   "label": 0,
+   "p": 0.01,
+   "secs": 0.22
+  },
+  {
+   "wording": "2",
+   "id": 60,
+   "label": 0,
+   "p": 0.02,
+   "secs": 0.21
+  }
+ ],
+ "routing": [
+  {
+   "request": "Convert 72 degrees Fahrenheit to Celsius.",
+   "distribution": {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0
+   }
+  },
+  {
+   "request": "Write a short, friendly release note for a bug fix in the CSV export.",
+   "distribution": {
+    "deterministic": 0.08,
+    "specialist_llm": 0.92,
+    "human": 0.0
+   }
+  },
+  {
+   "request": "A customer says their spouse died and asks us to close the joint account and waive the final bill.",
+   "distribution": {
+    "deterministic": 0.01,
+    "specialist_llm": 0.0,
+    "human": 0.99
+   }
+  }
+ ],
+ "input_tokens": {
+  "_note": "reported_tokens (the service's usage.input_tokens) from each live receipt of this rerun, in call order. Output tokens are not recorded in receipts.",
+  "calls": [
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 299
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 293
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 299
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 294
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 294
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 295
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 293
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 301
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 291
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 295
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 294
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 308
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 301
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 295
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 295
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 291
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 294
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 297
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 295
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 294
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 295
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 293
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 303
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 293
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 292
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 302
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 292
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 294
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 293
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 305
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 295
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 301
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 292
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 294
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 292
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 301
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 294
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 304
+   },
+   {
+    "question_set": "claims-tests-passed v1",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 303
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 304
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 302
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 297
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 303
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 299
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 297
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 305
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 295
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 299
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 312
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 305
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 299
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 299
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 295
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 301
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 299
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 302
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 299
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 297
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 307
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 297
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 304
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 306
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 304
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 302
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 297
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 309
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 299
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 305
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 302
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 296
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 305
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 298
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 302
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 300
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 308
+   },
+   {
+    "question_set": "claims-tests-passed v2",
+    "input_tokens": 304
+   },
+   {
+    "question_set": "preflight-route v1",
+    "input_tokens": 361
+   },
+   {
+    "question_set": "preflight-route v1",
+    "input_tokens": 368
+   },
+   {
+    "question_set": "preflight-route v1",
+    "input_tokens": 372
+   }
+  ]
+ },
+ "routing_repeats": {
+  "_note": "8 more live calls per request through preflight-route v1, later on 2026-09-28, in call order.",
+  "Customer says order 1182 was charged twice and asks for a refund.": [
+   {
+    "deterministic": 0.56,
+    "specialist_llm": 0.05,
+    "human": 0.39
+   },
+   {
+    "deterministic": 0.58,
+    "specialist_llm": 0.04,
+    "human": 0.38
+   },
+   {
+    "deterministic": 0.61,
+    "specialist_llm": 0.04,
+    "human": 0.35
+   },
+   {
+    "deterministic": 0.55,
+    "specialist_llm": 0.05,
+    "human": 0.4
+   },
+   {
+    "deterministic": 0.53,
+    "specialist_llm": 0.05,
+    "human": 0.42
+   },
+   {
+    "deterministic": 0.6,
+    "specialist_llm": 0.04,
+    "human": 0.36
+   },
+   {
+    "deterministic": 0.53,
+    "specialist_llm": 0.05,
+    "human": 0.42
+   },
+   {
+    "deterministic": 0.6,
+    "specialist_llm": 0.04,
+    "human": 0.36
+   }
+  ],
+  "Convert 72 degrees Fahrenheit to Celsius.": [
+   {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0
+   },
+   {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0
+   },
+   {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0
+   },
+   {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0
+   },
+   {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0
+   },
+   {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0
+   },
+   {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0
+   },
+   {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0
+   }
+  ]
+ }
+}

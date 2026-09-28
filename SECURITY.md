@@ -50,7 +50,8 @@ files. Report those to their owners.
 
 ## Testing safely
 
-- Use the mock transport. The examples and tests run offline, and so can a reproduction.
+- Use the mock transport. The tests run offline, the examples do with `--offline`, and so
+  can a reproduction.
 - Do not send other people's data, or data you are not authorized to share, to the live Jev
   API while testing.
 - Do not test against infrastructure you do not own.

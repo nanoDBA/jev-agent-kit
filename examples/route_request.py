@@ -1,18 +1,17 @@
-"""Ask Jev a question of your own: which handler should take a request? Fully offline.
+"""Ask Jev a question of your own: which handler should take a request?
 
 Uses the shipped `preflight-route` question set, a Choice question with three options. Jev
-returns a probability for every option; your code decides what to do with them. The answer
-is a real one, recorded from jev-1.13.0 on 2026-09-28, replayed so the demo runs offline. The kit
-never acts on a replayed answer, so it returns `no_advice` and your code falls back.
+returns a probability for every option; your code decides what to do with them. The question
+has no calibrated threshold, so the kit returns `no_advice` and your code falls back. Needs
+TYPESAFE_API_KEY, or --offline.
 
-Run it from the repository root:
+Run it from the repository root (add --offline to replay the answer recorded on 2026-09-28):
 
     python examples/route_request.py
 """
 
 from __future__ import annotations
 
-import json
 import sys
 import tempfile
 from pathlib import Path
@@ -20,9 +19,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
+from _demo import setup  # noqa: E402 (after the src path setup)
+
 from jev_kit.engine import EngineConfig, decide  # noqa: E402 (after the src path setup)
 from jev_kit.receipts import ReceiptWriter  # noqa: E402 (after the src path setup)
-from jev_kit.transport import MockTransport  # noqa: E402 (after the src path setup)
 
 ROUTER = REPO / "skills" / "jev-runtime" / "questions" / "preflight-route.json"
 
@@ -39,11 +39,10 @@ MOCK_REPLY = {
 }
 
 
-def handle(request: str) -> str:
-    mock = MockTransport.replying(
-        200, json.dumps(MOCK_REPLY).encode(), {"x-typesafe-request-id": "demo-request-2"}
-    )
+def handle(request: str, offline: bool | None = None) -> str:
+    demo = setup(offline)
     config = EngineConfig(
+        attestation=demo.attestation,
         source_allowlist=frozenset({"agent_request"}),
         writer=ReceiptWriter(directory=Path(tempfile.mkdtemp(prefix="jev-receipts-"))),
     )
@@ -54,12 +53,12 @@ def handle(request: str) -> str:
             "state": {"request": request},
             "mode": "shadow",
         },
-        transport=mock,
+        transport=demo.transport(MOCK_REPLY),
         config=config,
     )
     rec = response["records"][0]
     print(f"request: {request!r}")
-    print("Which handler should take it?  (recorded Jev answer)")
+    print(f"Which handler should take it?  ({demo.label})")
     for option, p in rec["distribution"].items():
         bar = "#" * round(p * 20)
         print(f"  {option:<15} {bar:<20} {p:.2f}")

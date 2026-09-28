@@ -16,78 +16,108 @@ That splits the agent into three layers, each doing what it is good at:
 
 | Agent | Deterministic code | Jev |
 | --- | --- | --- |
-| Writes the change | Counts 37 passed tests in the JUnit report | Is the agent ready to stop? |
-| Explains the result | Checks the file exists | Is this claim supported? |
-| Proposes a command | Parses flags, paths, pipes | Is this action risky? |
+| Finishes with a summary | Counts passed tests in the session's JUnit reports | Does the summary claim the tests passed? |
+| Proposes a shell command | Parses it: recursive delete? force flag? pipe to a shell? | Given those facts and the stated purpose, is it destructive? |
+| Receives a request | Knows which handlers exist and your policy | Which handler fits: code, a model, or a person? |
 
-```text
-Agent (Claude Code / Codex / Hermes)
-   |
-   |-- proposed tool call --> code: parse the command into facts
-   |                              |
-   |                          Jev: "destructive?"  p(yes)=0.91
-   |                              |
-   |                          threshold (yours, measured) --> ask a person / carry on
-   |
-   '-- final message -------> code: count tests in the JUnit reports
-                                  |
-                              Jev: "claims the tests passed?"  p(yes)=0.98
-                                  |
-                              claim with no report behind it --> send the agent back
-```
-
-Deterministic facts stay in code, fuzzy micro-decisions go to Jev, and the expensive
-generative model does the work it is actually good at. Jev's answers are consistent (in
-[our test](#what-we-measured) the same question asked eight times moved by at most 0.01) and
-cheap per call ([others have measured](#what-others-have-measured) it against LLM judges).
-
-The kit is the framework around that idea: typed question sets with declared input fields,
-thresholds tied to one question and one model version, a pinned model, a receipt for every
-decision, deterministic preprocessing, and hooks and a skill for all three hosts. The
-tool-call checks are one set of questions built on it, not the point of it.
+TypeSafe's API already gives you typed questions and structured answers. This kit adds what
+it takes to use them inside an agent: question sets with declared, minimized input fields,
+deterministic facts computed before the call, a pinned model, thresholds tied to one question
+and one model version, a receipt for every decision, calibration tooling, and hooks and a
+skill for all three hosts.
 
 ## Quick start
 
-About a minute. You need Python 3.11 or later. No account or API key.
+You need Python 3.11 or later and a Jev API key from [TypeSafe](https://typesafe.ai).
 
 ```sh
 git clone https://github.com/nanoDBA/jev-agent-kit.git
 cd jev-agent-kit
 python -m pip install -e .
+export TYPESAFE_API_KEY=...                # PowerShell: $env:TYPESAFE_API_KEY = "..."
 
 python examples/verify_claim.py           # Jev + code: is "All tests pass" backed by a report?
+python examples/claim_contrast.py         # what Jev tells apart that a keyword check cannot
 python examples/route_request.py          # Jev: code, a specialist model, or a person?
 python examples/gate_walkthrough.py       # Jev + code facts: how risky is rm -rf ./build?
 python examples/show_receipt.py           # the record every decision leaves
 ```
 
-The demos run offline. Where one needs Jev, it replays an answer Jev really gave to that exact
-input, recorded on 2026-09-28. Run the commands from the repository root. If `jev-kit` is not
-on your PATH, use `python -m jev_kit.cli` instead.
+Each demo asks Jev live and makes one to four calls. It sends only the sample text written in
+the demo, never your files. No key? Add `--offline` to any demo to replay the answers Jev gave
+to the same inputs on 2026-09-28. The outputs shown below are those recorded answers; a live
+run usually differs by a few hundredths, sometimes more on an ambiguous request (see
+[routing](#why-routing-needs-a-policy-and-evaluation)). Run the commands from the repository
+root. If `jev-kit` is not on your PATH, use `python -m jev_kit.cli` instead.
+
+## What works today
+
+Installing the kit into a host does not switch on everything this README shows. Today:
+
+| Part | What it does now | What you do |
+| --- | --- | --- |
+| Host hooks | One event per host: `PreToolUse` in Claude Code and Codex, `pre_tool_call` in Hermes. Each call the hook sees is checked with `tool-call-gate`; the guides register it for shell commands. In shadow mode, the default, the hook writes a receipt and changes nothing. | Register the hook with the [host guide](#add-it-to-your-agent). |
+| Examples | The test-claim check, routing, gate and receipt demos ask Jev live (or replay recorded answers with `--offline`). They are not installed into any host. | Copy the pattern into your own code. |
+| Question sets | `preflight-route`, `postflight-verify` and `stop-or-continue` ship as JSON. Nothing calls them automatically. | Call them from your code through the Python API or `jev-kit`. |
+| Acting on answers | Nothing acts on a Jev answer until a threshold for that exact question is registered, and a hook acts only in enforce mode. | Collect live answers in shadow, label them, and [calibrate](docs/guides/calibration.md). |
 
 ## One example: "all tests pass"
 
-An agent can finish with "All tests pass" without running a test. This example checks that
-claim against the session's test reports:
+An agent can finish with "All tests pass" without running a test. Code and Jev each take the
+part they are good at:
+
+```text
+final message --+--> code: count passed tests in the JUnit reports  -> 0
+                |
+                +--> Jev: "does it claim the tests passed?"         -> p(yes)=0.98
+                                  |
+          your code: a claim with no report behind it -> ask the agent to run the tests
+```
+
+```sh
+python examples/verify_claim.py
+```
 
 ```text
 Agent says:     'Refactored the parser and cleaned up the imports. All tests pass.'
 Commands run:   git diff --stat, ruff check src, git add -A
 Test reports:   0  (0 tests passed, counted in code)
-Jev (recorded): does the message claim the tests passed?  p(yes)=0.98
+Jev:            does the message claim the tests passed?  p(yes)=0.98
+                (recorded Jev answer from 2026-09-28)
 Verdict:        the claim is not backed by a test report; ask the agent to run them
 ```
 
-Code reads the session's test reports and counts the passed tests. Jev reads the final
-message and judges whether it claims success, which a search for the word "pass" cannot
-settle. Put together, a success claim with no test report behind it means the agent is asked
-to run the tests.
+Jev's part is interpretation, and a keyword search is a poor stand-in for it. Here are four
+messages, none backed by a test report, with the answers Jev gave in our live evaluation:
 
-On 60 test messages, Jev answered this question correctly 56 times out of 57; details are in
-[What we measured](#what-we-measured). The kit still acts on the answer only after you measure
-a threshold on your own messages. Until then, the code treats every message as a claim, which
-is why the verdict above does not depend on Jev. Once calibrated, Jev's answer lets the code
-skip the check for messages that make no claim.
+```sh
+python examples/claim_contrast.py
+```
+
+```text
+Test reports: none (0 tests passed, counted in code)
+Jev:          recorded Jev answers from 2026-09-28
+
+message            says pass  Jev p(claim)  route      action today
+explicit claim     yes        0.98          no_advice  ask agent to run tests
+claim, no 'pass'   no         0.95          no_advice  ask agent to run tests
+prediction         yes        0.03          no_advice  ask agent to run tests
+admission          no         0.01          no_advice  ask agent to run tests
+
+explicit claim     'Refactored the parser and cleaned up the imports. All tests pass.'
+claim, no 'pass'   'Upgrade finished. No test failures.'
+prediction         "The tests should pass, but I didn't run them."
+admission          'Refactored the parser and cleaned up the imports. I have not run the tests yet.'
+```
+
+Jev separates a claim that never says "pass" from a prediction that does. The last column is
+what the policy does today: this question has no calibrated threshold, so the kit returns
+`no_advice` and the code treats every message as a claim. Once a threshold is measured on your
+own messages, the code can skip the check for the last two. Interpretation and action stay
+separate on purpose: without a measured threshold, no answer authorizes anything.
+
+On 60 messages, Jev answered this question correctly 56 times out of the 57 it answered in
+time; see [What we measured](#what-we-measured).
 
 ### How the check counts
 
@@ -97,9 +127,19 @@ The example counts tests only from the test runner's own JUnit XML report
 report means zero. A passing report shows that tests ran and passed; you still judge whether
 they cover the change.
 
-## See what Jev returns for a judgment call
+## Why routing needs a policy and evaluation
 
-A support request arrives: should code handle it, a specialist model, or a person?
+Given clear cases, the shipped `preflight-route` set answers the way you would expect.
+These are live answers, one call each:
+
+| Request | Jev's answer |
+| --- | --- |
+| "Convert 72 degrees Fahrenheit to Celsius." | deterministic 1.00 |
+| "Write a short, friendly release note for a bug fix in the CSV export." | specialist_llm 0.92 |
+| "A customer says their spouse died and asks us to close the joint account and waive the final bill." | human 0.99 |
+
+Harder cases show why the kit waits for a measured threshold. A support request arrives:
+should code handle it, a specialist model, or a person?
 
 ```sh
 python examples/route_request.py
@@ -107,7 +147,7 @@ python examples/route_request.py
 
 ```text
 request: 'Customer says order 1182 was charged twice and asks for a refund.'
-Which handler should take it?  (recorded Jev answer)
+Which handler should take it?  (recorded Jev answer from 2026-09-28)
   deterministic   ##############       0.68
   specialist_llm  #                    0.07
   human           #####                0.25
@@ -115,10 +155,12 @@ route:   no_advice
 handled: specialist_llm
 ```
 
-Jev returns a probability for every option you defined. You might expect a double-charge
-refund to go to a person; Jev leaned toward handling it in code. That is exactly why the kit
-does not act on an answer until you have measured, on your own requests, how often answers
-like this one are right. Here the kit reports `no_advice`, and the code uses its default, a
+Jev returns a probability for every option you defined. This answer also moves more than the
+clear cases do: asked eight more times later that day, `deterministic` ranged from 0.53 to
+0.61 and `human` from 0.35 to 0.42, while the Fahrenheit request gave 1.00 every time.
+Whether `deterministic` is right depends on things the question does not state: your refund
+policy and what each handler can actually do. That is the lesson for routing: write the criteria into the question, then
+measure on your own requests how often answers like this are right before acting on them. Here the kit reports `no_advice`, and the code uses its default, a
 specialist model.
 
 ## Check a tool call before it runs
@@ -128,14 +170,16 @@ python examples/gate_walkthrough.py
 ```
 
 An agent wants to run `rm -rf ./build` and describes it as "Delete everything in the build
-output folder". The example never runs the command. It shows what would be sent, and Jev's
-recorded answers to three questions about the call:
+output folder". The example never runs the command. It shows what would be sent, Jev's
+answers to three questions about the call, and the routes a hook in enforce mode would get:
 
 ```text
 destructive        p(yes)=0.91  -> ask
 exfiltrates        p(yes)=0.03  -> ask
 widens_permission  p(yes)=0.04  -> ask
 ```
+
+<details><summary>The full request Jev receives</summary>
 
 ```json
 {
@@ -156,6 +200,8 @@ widens_permission  p(yes)=0.04  -> ask
 }
 ```
 
+</details>
+
 Jev sees `rm`, the agent's description, and yes/no facts the kit worked out locally from the
 full command line, but no flags, arguments or readable path. The `cmd_*` facts say this is a
 recursive, forced delete that does not aim at the system or home directory, so `rm file`
@@ -164,7 +210,7 @@ Jev's destructive answer for the same command was 0.78. They are heuristic: a co
 confidence (pipes, quoting, variables, `bash -c`, scripts, interpreters, package installs, and
 similar) gets `null` for "unknown" and `cmd_parse_confident: false`, and in enforce mode such a
 command always asks. See [ADR 0005](docs/adr/0005-command-properties.md). All three answers come
-back as `ask` because a replayed answer can never clear a check.
+back as `ask` because no threshold is calibrated, so no answer can clear a check.
 
 `context` is plain text and needs an explicit opt-in for live calls. The hooks do not add the
 working directory to it, but a description can still name a folder.
@@ -259,8 +305,8 @@ Decision receipt (one JSONL line; long ids and digests shortened):
 Commit marker: 1 decision line for this call, written durably.
 ```
 
-Every decision is written like this before the kit answers. Receipts are how you learn whether a question deserves trust: they hold the full distribution, so you can tune thresholds offline, replay decisions against a new Jev version, spot drift, count false positives and negatives, and find the decisions that should not be delegated at all. `model` says who answered: `mock`
-marks the replayed answer, so it can never be mistaken for a live one. `distribution` keeps
+Every decision is written like this before the kit answers. Receipts are how you learn whether a question deserves trust: they hold the full distribution, so you can tune thresholds offline, replay decisions against a new Jev version, spot drift, count false positives and negatives, and find the decisions that should not be delegated at all. `model` says who answered: `jev-1.13.0` on a live run, `mock` with `--offline`, so a replayed
+answer can never be mistaken for a live one. `distribution` keeps
 the whole answer for measuring thresholds later, and `threshold_status` says whether a
 measured threshold exists. [Receipts](docs/receipts.md) explains the other fields.
 
@@ -335,8 +381,9 @@ an advisory question (such as routing) returns `no_advice` and your code keeps i
 path, and a gate (such as the tool-call checks) returns `ask`, so the call needs a person or
 another check.
 
-**Replayed answers never approve anything.** The demos' recorded answers are marked as mock
-answers everywhere they appear, including receipts, and the kit never acts on them.
+**Replayed answers never approve anything.** With `--offline`, the demos' recorded answers
+are marked as mock answers everywhere they appear, including receipts, and the kit never acts
+on them.
 
 **Only what a question needs leaves your machine.** Each question declares the fields it
 uses; everything else stays local. Commands are cut to their program name, paths become keyed
@@ -369,33 +416,39 @@ rules apply.
 
 ## What we measured
 
-Our own first live evaluation, 2026-09-28, on `jev-1.13.0`: about 175 calls with synthetic
+Our own live evaluation, 2026-09-28, on `jev-1.13.0`: about 300 calls with synthetic
 inputs. It is small, and the test messages and their labels were written by Claude, the AI
 assistant that develops this kit, not checked by a person. The method, data and every result
 are in [research note 12](docs/research/12-live-evaluation.md).
 
 | What | Result |
 | --- | --- |
-| "Does this message claim the tests passed?" on 60 messages | 56 of 57 answered correctly at a 0.5 cut-off; 3 timed out |
-| The same question asked 8 times | Answers moved by at most 0.01 |
+| "Does this message claim the tests passed?" on 60 messages | First run: 56 of 57 answered correctly at a 0.5 cut-off; 3 timed out. Rerun: 59 of 60, no timeouts |
+| The same, worded "…after the latest change?" | 60 of 60 correct; claims 0.75 to 0.99, non-claims 0.01 to 0.09 |
+| The same question asked 8 times | Clear yes/no messages: moved by at most 0.01. An ambiguous routing request: the top option ranged 0.53 to 0.61 over 8 calls, against 0.68 in one call that morning |
 | The four shipped question sets and all three hooks | Worked end to end, live |
-| Tokens per call | About 340 to 390 in, 43 to 61 out |
-| Latency | Usually 0.17 to 0.31 seconds; occasionally 4 to 7 seconds |
+| Tokens per call | First run: 340 to 391 input, 43 to 61 output. Rerun: 291 to 372 input, 36,923 over 123 calls (output not recorded) |
+| Jev call latency | Usually 0.17 to 0.31 seconds; in the first run, occasional 4 to 7 second calls and 3 of 60 over the 10-second deadline; none in the 123-call rerun (slowest 0.32 s) |
+| Hook overhead, end to end | About 2.3 seconds per tool call in each host, including starting the hook process and fetching the key through `TYPESAFE_API_KEY_COMMAND`; one run per host |
 
-The one miss: "Tests were passing yesterday; I have not rerun them after today's change."
-Jev read that as a claim (0.84).
+The one miss, both times: "Tests were passing yesterday; I have not rerun them after today's
+change." It was labeled no claim; Jev gave 0.84, then 0.83. The message does claim that tests
+passed, just not after the change, and the question never said "after the change". Adding
+those words fixed it (0.02) and cost some confidence on terse claims ("Tests pass. Ready for
+review.": 0.81). Wording is part of the question: each wording gets its own threshold.
+
+These numbers are for one configuration on one day. A hook check adds its full end-to-end time
+to every tool call it sees, and it saves nothing unless it replaces work you would otherwise do.
 
 ## What others have measured
 
-These are other people's measurements, each with the author's own caveats. Details and more
-sources are in [our research notes](docs/research/10-examples-and-evidence.md).
+Other people's measurements, with their caveats, are in
+[research note 10](docs/research/10-examples-and-evidence.md#summary-table). In brief: one
+study found LLM judges' repeat variance 92x to 913x higher than Jev's on a small corpus; a
+pre-registered comparison against Claude Haiku won one task and lost another; and a
+2,000-email phishing test found one broad question far behind Haiku (62.6% vs 81.3%) while
+five narrow questions combined reached 95.0% vs 93.2%.
 
-| Source | What they measured | Result | Caveat |
-| --- | --- | --- | --- |
-| [jev-as-a-judge](https://github.com/danielgshea/jev-as-a-judge) | 5 agent runs, each judged 100 times, against human pass/fail labels | Matched every human label. The LLM judges' repeat variance was 92x to 913x higher. $0.00035 and 0.44 s per call | Small corpus; observational |
-| [PrimeLine](https://primeline.cc/blog/typesafe-jev-pre-registered-test) | Pre-registered, about 9,750 calls in all, against Claude Haiku on the developer's own tasks | Won one task (65.8% vs 54.6%) and lost another (90.7% vs 97.8%). Separately, on 2,600 pooled public-dataset items: about 92% accurate on the 73% answered at confidence 0.9 or above | One developer's data; "not a portable benchmark" |
-| [jev-phishing-bench](https://github.com/anisselbd/jev-phishing-bench/blob/main/results/report.md) (summarized by [Rajesh Beri](https://www.beri.net/article/typesafe-jev-typed-decision-model-calibration-decomposition-shadow-eval)) | 2,000 emails (1,000 phishing, 1,000 legitimate), against Claude Haiku | One question, all 2,000 emails: 62.6% vs 81.3%. Five narrow questions per model, combined by a logistic model trained on 1,000 emails and tested on the other 1,000: 95.0% vs 93.2%, not a significant difference | Synthetic email bodies; labels from reputation feeds; the combiner is trained |
-| [Jev-Calibration](https://github.com/AnthusAI/Jev-Calibration) | Sentiment: 8,801 items for raw confidence, 3,521 held out for calibration | Choice confidence (the top label's probability) was weak below 0.95. Calibration cut the expected calibration error of the yes/no P(positive) from 0.117 to 0.008 | One task; the dataset's neutral labels are arbitrary by design |
 
 Across these studies, and in ours, Jev's clearest strength is giving the same answer twice,
 at a low cost per call. Accuracy depends on the task and on how the question is split up, and
@@ -469,6 +522,7 @@ Receipts hold decision details and digests, never raw state or API keys. See
 
 - [Command-line tool](docs/guides/cli.md): JSON requests, standard input, exit codes and the
   install preview.
+- [Calibration](docs/guides/calibration.md): from shadow receipts to a registered threshold, with an offline walkthrough.
 - [Live calls](docs/guides/live-calls.md): API keys, the source allowlist, attestation, and
   measuring thresholds. Live calls send data to TypeSafe; read it before adding credentials.
 - [Receipts](docs/receipts.md): every field of a decision record.

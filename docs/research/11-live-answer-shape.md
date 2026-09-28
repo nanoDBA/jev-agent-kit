@@ -6,9 +6,8 @@ Our own measurement, 2026-09-28, model `jev-1.13.0`. First live calls from this 
 
 Until now every test used scripted mock answers. The first live smoke run passed for Noul
 and Choice but rejected a Score answer as `answer_invalid`. The validator required the
-reported score to equal the probability-weighted mean within `1e-6`, and the chosen Choice
-option to be the top probability within `1e-9`. Live answers are rounded, so those checks
-reject valid answers at random.
+reported score to equal the probability-weighted mean within `1e-6`. Live answers are
+rounded, so that check rejected valid answers at random.
 
 ## Method
 
@@ -32,17 +31,21 @@ reject valid answers at random.
 | Chosen option is the top reported probability | 21 of 22 Choice answers |
 | Choice `confidence` equals the top probability | 0 of 22 (for example top 0.59, confidence 0.46) |
 
-With the old tolerances, 12 of 20 Score answers and 1 of 22 Choice answers would have been
-rejected.
+With the old tolerance, 12 of 20 Score answers were rejected. The one Choice answer whose
+chosen option was not the top reported probability is a different matter: rounding
+preserves order, so it cannot turn the true top option into a trailing one. That answer
+was inconsistent as returned, and the validator rejects it by design.
 
 ## What we changed
 
 - The Score check allows the gap that rounding to two decimals can produce: half a step on
-  the score plus half a step per level index, `0.005 * levels`. That is 0.015 for three
-  levels and 0.025 for five, above the 0.01 and 0.02 observed.
-- The Choice check allows the chosen option to trail the top reported probability by at
-  most one step (0.01). Two options within half a step of each other before rounding can
-  end up one step apart after it.
+  the score plus the worst case for the mean. Probability errors are at most half a step
+  each and sum to zero, so the mean error is at most half a step times `floor(n^2 / 4)` for
+  `n` levels. The bound is `0.005 * (1 + floor(n^2 / 4))`: 0.015 for three levels and 0.035
+  for five, above the 0.01 and 0.02 observed. (An earlier draft used `0.005 * n`, which is
+  too tight: an honest five-level answer can differ by 0.03.)
+- The Choice argmax check is unchanged and exact (ties allowed). A non-top choice is
+  rejected; accepting it could let routing act on a label the distribution does not favor.
 - The probability-sum check is unchanged: live sums were exact.
 - Choice `confidence` is a separate value from the top probability. The validator already
   treats it only as a number in [0, 1]; nothing depends on it matching.

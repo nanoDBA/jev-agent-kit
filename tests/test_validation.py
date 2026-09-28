@@ -256,6 +256,9 @@ def _score(probs: dict[str, float], score: float, levels: tuple[str, ...]) -> di
         (score_q, {"0": 0.43, "1": 0.38, "2": 0.19}, 0.77),
         (score_q, {"0": 0.43, "1": 0.38, "2": 0.19}, 0.75),
         (score5_q, {"0": 0.30, "1": 0.30, "2": 0.26, "3": 0.10, "4": 0.04}, 1.30),
+        # Honest rounding of p=(0.2049, 0.2049, 0.2, 0.1951, 0.1951): true mean 1.9706 reports
+        # as 1.97 while the rounded probabilities are all 0.20 (mean 2.00), a 0.03 gap.
+        (score5_q, {"0": 0.20, "1": 0.20, "2": 0.20, "3": 0.20, "4": 0.20}, 1.97),
     ],
 )
 def test_score_within_rounding_bound_validates(
@@ -272,7 +275,7 @@ def test_score_within_rounding_bound_validates(
     [
         (score_q, {"0": 0.43, "1": 0.38, "2": 0.19}, 0.80),  # 0.04 off, bound is 0.015
         (score_q, {"0": 0.43, "1": 0.38, "2": 0.19}, 1.50),
-        (score5_q, {"0": 0.30, "1": 0.30, "2": 0.26, "3": 0.10, "4": 0.04}, 1.34),  # bound 0.025
+        (score5_q, {"0": 0.30, "1": 0.30, "2": 0.26, "3": 0.10, "4": 0.04}, 1.34),  # bound 0.035
     ],
 )
 def test_score_beyond_rounding_bound_still_rejected(
@@ -284,13 +287,23 @@ def test_score_beyond_rounding_bound_still_rejected(
     assert exc.value.reason is FailReason.ANSWER_INVALID
 
 
-def test_choice_trailing_top_by_one_rounding_step_validates() -> None:
-    # Two options within half a step before rounding can end up 0.01 apart after it.
+def test_choice_tied_for_top_validates() -> None:
     raw = {"type": "choice", "choice": "billing", "confidence": 0.2,
-           "probabilities": {"billing": 0.40, "technical": 0.41, "account": 0.19}}
+           "probabilities": {"billing": 0.40, "technical": 0.40, "account": 0.20}}
     answer = validate_answer(choice_q(), raw)
     assert isinstance(answer, ChoiceAnswer)
     assert answer.choice == "billing"
+
+
+def test_choice_trailing_top_by_one_step_is_rejected() -> None:
+    # Rounding preserves order, so a non-top choice is an inconsistent answer (observed once
+    # in 22 live answers); accepting it could let routing act on a label the distribution
+    # does not favor.
+    raw = {"type": "choice", "choice": "billing", "confidence": 0.2,
+           "probabilities": {"billing": 0.40, "technical": 0.41, "account": 0.19}}
+    with pytest.raises(ValidationError) as exc:
+        validate_answer(choice_q(), raw)
+    assert exc.value.reason is FailReason.ANSWER_INVALID
 
 
 def test_choice_trailing_top_by_more_than_one_step_still_rejected() -> None:

@@ -11,9 +11,10 @@ Design notes tied to the Codex review:
   equal the probability-weighted mean of level indices within the rounding bound of
   score_mean_tolerance (finding R06).
 - Live Jev reports probabilities and scores to two decimals (measured 2026-09-28, see
-  docs/research/11-live-answer-shape.md). Exact-equality checks therefore reject valid
-  answers; the Score-mean and Choice-argmax checks allow exactly the error that rounding
-  to REPORTED_STEP can introduce, and no more.
+  docs/research/11-live-answer-shape.md). The Score-mean check therefore allows exactly
+  the error that rounding to REPORTED_STEP can introduce, and no more. The Choice argmax
+  check stays exact: rounding preserves order, so a chosen option that trails the top
+  reported probability is an inconsistent answer, and it is rejected.
 - Legend descriptions must match the question's level strings exactly (finding R06).
 """
 
@@ -40,19 +41,20 @@ from jev_kit.types import (
 PROB_SUM_TOLERANCE = 1e-6
 # Live answers are rounded to this step (two decimals).
 REPORTED_STEP = 0.01
-# A chosen option may trail the top rounded probability by at most one reported step: two
-# values within half a step of each other before rounding can end up one step apart after.
-ARGMAX_TOLERANCE = REPORTED_STEP + 1e-9
+# Rounding is monotone, so it cannot make the true top option trail another one. The chosen
+# option must be a top reported probability (ties allowed); anything else is inconsistent.
+ARGMAX_TOLERANCE = 1e-9
 
 
 def score_mean_tolerance(levels: int) -> float:
     """Largest honest gap between a rounded score and the mean of rounded probabilities.
 
-    The score is off by at most half a step. Each probability is off by at most half a step;
-    weighted by level indices 0..levels-1 with the errors summing to zero (the distribution
-    still sums to 1), the mean is off by at most half a step times (levels - 1).
+    The score is off by at most half a step. Each probability is off by at most half a step
+    and, because the rounded distribution still sums to 1, the errors sum to zero. The mean
+    error sum(i * e_i) is then largest with the high-index half rounded up and the low-index
+    half rounded down, which bounds it by half a step times floor(levels**2 / 4).
     """
-    return REPORTED_STEP / 2 * levels + 1e-9
+    return REPORTED_STEP / 2 * (1 + (levels * levels) // 4) + 1e-9
 
 
 def _unit_number(value: Any, check: str) -> float:

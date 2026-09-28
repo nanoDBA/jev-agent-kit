@@ -127,10 +127,10 @@ _CREDENTIAL_EXFIL_SEVERITY = "high"
 
 _CREDENTIAL_LOCATION_RE = re.compile(
     r"(?i)"
-    # ~/.ssh and .env paths are handled by _SSH_PATH_RE and _ENV_FILE_RE below, which need
-    # a per-path check (public keys and template env files are excluded).
-    r"\bid_(?:rsa|dsa|ecdsa|ed25519)\b(?!\.pub)"
-    r"|(?<![\w.])\.aws\b"
+    # ~/.ssh paths, bare id_* key filenames and .env paths are handled by _SSH_PATH_RE,
+    # _KEY_FILE_RE and _ENV_FILE_RE below, which need a per-name check (public keys,
+    # certificates and template env files are excluded).
+    r"(?<![\w.])\.aws\b"
     r"|\baws_secret_access_key\b"
     r"|(?<![\w.])\.netrc\b"
     r"|(?<![\w.])\.git-credentials\b"
@@ -170,6 +170,10 @@ _REMOTE_DESTINATION_RE = re.compile(
 # A ~/.ssh path with up to 8 bounded segments (nested dirs and globs such as ~/.ssh/*.pub or
 # ~/.ssh/work/id_ed25519.pub). The whole path is captured so its last segment can be checked.
 _SSH_PATH_RE = re.compile(r"(?i)(?<![\w.])\.ssh((?:[/\\][\w.*?-]{1,64}){0,8})(?![\w-])")
+# A bare id_* key filename, captured whole (id_ed25519, id_rsa-cert.pub, id_ecdsa_sk) so a
+# public key or certificate is judged by its complete name, not by its id_* prefix.
+_KEY_FILE_RE = re.compile(r"(?i)\bid_(?:rsa|dsa|ecdsa|ed25519)(?![a-z0-9])[\w.-]{0,64}")
+
 _SSH_NON_SECRET_NAMES = frozenset({"config", "known_hosts", "known_hosts.old", "authorized_keys"})
 
 # A .env file with any chain of up to 8 ".word" suffixes (.env.production.local). The chain is
@@ -184,8 +188,13 @@ def _ssh_path_is_secret(tail: str) -> bool:
     """True unless the ~/.ssh path names only a public key, config, or known_hosts file."""
     if not tail:
         return True  # the whole ~/.ssh directory
-    last = tail.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].lower()
-    return not (last.endswith(".pub") or last in _SSH_NON_SECRET_NAMES)
+    last = tail.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    return not (_is_public_file(last) or last.rstrip(".").lower() in _SSH_NON_SECRET_NAMES)
+
+
+def _is_public_file(name: str) -> bool:
+    """True if a filename is a public key or certificate (*.pub, including *-cert.pub)."""
+    return name.rstrip(".").lower().endswith(".pub")
 
 
 def _env_file_is_secret(chain: str) -> bool:
@@ -197,6 +206,8 @@ def _env_file_is_secret(chain: str) -> bool:
 def _has_credential_location(line: str) -> bool:
     """True if *line* names at least one private credential location."""
     if _CREDENTIAL_LOCATION_RE.search(line):
+        return True
+    if any(not _is_public_file(m.group(0)) for m in _KEY_FILE_RE.finditer(line)):
         return True
     if any(_ssh_path_is_secret(m.group(1)) for m in _SSH_PATH_RE.finditer(line)):
         return True

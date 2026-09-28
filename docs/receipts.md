@@ -21,6 +21,9 @@ Each call's decision lines are followed by a commit marker, written and flushed 
 a reader can tell a complete record from one cut short by a crash.
 
 Receipts go to `JEV_KIT_RECEIPTS_DIR` when it is set to an absolute path, and otherwise to a
-per-user data folder. The kit never writes them relative to the working directory, so they
-cannot land in a repository by accident. The full format is in
+per-user data folder. The kit never resolves that location against the working directory:
+if no absolute location can be found, the receipt write fails instead. It does not check
+whether the chosen folder is inside a repository, so if `JEV_KIT_RECEIPTS_DIR`, your home
+folder or your data folder lives inside one, receipts go there. Point
+`JEV_KIT_RECEIPTS_DIR` outside any repository if that applies to you. The full format is in
 [the receipt schema](schemas/receipt.schema.json).

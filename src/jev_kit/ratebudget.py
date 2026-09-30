@@ -18,7 +18,7 @@ class RateBudget:
         *,
         max_calls: int = 100,
         requests_per_minute: int = 600,
-        tokens_per_second: int = 100_000,
+        tokens_per_second: int = 50_000,  # half the documented 100K tokens per second (2026-09-30)
     ) -> None:
         self._lock = threading.Lock()
         self._max_calls = max_calls

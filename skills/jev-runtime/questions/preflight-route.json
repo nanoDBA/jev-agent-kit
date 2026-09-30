@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "id": "preflight-route",
-  "version": "1",
+  "version": "2",
   "model": "jev-1.13.0",
   "escalation_target": "human-review",
   "state_schema": {
@@ -15,11 +15,12 @@
   "questions": {
     "route": {
       "type": "choice",
-      "instructions": "Which handler class should take `request`?",
+      "instructions": "Which kind of handler should take `request`?",
       "criteria": {
-        "deterministic": "a fixed rule or lookup can answer it",
-        "specialist_llm": "needs open-ended reasoning or generation",
-        "human": "high consequence or ambiguous, needs a person"
+        "deterministic": "a fixed rule, calculation or lookup can answer it",
+        "specialist_llm": "needs open-ended reasoning or writing, with no special risk",
+        "human": "high consequence (money, legal, safety, loss or grief): a person must decide",
+        "unclear": "too vague or ambiguous to route: ask the requester to clarify first"
       },
       "kit": {
         "consequence": "advisory"

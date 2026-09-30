@@ -5,7 +5,8 @@ fixed sample text written in this repository, never your data, so they carry the
 in-memory attestation instead of requiring your attestation file (ADR 0002, Amendment 2).
 Everything else in the kit, hooks and your own questions included, still requires the file.
 
-`--offline` replays the answer Jev gave to the same input on 2026-09-28. Replayed answers are
+`--offline` replays the answer Jev gave to the same input on the date each example
+records. Replayed answers are
 marked `model: mock` and the kit never acts on them. Tests always use `--offline`.
 """
 
@@ -21,7 +22,6 @@ from jev_kit.deadline import Deadline
 from jev_kit.secrets import resolve_api_key
 from jev_kit.transport import LiveTransport, MockTransport, Transport, TransportResult
 
-RECORDED_ON = "2026-09-28"
 NO_KEY = ("Set TYPESAFE_API_KEY (or TYPESAFE_API_KEY_COMMAND) to ask Jev live, "
           "or run with --offline to replay recorded answers.")
 
@@ -43,12 +43,13 @@ class RecordingTransport:
 @dataclass
 class Demo:
     live: bool
+    recorded_on: str = "2026-09-28"
     _live_transport: RecordingTransport | None = None
     requests: list[bytes] = field(default_factory=list)
 
     @property
     def label(self) -> str:
-        return "live Jev answer" if self.live else f"recorded Jev answer from {RECORDED_ON}"
+        return "live Jev answer" if self.live else f"recorded Jev answer from {self.recorded_on}"
 
     @property
     def attestation(self) -> dict[str, Any] | None:
@@ -71,12 +72,12 @@ class Demo:
         return self._live_transport.requests if self._live_transport is not None else self.requests
 
 
-def setup(offline: bool | None = None) -> Demo:
+def setup(offline: bool | None = None, recorded_on: str = "2026-09-28") -> Demo:
     """Live unless `--offline` is on the command line (or `offline=True`)."""
     if offline is None:
         offline = "--offline" in sys.argv[1:]
     if offline:
-        return Demo(live=False)
+        return Demo(live=False, recorded_on=recorded_on)
     key = resolve_api_key(timeout=20.0)
     if not key:
         raise SystemExit(NO_KEY)

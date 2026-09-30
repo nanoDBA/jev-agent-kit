@@ -6,7 +6,7 @@ request itself is not stored, only a digest of the exact bytes sent. This runs t
 example once and prints its receipt, annotated. Random ids, digests and the timestamp are
 shortened so the output is the same on every run.
 
-Run it from the repository root (add --offline to replay the answer recorded on 2026-09-28):
+Run it from the repository root (add --offline to replay the answer recorded on 2026-09-30):
 
     python examples/show_receipt.py
 """
@@ -30,14 +30,16 @@ ROUTER = REPO / "skills" / "jev-runtime" / "questions" / "preflight-route.json"
 MOCK_REPLY = {
     "model": "jev-1.13.0",
     "answers": {"route": {
-        "type": "choice", "choice": "deterministic", "confidence": 0.52,
-        "probabilities": {"deterministic": 0.68, "specialist_llm": 0.07, "human": 0.25},
+        "type": "choice", "choice": "human", "confidence": 0.78,
+        "probabilities": {
+            "deterministic": 0.16, "specialist_llm": 0.01, "human": 0.83, "unclear": 0.0,
+        },
     }},
 }
 
 
 def main(offline: bool | None = None) -> None:
-    demo = setup(offline)
+    demo = setup(offline, recorded_on="2026-09-30")
     receipts = Path(tempfile.mkdtemp(prefix="jev-receipts-"))
     decide(
         {"schema_version": 1, "question_set_path": str(ROUTER), "mode": "shadow",

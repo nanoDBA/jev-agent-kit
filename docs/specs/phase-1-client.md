@@ -258,8 +258,9 @@ evidence can never produce an effective `accept` for a gate.
 - **Deadline defaults (proposed):** total 10 seconds, per-attempt timeout 5 seconds, at most 2
   retries, 500 milliseconds reserved for receipt writing. Cooperative only (owner decision 3).
 - **Concurrency and rate defaults (proposed):** 4 workers; per-process cap 100 attempts;
-  local budget 600 requests per minute and 100,000 tokens per second (both below the documented
-  account limits of 1,200 and 250,000).
+  local budget 600 requests per minute and 50,000 tokens per second (both below the documented
+  account limits of 40 requests per second and 100,000 tokens per second, as of 2026-09-30;
+  the token budget was 100,000 when the limit was 250,000).
 - **Receipts:** stories 73 to 81. One file per process, single append per call plus commit
   marker, flush and fsync before returning `accept`.
 - **Secrets:** stories 57 to 61. Receipt-safe metadata: story 79a.

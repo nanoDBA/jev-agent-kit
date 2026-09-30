@@ -6,14 +6,18 @@ threshold in this repo must be measured, fingerprinted and labeled.
 ## Evidence gathered (community measurements, not ours)
 
 - Same question asked as Noul vs Choice returned 0.22 vs 0.01; a question and its negation
-  can sum to 1.19. (Colonizer-dev/harness issue #239)
+  can sum to 1.19. (First seen in Colonizer-dev/harness issue #239; the numbers are TypeSafe's
+  own, published on its jaggedness page for jev-1.13, checked 2026-09-30.)
 - A NousResearch eval found the default 0.5 threshold dropped all 851 keep-candidates while
   ranking stayed fine; absolute calibration off by roughly 2-3x. (cited in the same issue)
 - Raw probabilities rank well but are miscalibrated with ties everywhere; fix with
   per-question isotonic or Platt calibration bound to a fingerprint of wording plus model,
   report from a held-out split. (keduseworku/Jev-Calibration)
 - Choice "confidence" appears to be a fixed function of the top probability, so it carries
-  no extra information. (awesome-jev-robustness)
+  no extra information. (awesome-jev-robustness) Correction 2026-09-30: TypeSafe's confidence
+  page calls `(3 x largest probability - 1) / 2` an approximation for three options and says
+  confidence is computed from how the probability is spread. Our live answers fit the linear
+  form, but it is not a contract; the kit only relies on confidence lying in [0, 1].
 - Calibration held on support routing and collapsed on random 3-SAT. (123k-request
   independent study, awesome-jev-robustness)
 - An independent 8-way routing test: keeping only answers at confidence >= 0.90 raised
@@ -34,7 +38,17 @@ threshold in this repo must be measured, fingerprinted and labeled.
 ## Known weak spots (vendor jaggedness page, v1.13)
 
 Literal reading, math and counting, dates as text, indirection, context rot (accuracy falls
-as state grows), adversarial content in state, contradictory instructions.
+as state grows), adversarial content in state, contradictory instructions. As of 2026-09-30
+the page also lists common-sense structural invariants and generation (nine in all).
+
+## Vendor calibration claim (2026-09-30)
+
+TypeSafe's System One page says the models "are trained for calibrated decisions" and that
+calibration "is measured across groups of predictions; it does not guarantee that an
+individual answer is correct". Our one small evaluation agrees on a narrow yes/no task (Brier
+0.013, ECE 0.037 on 57 items, `12`), while an ambiguous routing question drifted by up to 0.15
+in a day and the community evidence above shows task-dependent miscalibration. Rule 5 stands:
+measure a threshold per fingerprint on your own data.
 
 ## Update 2026-09-25 (see `09`)
 

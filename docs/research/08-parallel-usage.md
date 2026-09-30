@@ -53,7 +53,7 @@ our measurements.
 
 - 64k tokens for state plus **all** questions; 32k tokens for state plus the **single longest**
   question (`models`). Many questions eat into the 64k budget.
-- Rate limits: 1,200 requests per minute and 250,000 tokens per second, "adjusting dynamically"
+- Rate limits (superseded 2026-09-30: now 100K tokens per second and 40 requests per second): 1,200 requests per minute and 250,000 tokens per second, "adjusting dynamically"
   and liable to change without notice (`models`). Batching reduces the request count.
 - No documented cap on questions per request (see `06`).
 

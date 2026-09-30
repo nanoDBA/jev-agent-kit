@@ -11,7 +11,7 @@ they do not establish evidence quality, calibration, or host enforcement.
 | Task | Question set | State fields | Question IDs and types | Consequence |
 | --- | --- | --- | --- | --- |
 | [Choose a handler](#preflight-route) | [preflight-route.json](../questions/preflight-route.json) | `request` | `route` (choice) | advisory |
-| [Review an output](#postflight-verify) | [postflight-verify.json](../questions/postflight-verify.json) | `request`, `output` | `addresses_request` (noul), `contains_fabricated_citation` (noul), `within_scope` (noul) | advisory |
+| [Review an output](#postflight-verify) | [postflight-verify.json](../questions/postflight-verify.json) | `request`, `output` | `addresses_request` (noul), `contains_citation` (noul), `within_scope` (noul) | advisory |
 | [Assess a proposed tool call](#tool-call-gate) | [tool-call-gate.json](../questions/tool-call-gate.json) | `command`, `cmd_parse_confident`, `cmd_recursive_delete`, `cmd_force_flag`, `cmd_targets_root_or_system_path`, `cmd_targets_home_directory`, `cmd_uses_elevation`, `cmd_network_download`, `cmd_pipes_to_shell`, `cmd_modifies_permissions`, `cmd_git_history_rewrite`, `cmd_package_install`, `target`, `context` | `destructive` (noul), `exfiltrates` (noul), `widens_permission` (noul) | gate |
 | [Decide whether to finish](#stop-or-continue) | [stop-or-continue.json](../questions/stop-or-continue.json) | `goal`, `evidence_summary` | `enough_to_finish` (noul), `another_step_would_help` (noul) | advisory |
 
@@ -24,7 +24,9 @@ fixed lookups and policy exclusions deterministically before considering semanti
 Known limitations: only `request` is a declared state field. The fixed handler classes do not
 prove a concrete tool, provider, or person is available; code owns that mapping and permission
 check. The source type for `request` must be allowlisted. If ambiguity prevents choosing an
-authorized handler, retain `no_advice` and clarify; do not route from guessed intent.
+authorized handler, retain `no_advice` and clarify; do not route from guessed intent. The
+`unclear` option exists for that case: a high `unclear` means ask the requester, not pick a
+handler.
 
 ## postflight-verify
 
@@ -34,11 +36,11 @@ the reviewer needs accessible source content and a supporting passage, not merel
 Run relevant code tests, literal comparisons, and derivation checks outside Jev.
 
 Known limitations: the set has only `request` and `output`, with no dedicated source-content,
-test-result, or citation-provenance field. The citation question compares against the supplied
-request; it does not retrieve sources or prove external factuality. If the permitted state
-lacks the necessary support, skip that judgment and retain `no_advice`. Do not add a `sources`
-field, rewrite the request to imply authorization, or claim a low fabrication score verifies
-a citation. A persuasive answer can still be wrong; a passing relevance judgment cannot
+test-result, or citation-provenance field. The citation question only detects whether a
+citation is present; it never judges accuracy, because the state holds no source content. A
+high `contains_citation` means code or a person must check each cited source; a low one means
+there is nothing to check, not that the output is accurate. Do not add a `sources` field or
+rewrite the request to imply authorization. A persuasive answer can still be wrong; a passing relevance judgment cannot
 replace the missing evidence or deterministic correctness checks.
 
 ## tool-call-gate

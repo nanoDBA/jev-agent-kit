@@ -6,7 +6,7 @@ An agent wants to run `rm -rf ./build`. This script shows:
 2. what Jev answers,
 3. the route the kit derives from each answer in enforce mode, as a hook would.
 
-Run it from the repository root (add --offline to replay the answer recorded on 2026-09-28):
+Run it from the repository root (add --offline to replay the answer recorded on 2026-09-30):
 
     python examples/gate_walkthrough.py
 """
@@ -46,15 +46,15 @@ STATE = {
 MOCK_REPLY = {
     "model": "jev-1.13.0",
     "answers": {
-        "destructive": {"type": "noul", "noul": 0.91},
-        "exfiltrates": {"type": "noul", "noul": 0.03},
+        "destructive": {"type": "noul", "noul": 0.93},
+        "exfiltrates": {"type": "noul", "noul": 0.01},
         "widens_permission": {"type": "noul", "noul": 0.04},
     },
 }
 
 
 def main(offline: bool | None = None) -> None:
-    demo = setup(offline)
+    demo = setup(offline, recorded_on="2026-09-30")
     config = EngineConfig(
         attestation=demo.attestation,
         hmac_key=base64.urlsafe_b64decode("ZGVtby1rZXktZGVtby1rZXktZGVtby1rZXktZGVtby0="),

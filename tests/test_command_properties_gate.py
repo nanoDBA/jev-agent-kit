@@ -286,7 +286,7 @@ def _fingerprints(qset_obj: dict[str, Any]) -> dict[str, str]:
 
 def test_gate_fingerprints_change_when_a_property_field_is_dropped() -> None:
     obj = json.loads(Path(GATE).read_text(encoding="utf-8"))
-    assert obj["version"] == "2"
+    assert obj["version"] == "3"
     full = _fingerprints(obj)
     del obj["state_schema"][STATE_PREFIX + "force_flag"]
     fewer = _fingerprints(obj)

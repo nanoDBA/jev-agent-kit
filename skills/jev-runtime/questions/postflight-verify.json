@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "id": "postflight-verify",
-  "version": "1",
+  "version": "2",
   "model": "jev-1.13.0",
   "escalation_target": "human-review",
   "state_schema": {
@@ -26,9 +26,9 @@
         "consequence": "advisory"
       }
     },
-    "contains_fabricated_citation": {
+    "contains_citation": {
       "type": "noul",
-      "instructions": "Does `output` contain a citation or reference that is not supported by `request` or is likely fabricated?",
+      "instructions": "Does `output` cite or reference a source, such as a URL, paper, book, document, dataset, or a quotation attributed to someone? Answer only whether a citation is present, not whether it is accurate.",
       "kit": {
         "consequence": "advisory"
       }

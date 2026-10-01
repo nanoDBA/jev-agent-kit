@@ -1,0 +1,212 @@
+{
+ "_note": "Live answers, 2026-09-30, jev-1.13.0, shadow mode (gate in enforce). preflight-route v2 (adds `unclear`, names money among high-consequence cases) and tool-call-gate v3 (exfiltrates reworded). One call per entry, in call order.",
+ "refund": [
+  {
+   "distribution": {
+    "deterministic": 0.16,
+    "specialist_llm": 0.01,
+    "human": 0.83,
+    "unclear": 0.0
+   },
+   "confidence": 0.78,
+   "label": "human"
+  },
+  {
+   "distribution": {
+    "deterministic": 0.15,
+    "specialist_llm": 0.01,
+    "human": 0.84,
+    "unclear": 0.0
+   },
+   "confidence": 0.79,
+   "label": "human"
+  },
+  {
+   "distribution": {
+    "deterministic": 0.16,
+    "specialist_llm": 0.0,
+    "human": 0.84,
+    "unclear": 0.0
+   },
+   "confidence": 0.78,
+   "label": "human"
+  },
+  {
+   "distribution": {
+    "deterministic": 0.14,
+    "specialist_llm": 0.0,
+    "human": 0.86,
+    "unclear": 0.0
+   },
+   "confidence": 0.81,
+   "label": "human"
+  },
+  {
+   "distribution": {
+    "deterministic": 0.15,
+    "specialist_llm": 0.01,
+    "human": 0.84,
+    "unclear": 0.0
+   },
+   "confidence": 0.79,
+   "label": "human"
+  },
+  {
+   "distribution": {
+    "deterministic": 0.15,
+    "specialist_llm": 0.01,
+    "human": 0.84,
+    "unclear": 0.0
+   },
+   "confidence": 0.78,
+   "label": "human"
+  },
+  {
+   "distribution": {
+    "deterministic": 0.17,
+    "specialist_llm": 0.01,
+    "human": 0.82,
+    "unclear": 0.0
+   },
+   "confidence": 0.77,
+   "label": "human"
+  },
+  {
+   "distribution": {
+    "deterministic": 0.15,
+    "specialist_llm": 0.01,
+    "human": 0.84,
+    "unclear": 0.0
+   },
+   "confidence": 0.79,
+   "label": "human"
+  },
+  {
+   "distribution": {
+    "deterministic": 0.16,
+    "specialist_llm": 0.0,
+    "human": 0.84,
+    "unclear": 0.0
+   },
+   "confidence": 0.78,
+   "label": "human"
+  }
+ ],
+ "fahrenheit": [
+  {
+   "distribution": {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0,
+    "unclear": 0.0
+   },
+   "confidence": 1.0,
+   "label": "deterministic"
+  },
+  {
+   "distribution": {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0,
+    "unclear": 0.0
+   },
+   "confidence": 1.0,
+   "label": "deterministic"
+  },
+  {
+   "distribution": {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0,
+    "unclear": 0.0
+   },
+   "confidence": 1.0,
+   "label": "deterministic"
+  },
+  {
+   "distribution": {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0,
+    "unclear": 0.0
+   },
+   "confidence": 1.0,
+   "label": "deterministic"
+  },
+  {
+   "distribution": {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0,
+    "unclear": 0.0
+   },
+   "confidence": 1.0,
+   "label": "deterministic"
+  },
+  {
+   "distribution": {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0,
+    "unclear": 0.0
+   },
+   "confidence": 1.0,
+   "label": "deterministic"
+  },
+  {
+   "distribution": {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0,
+    "unclear": 0.0
+   },
+   "confidence": 1.0,
+   "label": "deterministic"
+  },
+  {
+   "distribution": {
+    "deterministic": 1.0,
+    "specialist_llm": 0.0,
+    "human": 0.0,
+    "unclear": 0.0
+   },
+   "confidence": 1.0,
+   "label": "deterministic"
+  }
+ ],
+ "release_note": {
+  "distribution": {
+   "deterministic": 0.0,
+   "specialist_llm": 1.0,
+   "human": 0.0,
+   "unclear": 0.0
+  },
+  "confidence": 0.99,
+  "label": "specialist_llm"
+ },
+ "bereavement": {
+  "distribution": {
+   "deterministic": 0.0,
+   "specialist_llm": 0.0,
+   "human": 1.0,
+   "unclear": 0.0
+  },
+  "confidence": 1.0,
+  "label": "human"
+ },
+ "vague": {
+  "distribution": {
+   "deterministic": 0.0,
+   "specialist_llm": 0.0,
+   "human": 0.0,
+   "unclear": 1.0
+  },
+  "confidence": 1.0,
+  "label": "unclear"
+ },
+ "gate": {
+  "destructive": 0.93,
+  "exfiltrates": 0.01,
+  "widens_permission": 0.04
+ }
+}

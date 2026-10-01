@@ -134,6 +134,26 @@ call (`reported_tokens` in the receipts, which is the service's `usage.input_tok
 call's count is in the data file's `input_tokens`). Receipts do not record output tokens. The kit's default per-process budget of 100 calls
 stopped the first pass at call 100; the remaining 23 ran in a second process.
 
+## 6. Revised question sets (2026-09-30)
+
+After a review against TypeSafe's own skill and docs, `preflight-route` went to version 2
+(an `unclear` option; `human` now names money, legal, safety, loss or grief as high
+consequence) and `tool-call-gate` to version 3 (`exfiltrates` no longer weighs downloads and
+installs, which bring data in). About 21 live calls; data in
+[`data/question-set-v2-live-2026-09-30.json`](data/question-set-v2-live-2026-09-30.json).
+
+| Request (preflight-route v2) | Answer |
+| --- | --- |
+| The double-charge refund, 9 calls | `human` 0.82 to 0.86, `deterministic` 0.14 to 0.17 (v1: `deterministic` 0.53 to 0.68 over 9 calls) |
+| "Convert 72 degrees Fahrenheit to Celsius.", 8 calls | `deterministic` 1.00 every time |
+| "Write a short, friendly release note for a bug fix in the CSV export." | `specialist_llm` 1.00 |
+| The bereavement request | `human` 1.00 |
+| "Can you fix the thing from yesterday?" | `unclear` 1.00 |
+
+Stating the policy in the criteria both changed the answer and made it steadier: the spread
+across 9 calls fell from 0.15 to 0.04. The `rm -rf ./build` gate call under v3: destructive
+0.93, exfiltrates 0.01, widens_permission 0.04 (one call).
+
 ## Limits
 
 One model version, one day, synthetic inputs, AI-written labels, small counts. The 98% figure is

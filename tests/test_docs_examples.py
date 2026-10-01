@@ -70,7 +70,7 @@ def test_route_request_matches_readme() -> None:
     out = _run_example("route_request.py")
     assert "route:   no_advice" in out
     assert "handled: specialist_llm" in out
-    assert "(recorded Jev answer from 2026-09-28)" in out  # labelled in the output itself
+    assert "(recorded Jev answer from 2026-09-30)" in out  # labelled in the output itself
     for line in out.splitlines():
         assert line in README, line
 
@@ -102,7 +102,7 @@ def test_readme_request_reaches_mock_transport(
     # A no-key response alone cannot establish that the documented request is usable.
     monkeypatch.chdir(REPO)
     request = json.loads((EXAMPLES / "requests" / "route.json").read_text(encoding="utf-8"))
-    probabilities = {"deterministic": 0.82, "specialist_llm": 0.15, "human": 0.03}
+    probabilities = {"deterministic": 0.82, "specialist_llm": 0.15, "human": 0.03, "unclear": 0.0}
     transport = MockTransport.replying(200, json.dumps({
         "model": "jev-1.13.0",
         "answers": {"route": {

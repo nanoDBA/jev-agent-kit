@@ -46,7 +46,7 @@ python examples/show_receipt.py           # the record every decision leaves
 Each demo asks Jev live and makes one to four calls, a small fraction of a cent in all at
 TypeSafe's listed price (as of 2026-09-28). It sends only the sample text written in
 the demo, never your files. No key? Add `--offline` to any demo to replay the answers Jev gave
-to the same inputs on 2026-09-28. The outputs shown below are those recorded answers; a live
+to the same inputs, recorded on 2026-09-28 and 2026-09-30. The outputs shown below are those recorded answers; a live
 run usually differs by a few hundredths, sometimes more on an ambiguous request (see
 [routing](#why-routing-needs-a-policy-and-evaluation)). Run the commands from the repository
 root. If `jev-kit` is not on your PATH, use `python -m jev_kit.cli` instead.
@@ -131,15 +131,16 @@ they cover the change.
 ## Why routing needs a policy and evaluation
 
 Given clear cases, the shipped `preflight-route` set answers the way you would expect.
-These are live answers, one call each:
+These are live answers from version 2 of the set, one call each:
 
 | Request | Jev's answer |
 | --- | --- |
 | "Convert 72 degrees Fahrenheit to Celsius." | deterministic 1.00 |
-| "Write a short, friendly release note for a bug fix in the CSV export." | specialist_llm 0.92 |
-| "A customer says their spouse died and asks us to close the joint account and waive the final bill." | human 0.99 |
+| "Write a short, friendly release note for a bug fix in the CSV export." | specialist_llm 1.00 |
+| "A customer says their spouse died and asks us to close the joint account and waive the final bill." | human 1.00 |
+| "Can you fix the thing from yesterday?" | unclear 1.00 |
 
-Harder cases show why the kit waits for a measured threshold. A support request arrives:
+The harder case is where the wording of the question matters. A support request arrives:
 should code handle it, a specialist model, or a person?
 
 ```sh
@@ -148,21 +149,23 @@ python examples/route_request.py
 
 ```text
 request: 'Customer says order 1182 was charged twice and asks for a refund.'
-Which handler should take it?  (recorded Jev answer from 2026-09-28)
-  deterministic   ##############       0.68
-  specialist_llm  #                    0.07
-  human           #####                0.25
+Which handler should take it?  (recorded Jev answer from 2026-09-30)
+  deterministic   ###                  0.16
+  specialist_llm                       0.01
+  human           #################    0.83
+  unclear                              0.00
 route:   no_advice
 handled: specialist_llm
 ```
 
-Jev returns a probability for every option you defined. This answer also moves more than the
-clear cases do: asked eight more times later that day, `deterministic` ranged from 0.53 to
-0.61 and `human` from 0.35 to 0.42, while the Fahrenheit request gave 1.00 every time.
-Whether `deterministic` is right depends on things the question does not state: your refund
-policy and what each handler can actually do. That is the lesson for routing: write the criteria into the question, then
-measure on your own requests how often answers like this are right before acting on them. Here the kit reports `no_advice`, and the code uses its default, a
-specialist model.
+Jev returns a probability for every option you defined. Version 1 of this set described
+`human` as "high consequence or ambiguous" and never said what counts as high consequence.
+For this request it leaned the other way, toward `deterministic`, and wobbled: 0.53 to 0.68
+over nine calls. Version 2 names money among the high-consequence cases and gives ambiguity its
+own `unclear` option. Now nine calls give `human` 0.82 to 0.86. The lesson for routing: write
+your policy into the criteria, then measure on your own requests how often the answers are
+right before acting on them. The set is uncalibrated, so the kit reports `no_advice` and the
+code uses its default, a specialist model.
 
 ## Check a tool call before it runs
 
@@ -175,8 +178,8 @@ output folder". The example never runs the command. It shows what would be sent,
 answers to three questions about the call, and the routes a hook in enforce mode would get:
 
 ```text
-destructive        p(yes)=0.91  -> ask
-exfiltrates        p(yes)=0.03  -> ask
+destructive        p(yes)=0.93  -> ask
+exfiltrates        p(yes)=0.01  -> ask
 widens_permission  p(yes)=0.04  -> ask
 ```
 
@@ -207,7 +210,8 @@ Jev sees `rm`, the agent's description, and yes/no facts the kit worked out loca
 full command line, but no flags, arguments or readable path. The `cmd_*` facts say this is a
 recursive, forced delete that does not aim at the system or home directory, so `rm file`
 and `rm -rf /` no longer look the same. On this call they made a difference: without them,
-Jev's destructive answer for the same command was 0.78. They are heuristic: a command the kit cannot read with
+Jev's destructive answer for the same command was 0.78, against 0.91 with them (single calls,
+2026-09-28). They are heuristic: a command the kit cannot read with
 confidence (pipes, quoting, variables, `bash -c`, scripts, interpreters, package installs, and
 similar) gets `null` for "unknown" and `cmd_parse_confident: false`, and in enforce mode such a
 command always asks. See [ADR 0005](docs/adr/0005-command-properties.md). All three answers come
@@ -230,7 +234,7 @@ agent makes over and over can become a typed question:
   the agent commits.
 - **Semantic assertions in CI.** "Does this changelog entry describe a breaking change?"
   alongside your ordinary asserts.
-- **Did it do what was asked?** Score how well the final result matches the user's request.
+- **Did it do what was asked?** Check whether the final result addresses the user's request (`postflight-verify` asks this as a yes/no question).
 - **Retrieval relevance.** Rate each retrieved chunk before it goes into the context window.
 - **Tool selection.** Narrow a large tool set to a few candidates with a Choice question.
 - **Triage.** Label issues, PRs or messages by urgency and owner.
@@ -294,12 +298,12 @@ python examples/show_receipt.py
 ```text
 Decision receipt (one JSONL line; long ids and digests shortened):
   question_id       route
-  question_set      preflight-route v1
+  question_set      preflight-route v2
   fingerprint       sha256:...
   requested_model   jev-1.13.0
   served_model      jev-1.13.0
   model             mock
-  distribution      deterministic 0.68, human 0.25, specialist_llm 0.07
+  distribution      deterministic 0.16, human 0.83, specialist_llm 0.01, unclear 0.0
   threshold_status  none
   route             no_advice
   sent_digest       sha256:...
@@ -426,7 +430,7 @@ are in [research note 12](docs/research/12-live-evaluation.md).
 | --- | --- |
 | "Does this message claim the tests passed?" on 60 messages | First run: 56 of 57 answered correctly at a 0.5 cut-off; 3 timed out. Rerun: 59 of 60, no timeouts |
 | The same, worded "…after the latest change?" | 60 of 60 correct; claims 0.75 to 0.99, non-claims 0.01 to 0.09 |
-| The same question asked 8 times | Clear yes/no messages: moved by at most 0.01. An ambiguous routing request: the top option ranged 0.53 to 0.61 over 8 calls, against 0.68 in one call that morning |
+| The same question asked 8 times | Clear yes/no messages: moved by at most 0.01. An ambiguous routing request: the top option ranged 0.53 to 0.68 over 9 calls with the vaguer version 1 wording, and 0.82 to 0.86 over 9 calls with version 2 |
 | The four shipped question sets and all three hooks | Worked end to end, live |
 | Tokens per call | First run: 340 to 391 input, 43 to 61 output. Rerun: 291 to 372 input, 36,923 over 123 calls (output not recorded) |
 | Money cost | About $0.000015 per call, roughly $15 per million calls, at TypeSafe's listed $0.042 per million input tokens with output free (price as of 2026-09-28) |

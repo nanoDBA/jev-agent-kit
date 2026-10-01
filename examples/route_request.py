@@ -5,7 +5,7 @@ returns a probability for every option; your code decides what to do with them. 
 has no calibrated threshold, so the kit returns `no_advice` and your code falls back. Needs
 TYPESAFE_API_KEY, or --offline.
 
-Run it from the repository root (add --offline to replay the answer recorded on 2026-09-28):
+Run it from the repository root (add --offline to replay the answer recorded on 2026-09-30):
 
     python examples/route_request.py
 """
@@ -31,16 +31,18 @@ MOCK_REPLY = {
     "answers": {
         "route": {
             "type": "choice",
-            "choice": "deterministic",
-            "probabilities": {"deterministic": 0.68, "specialist_llm": 0.07, "human": 0.25},
-            "confidence": 0.52,
+            "choice": "human",
+            "probabilities": {
+                "deterministic": 0.16, "specialist_llm": 0.01, "human": 0.83, "unclear": 0.0,
+            },
+            "confidence": 0.78,
         }
     },
 }
 
 
 def handle(request: str, offline: bool | None = None) -> str:
-    demo = setup(offline)
+    demo = setup(offline, recorded_on="2026-09-30")
     config = EngineConfig(
         attestation=demo.attestation,
         source_allowlist=frozenset({"agent_request"}),

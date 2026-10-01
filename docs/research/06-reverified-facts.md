@@ -55,6 +55,8 @@ is still sensible; describe the minimum of 2 options as our rule, not the API's.
 ## 4. Rate limits and Retry-After
 
 - Limits: 250,000 tokens per second and 1,200 requests per minute, "may change without notice".
+  Update 2026-09-30: the models page now lists 100K tokens per second and 40 requests per
+  second; the kit's local token budget was lowered to 50,000 per second to stay below it.
 - `retry-after` is honored by the SDKs "when the response carries one", so it is not guaranteed.
   The Python policy also reads `retry-after-ms`.
 - Python defaults: 2 retries, backoff 0.5 s doubling to a 5 s cap, 0.25 jitter, 30 s total

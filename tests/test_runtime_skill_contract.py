@@ -37,7 +37,7 @@ def test_runtime_skill_identity_and_reference_link() -> None:
     assert len(parts) == 3 and not parts[0]
     frontmatter = dict(line.split(": ", 1) for line in parts[1].strip().splitlines())
     assert frontmatter["name"] == "jev-runtime"
-    assert frontmatter["version"] == "2"
+    assert frontmatter["version"] == "3"
     assert frontmatter["description"]
     assert "(references/evidence-contracts.md)" in parts[2]
     assert REFERENCE.is_file()

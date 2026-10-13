@@ -55,8 +55,9 @@ Windows PowerShell 5.1 adds a byte-order mark to piped text, which the CLI rejec
 JSON. There, pass the file instead: `jev-kit --input examples/requests/route.json`.
 
 Both forms return the same response. Exit code `0` means the CLI produced a response,
-including an error response; it does not mean approval, so read `status` and each record's
-`route`. Malformed JSON or an unusable invocation returns exit `2`. The
+including an error response. Read `status`, each record's `fail_reason` and its answer fields.
+Consume `route` if you want the built-in threshold policy; otherwise use the typed answers
+with [your own application policy](application-policy.md). Malformed JSON or an unusable invocation returns exit `2`. The
 [CLI schemas](../schemas/README.md) describe the request and response formats, including
 `decide_batch` and `record_outcome`.
 

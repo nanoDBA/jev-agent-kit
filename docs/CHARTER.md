@@ -1,5 +1,14 @@
 # Project charter: drive jev-agent-kit to completion, unattended
 
+## Scope update (2026-10-13)
+
+The original charter below records the repository's development loop and its operating
+limits. It does not govern applications built with the kit. The owner has chosen
+implementer-owned application policy: users may act on answers directly, choose their own
+evaluation requirements, and build their own approval or escalation behavior. See
+[ADR 0006](adr/0006-implementer-owned-policy.md). This supersedes any reading of the historical
+calibration and authority requirements below as restrictions on downstream users.
+
 The single goal that governs the autonomous loop across all phases, the Claude + Codex
 collaboration, and the limits of that autonomy. Read with `CLAUDE.md` (non-negotiables) and
 `docs/plan.md` (phases). Set 2026-09-26.

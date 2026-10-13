@@ -1,9 +1,10 @@
 # Calibrating a question
 
-Until a question has a measured threshold, the kit never acts on its answers: advisory
-questions return `no_advice` and gates return `ask`. This guide takes one yes/no (Noul)
-question from shadow-mode answers to a registry entry, and shows what to do when the evidence
-is not good enough, which is the usual outcome at first.
+Calibration is optional for applications consuming answers directly. This guide configures
+the kit's built-in threshold policy, which requires a calibrated registry entry for
+`accept`. Without one, that policy returns `no_advice` for advisory questions and `ask` for
+gates in enforce mode. You can instead use [your own application policy](application-policy.md).
+The walkthrough takes one yes/no (Noul) question from shadow-mode answers to a registry entry.
 
 To see every step run offline first:
 
@@ -169,14 +170,15 @@ Step 6  a registry entry, written to a temporary folder only
   With a live answer in enforce mode, would_route is what route would become.
 ```
 
-Compare `would_route` with your labels over a period of shadow traffic before switching the
-question to `"mode": "enforce"`. Enforce mode needs the environment owner's approval. For a
-gate, Jev's answer can still only let a call proceed as far as your agent's own permissions
-allow.
+Comparing `would_route` with labels from shadow traffic helps evaluate the built-in policy.
+Changing to `"mode": "enforce"` activates that policy. The shipped hooks then add their
+checks while preserving the host's existing permission flow. A custom application can use
+the answers with a different policy.
 
 ## When promotion is declined
 
-Keep the question in shadow mode; nothing else changes. Then, depending on the reason:
+If you want to meet the calibration tool's promotion criteria, keep collecting in shadow
+and use its reason to choose the next step:
 
 - Too few items, or `insufficient_data`: collect and label more, and rerun on a fresh split.
 - `no_bounds_meet_accuracy_floor` or `confirm_split_below_floor`: read the misses. They often
@@ -184,4 +186,5 @@ Keep the question in shadow mode; nothing else changes. Then, depending on the r
   sharpen the wording or the labeling rule. A new wording is a new fingerprint, so start the
   measurement again.
 - The question may simply not be one Jev answers well. Recording `never_auto_accept` for its
-  fingerprint keeps it advisory permanently.
+  fingerprint keeps it advisory under the built-in policy. Direct consumers still choose
+  how to use the returned answers.

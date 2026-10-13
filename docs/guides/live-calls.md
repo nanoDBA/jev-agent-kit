@@ -21,6 +21,9 @@ An attestation has fields such as `{"inventory": true, "inventory_date": "2026-0
 
 ## Measuring thresholds
 
+This is optional for callers using [their own policy](application-policy.md). It configures
+the kit's built-in threshold routing.
+
 The model is pinned to `jev-1.13.0`, and an answer from any other version is rejected.
 Measure thresholds from authorized real answers, with independent labels and held-out data.
 A threshold belongs to one exact question and set of data rules, so changing either retires

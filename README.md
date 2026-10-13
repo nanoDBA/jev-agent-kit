@@ -12,6 +12,11 @@ for each one instead of prose.
 Keep deterministic facts in code. Use Jev for judgment calls that depend on language.
 Your code combines the two and decides what happens next.
 
+Use the answers directly, choose your own thresholds, or use the kit's built-in routing
+policy. You decide whether a result triggers an action, goes to another model, or needs a
+person. Calibration is available when you want it; it is not a requirement for using Jev in
+your application. See [application policy](docs/guides/application-policy.md).
+
 That splits the agent into three layers, each doing what it is good at:
 
 | Agent | Deterministic code | Jev |
@@ -60,7 +65,7 @@ Installing the kit into a host does not switch on everything this README shows. 
 | Host hooks | One event per host: `PreToolUse` in Claude Code and Codex, `pre_tool_call` in Hermes. Each call the hook sees is checked with `tool-call-gate`; the guides register it for shell commands. In shadow mode, the default, the hook writes a receipt and changes nothing. | Register the hook with the [host guide](#add-it-to-your-agent). |
 | Examples | The test-claim check, routing, gate and receipt demos ask Jev live (or replay recorded answers with `--offline`). They are not installed into any host. | Copy the pattern into your own code. |
 | Question sets | `preflight-route`, `postflight-verify` and `stop-or-continue` ship as JSON. Nothing calls them automatically. | Call them from your code through the Python API or `jev-kit`. |
-| Acting on answers | Nothing acts on a Jev answer until a threshold for that exact question is registered, and a hook acts only in enforce mode. | Collect live answers in shadow, label them, and [calibrate](docs/guides/calibration.md). |
+| Acting on answers | Your code can consume returned answers directly, including in shadow mode. The optional built-in `accept` route requires a calibrated threshold; the shipped hooks act only in enforce mode. | Use your own policy, or [calibrate](docs/guides/calibration.md) for the built-in one. |
 
 ## One example: "all tests pass"
 
@@ -112,10 +117,10 @@ admission          'Refactored the parser and cleaned up the imports. I have not
 ```
 
 Jev separates a claim that never says "pass" from a prediction that does. The last column is
-what the policy does today: this question has no calibrated threshold, so the kit returns
+what this example's policy does: this question has no calibrated threshold, so the kit returns
 `no_advice` and the code treats every message as a claim. Once a threshold is measured on your
-own messages, the code can skip the check for the last two. Interpretation and action stay
-separate on purpose: without a measured threshold, no answer authorizes anything.
+own messages, this policy can skip the check for the last two. You can also change the
+example to act on `noul` directly using your own cutoff, with or without calibration.
 
 On 60 messages, Jev answered this question correctly 56 times out of the 57 it answered in
 time; see [What we measured](#what-we-measured).
@@ -155,7 +160,7 @@ Which handler should take it?  (recorded Jev answer from 2026-09-30)
   human           #################    0.83
   unclear                              0.00
 route:   no_advice
-handled: specialist_llm
+handled: human
 ```
 
 Jev returns a probability for every option you defined. Version 1 of this set described
@@ -163,9 +168,12 @@ Jev returns a probability for every option you defined. Version 1 of this set de
 For this request it leaned the other way, toward `deterministic`, and wobbled: 0.53 to 0.68
 over nine calls. Version 2 names money among the high-consequence cases and gives ambiguity its
 own `unclear` option. Now nine calls give `human` 0.82 to 0.86. The lesson for routing: write
-your policy into the criteria, then measure on your own requests how often the answers are
-right before acting on them. The set is uncalibrated, so the kit reports `no_advice` and the
-code uses its default, a specialist model.
+your policy into the criteria. Testing on your own requests can help you judge its accuracy.
+This example uses the returned label directly, so it selects `human` even though the kit's
+built-in route is `no_advice`. No calibrated threshold is needed for that application policy.
+Errors, missing labels and `unclear` fall back to `specialist_llm`. The demo prints the
+selected handler; it does not invoke one. With `--offline`, it simulates the same selection
+using the labelled recorded answer.
 
 ## Check a tool call before it runs
 
@@ -242,8 +250,7 @@ agent makes over and over can become a typed question:
   repeatability matters.
 
 Only the four shipped sets are tested here; the rest are patterns the same machinery
-supports. Every one of them still needs a threshold measured on your own data before code
-acts on it.
+supports. Choose the evaluation effort and action policy that fit your application.
 
 ## What it looks like in your agent
 
@@ -315,12 +322,11 @@ answer can never be mistaken for a live one. `distribution` keeps
 the whole answer for measuring thresholds later, and `threshold_status` says whether a
 measured threshold exists. [Receipts](docs/receipts.md) explains the other fields.
 
-## Built not to do something stupid
+## Data handling and optional hooks
 
-Putting a model inside an agent loop is only useful if it cannot make things worse. Before
-any model call the kit sends only declared fields, cuts commands to their program name,
+Before a model call the bundled client sends only declared fields, cuts commands to their program name,
 hashes paths, and refuses requests that match credential patterns. Hooks start in shadow mode,
-and a Jev answer can never grant a permission. Two demos show the deterministic side, which
+and the shipped hooks leave existing host permissions in place. Two demos show the deterministic side, which
 needs no model at all:
 
 ```sh
@@ -370,25 +376,23 @@ the whole request if one matches. In the request that does go out, the command i
 program name and the file path is a keyed hash. The key shown is AWS's published example,
 not a real credential.
 
-### How the kit stays safe
+### Built-in policy
 
 The default configuration is designed not to weaken your agent's existing permission
 controls.
 
-**Your agent's permission system stays in charge.** Jev can advise that a tool call looks
-safe, but it cannot approve one or bypass your agent's normal checks. The hooks can ask for
-review or block a call; they never remove an existing approval requirement.
+**The shipped hooks preserve host permissions.** They can ask for review or block a call;
+they never remove an existing approval requirement. Your own integration can use Jev for
+automated approval or other actions according to your application's policy.
 
-**Nothing is trusted until you measure it.** Before the kit acts on a Jev answer, you
-calibrate that question against labeled examples from your own work, which gives you a
-confidence threshold for it. No calibrated thresholds ship with the kit. Until you add one,
-an advisory question (such as routing) returns `no_advice` and your code keeps its normal
-path, and a gate (such as the tool-call checks) returns `ask`, so the call needs a person or
-another check.
+**Calibration belongs to the built-in threshold policy.** No calibrated thresholds ship
+with the kit. Its policy returns `no_advice` for advisory answers without one, and `ask` for
+gates in enforce mode. Returned probabilities are still available for your code to use with
+its own policy. `no_advice` does not mean the model failed to answer.
 
-**Replayed answers never approve anything.** With `--offline`, the demos' recorded answers
-are marked as mock answers everywhere they appear, including receipts, and the kit never acts
-on them.
+**Replayed answers are labelled.** With `--offline`, recorded answers are marked as mock
+in records and receipts. The built-in policy does not accept them. Examples can simulate
+application decisions with them, without performing the selected external action.
 
 **Only what a question needs leaves your machine.** Each question declares the fields it
 uses; everything else stays local. Commands are cut to their program name, paths become keyed
@@ -401,9 +405,8 @@ The hooks start in **shadow mode**. With an API key configured, they ask Jev and
 answer, but they never change what your agent does; every real answer is recorded as
 `no_advice`. This lets you collect evidence before relying on it.
 
-**Enforce mode** lets the hooks act on their checks. It is off unless someone turns it on,
-and it should be turned on only with the environment owner's approval, after measuring
-thresholds on labeled data. Two stops work without any calibration: a request matching a
+**Enforce mode** lets the shipped hooks act on their checks. It is off unless configured.
+These hooks use the calibrated threshold policy described above. Two stops work without any calibration: a request matching a
 recognized credential pattern, and a command that cannot be safely summarized.
 
 If enforce mode is turned on before any thresholds are measured, every other checked call is
@@ -526,6 +529,8 @@ Receipts hold decision details and digests, never raw state or API keys. See
 
 ## Reference
 
+- [Application policy](docs/guides/application-policy.md): use answers directly or choose the
+  built-in routing policy.
 - [Command-line tool](docs/guides/cli.md): JSON requests, standard input, exit codes and the
   install preview.
 - [Calibration](docs/guides/calibration.md): from shadow receipts to a registered threshold, with an offline walkthrough.

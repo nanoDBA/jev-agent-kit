@@ -37,7 +37,7 @@ def test_runtime_skill_identity_and_reference_link() -> None:
     assert len(parts) == 3 and not parts[0]
     frontmatter = dict(line.split(": ", 1) for line in parts[1].strip().splitlines())
     assert frontmatter["name"] == "jev-runtime"
-    assert frontmatter["version"] == "3"
+    assert json.loads(frontmatter["metadata"])["version"] == "4"
     assert frontmatter["description"]
     assert "(references/evidence-contracts.md)" in parts[2]
     assert REFERENCE.is_file()
@@ -76,7 +76,7 @@ def test_index_matches_shipped_contract(path: Path) -> None:
 
     reference = REFERENCE.read_text(encoding="utf-8")
     section = reference.split(f"## {path.stem}\n", 1)[1].split("\n## ", 1)[0]
-    assert "Required observations:" in section
+    assert "Useful inputs:" in section
     assert "Known limitations:" in section
 
 

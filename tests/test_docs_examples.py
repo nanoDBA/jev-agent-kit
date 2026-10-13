@@ -69,7 +69,7 @@ def test_gate_walkthrough_matches_readme() -> None:
 def test_route_request_matches_readme() -> None:
     out = _run_example("route_request.py")
     assert "route:   no_advice" in out
-    assert "handled: specialist_llm" in out
+    assert "handled: human" in out
     assert "(recorded Jev answer from 2026-09-30)" in out  # labelled in the output itself
     for line in out.splitlines():
         assert line in README, line

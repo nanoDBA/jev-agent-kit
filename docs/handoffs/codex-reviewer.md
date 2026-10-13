@@ -39,9 +39,9 @@ review and verify. The owner makes every merge decision and every owner-gated ca
 
 ## Always check: code
 
-- Authority: an `accept` is evidence, never host permission. No shim emits an affirmative
-  allow; adverse evidence maps to Claude `ask`, Codex `deny`, Hermes `block`; shadow mode is
-  decision-free.
+- Built-in hooks: preserve their documented mapping unless the task explicitly changes it.
+  They emit no affirmative allow; adverse evidence maps to Claude `ask`, Codex `deny`, Hermes
+  `block`; shadow is decision-free. Custom application policy may consume answers directly.
 - Secrecy: no secret or input-derived text in records, receipts, or CLI diagnostics.
 - Egress: no bypass of the declared-field transforms or the credential scan (nesting,
   encoding, escaping, formatting).
@@ -52,10 +52,14 @@ review and verify. The owner makes every merge decision and every owner-gated ca
 
 ## Always check: docs and examples
 
+Application policy belongs to the implementer (ADR 0006). Direct answer consumption,
+provisional thresholds and automated approval in a custom integration are valid choices.
+Review whether the documented policy works, not whether it matches the shipped hook policy.
+
 - Run every command and example the changed docs show, as a newcomer would, in Bash and in
   PowerShell where both are shown. Printed output must match the docs.
-- Claims: nothing implies a Jev answer grants permission, that enforce is ready, or that
-  calibration exists. Any number is attributed (vendor, independent with method, or our own
+- Claims: distinguish application choices from shipped component behavior. Do not claim
+  that a hook was activated or a threshold calibrated when it was not. Any number is attributed (vendor, independent with method, or our own
   measurement with its method), and no savings figure is presented as ours unless we measured it.
 - Mocks are labelled wherever they appear, and illustrative text is marked as illustrative.
 - Links and anchors resolve. No em dashes in prose.

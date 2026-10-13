@@ -1,5 +1,9 @@
 # Plan
 
+This is the historical development plan. Application policy is now implementer-owned;
+see [ADR 0006](adr/0006-implementer-owned-policy.md). Calibration dependencies below describe
+the original bundled-hook rollout, not prerequisites for downstream applications.
+
 ## Open questions for the owner (decide before Phase 1 code)
 
 1. **dfinke/Jev strategy:** decided 2026-09-25. No dependency; learn from it and build our own
